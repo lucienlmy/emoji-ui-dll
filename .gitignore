@@ -1,0 +1,48 @@
+# Build outputs
+x64/
+x86/
+Release/
+Debug/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+ipch/
+
+# Files to exclude
+*.txt
+*.bat
+
+# Temporary and log files
+*.log
+*.tmp
+*.temp
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Claude Code
+.claude/
+
+# Documentation to exclude (keep main README)
+修复步骤.md
+修复说明.md
+快速开始指南.md
+信息框接口示例.md
+信息框接口说明.md
+易语言修复方案-详细.md
+最终解决方案.md
+修改总结.md
+改造对比文档.md
