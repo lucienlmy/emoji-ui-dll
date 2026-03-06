@@ -52,25 +52,41 @@ UINT32 DarkenColor(UINT32 color, float factor) {
     return (a << 24) | (r << 16) | (g << 8) | b;
 }
 
-// Draw button (supports both main window buttons and message box buttons)
+// Draw button (Element UI style - supports both main window buttons and message box buttons)
 void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiButton& button) {
-    // ========== Calculate button color based on state ==========
+    // ========== Calculate button color based on state (Element UI style) ==========
     UINT32 bg_color = button.bg_color;
     UINT32 bg_rgb = bg_color & 0x00FFFFFF;
 
+    // Element UI button colors
+    bool is_primary = (bg_rgb == 0x409EFF);  // Primary blue
+    bool is_success = (bg_rgb == 0x67C23A);  // Success green
+    bool is_warning = (bg_rgb == 0xE6A23C);  // Warning orange
+    bool is_danger = (bg_rgb == 0xF56C6C);   // Danger red
+    bool is_info = (bg_rgb == 0x909399);     // Info gray
+    bool is_default = (bg_rgb == 0xFFFFFF || bg_rgb == 0xF2F2F7);  // Default white/light gray
+
     if (button.is_pressed) {
-        bg_color = DarkenColor(bg_color, 0.9f);
+        // Pressed state: darker
+        if (is_primary) bg_color = 0xFF3A8EE6;
+        else if (is_success) bg_color = 0xFF5DAF34;
+        else if (is_warning) bg_color = 0xFFCF9236;
+        else if (is_danger) bg_color = 0xFFDD6161;
+        else if (is_info) bg_color = 0xFF82848A;
+        else if (is_default) bg_color = 0xFFECF5FF;
+        else bg_color = DarkenColor(bg_color, 0.9f);
     } else if (button.is_hovered) {
-        // Special handling for light gray button (#F2F2F7)
-        // Darken instead of lighten to avoid blending with white background
-        if (bg_rgb == 0xF2F2F7) {
-            bg_color = DarkenColor(bg_color, 0.95f);  // Slightly darker on hover
-        } else {
-            bg_color = LightenColor(bg_color, 1.1f);
-        }
+        // Hover state: lighter
+        if (is_primary) bg_color = 0xFF66B1FF;
+        else if (is_success) bg_color = 0xFF85CE61;
+        else if (is_warning) bg_color = 0xFFEBB563;
+        else if (is_danger) bg_color = 0xFFF78989;
+        else if (is_info) bg_color = 0xFFA6A9AD;
+        else if (is_default) bg_color = 0xFFECF5FF;
+        else bg_color = LightenColor(bg_color, 1.1f);
     }
 
-    // ========== Draw rounded rectangle ==========
+    // ========== Draw button with Element UI style ==========
     ID2D1SolidColorBrush* brush = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(bg_color), &brush);
 
@@ -81,77 +97,177 @@ void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiB
             (FLOAT)(button.x + button.width),
             (FLOAT)(button.y + button.height)
         ),
-        8.0f, 8.0f
+        4.0f, 4.0f  // Element UI uses 4px border radius
     );
     rt->FillRoundedRectangle(rect, brush);
     brush->Release();
 
-    // ========== Determine button style based on background color ==========
-    // macOS message box buttons: #007AFF (blue) or #F2F2F7 (light gray)
-    // Main window buttons: other colors
-    bool is_macos_button = (bg_rgb == 0x007AFF || bg_rgb == 0xF2F2F7);
-
-    std::wstring text = button.emoji + L" " + button.text;  // Always show emoji
-    float font_size;
-    const wchar_t* font_name = L"Segoe UI Emoji";
-    DWRITE_FONT_WEIGHT font_weight;
-    UINT32 text_color;
-
-    if (is_macos_button) {
-        // ========== macOS message box button style ==========
-        font_size = 14.0f;
-        font_weight = DWRITE_FONT_WEIGHT_MEDIUM;  // 500 weight
-
-        // Smart text color based on background
-        if (bg_rgb == 0xF2F2F7) {
-            text_color = 0xFF3C3C43;  // Dark gray for light background
-        } else {
-            text_color = 0xFFFFFFFF;  // White for blue background
-        }
-    } else {
-        // ========== Main window button style ==========
-        font_size = 16.0f;
-        font_weight = DWRITE_FONT_WEIGHT_NORMAL;
-        text_color = 0xFFFFFFFF;  // Always white
+    // ========== Draw border for default button ==========
+    if (is_default) {
+        ID2D1SolidColorBrush* border_brush = nullptr;
+        rt->CreateSolidColorBrush(D2D1::ColorF(0xDCDFE6, 1.0f), &border_brush);  // Element UI border color
+        rt->DrawRoundedRectangle(rect, border_brush, 1.0f);
+        border_brush->Release();
     }
 
-    // ========== Draw button text with emoji ==========
-    IDWriteTextFormat* text_format = nullptr;
-    factory->CreateTextFormat(
-        font_name,
-        nullptr,
-        font_weight,
-        DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        font_size,
-        L"zh-CN",
-        &text_format
-    );
-
-    text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    // ========== Determine text color ==========
+    UINT32 text_color;
+    if (is_default) {
+        text_color = 0xFF606266;  // Element UI regular text color for default button
+    } else {
+        text_color = 0xFFFFFFFF;  // White text for colored buttons
+    }
 
     ID2D1SolidColorBrush* text_brush = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(text_color), &text_brush);
 
-    D2D1_RECT_F text_rect = D2D1::RectF(
-        (FLOAT)button.x,
-        (FLOAT)button.y,
-        (FLOAT)(button.x + button.width),
-        (FLOAT)(button.y + button.height)
-    );
+    // ========== Calculate total content width for centering ==========
+    float emoji_width = 0.0f;
+    float text_width = 0.0f;
+    float spacing = 6.0f;  // Space between emoji and text
 
-    rt->DrawText(
-        text.c_str(),
-        (UINT32)text.length(),
-        text_format,
-        text_rect,
-        text_brush,
-        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT  // Always enable color font for emoji
-    );
+    // Measure emoji width
+    if (!button.emoji.empty()) {
+        IDWriteTextFormat* emoji_format_measure = nullptr;
+        factory->CreateTextFormat(
+            L"Segoe UI Emoji",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            18.0f,
+            L"zh-CN",
+            &emoji_format_measure
+        );
+
+        IDWriteTextLayout* emoji_layout = nullptr;
+        factory->CreateTextLayout(
+            button.emoji.c_str(),
+            (UINT32)button.emoji.length(),
+            emoji_format_measure,
+            1000.0f,
+            1000.0f,
+            &emoji_layout
+        );
+
+        DWRITE_TEXT_METRICS emoji_metrics;
+        emoji_layout->GetMetrics(&emoji_metrics);
+        emoji_width = emoji_metrics.width;
+
+        emoji_layout->Release();
+        emoji_format_measure->Release();
+    }
+
+    // Measure text width
+    if (!button.text.empty()) {
+        IDWriteTextFormat* text_format_measure = nullptr;
+        factory->CreateTextFormat(
+            L"Microsoft YaHei UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            14.0f,
+            L"zh-CN",
+            &text_format_measure
+        );
+
+        IDWriteTextLayout* text_layout = nullptr;
+        factory->CreateTextLayout(
+            button.text.c_str(),
+            (UINT32)button.text.length(),
+            text_format_measure,
+            1000.0f,
+            1000.0f,
+            &text_layout
+        );
+
+        DWRITE_TEXT_METRICS text_metrics;
+        text_layout->GetMetrics(&text_metrics);
+        text_width = text_metrics.width;
+
+        text_layout->Release();
+        text_format_measure->Release();
+    }
+
+    // Calculate total content width and starting position for centering
+    float total_content_width = emoji_width + (emoji_width > 0 && text_width > 0 ? spacing : 0) + text_width;
+    float content_start_x = button.x + (button.width - total_content_width) / 2.0f;
+
+    // ========== Draw emoji icon (larger size for consistency) ==========
+    if (!button.emoji.empty()) {
+        IDWriteTextFormat* emoji_format = nullptr;
+        factory->CreateTextFormat(
+            L"Segoe UI Emoji",  // Use emoji font for better rendering
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            18.0f,  // Larger size for emoji (18px instead of 14px)
+            L"zh-CN",
+            &emoji_format
+        );
+
+        emoji_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        emoji_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        D2D1_RECT_F emoji_rect = D2D1::RectF(
+            content_start_x,
+            (FLOAT)button.y,
+            content_start_x + emoji_width + 10.0f,  // Add some extra space
+            (FLOAT)(button.y + button.height)
+        );
+
+        rt->DrawText(
+            button.emoji.c_str(),
+            (UINT32)button.emoji.length(),
+            emoji_format,
+            emoji_rect,
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
+        );
+
+        emoji_format->Release();
+    }
+
+    // ========== Draw button text ==========
+    if (!button.text.empty()) {
+        IDWriteTextFormat* text_format = nullptr;
+        factory->CreateTextFormat(
+            L"Microsoft YaHei UI",  // Element UI 推荐字体
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,  // 400 weight
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            14.0f,  // Element UI standard button font size
+            L"zh-CN",
+            &text_format
+        );
+
+        text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        float text_start_x = content_start_x + emoji_width + (emoji_width > 0 ? spacing : 0);
+        D2D1_RECT_F text_rect = D2D1::RectF(
+            text_start_x,
+            (FLOAT)button.y,
+            text_start_x + text_width + 10.0f,  // Add some extra space
+            (FLOAT)(button.y + button.height)
+        );
+
+        rt->DrawText(
+            button.text.c_str(),
+            (UINT32)button.text.length(),
+            text_format,
+            text_rect,
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE
+        );
+
+        text_format->Release();
+    }
 
     text_brush->Release();
-    text_format->Release();
 }
 
 // Window procedure
@@ -248,6 +364,51 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             state->render_target->Resize(D2D1::SizeU(width, height));
         }
         return 0;
+    }
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORSTATIC: {
+        // ✅ 处理编辑框和标签的颜色消息
+        // 这些消息会发送到父窗口，我们需要查找对应的子控件状态
+        HWND hChild = (HWND)lparam;
+        
+        // 先查找编辑框
+        auto edit_it = g_editboxes.find(hChild);
+        if (edit_it != g_editboxes.end()) {
+            EditBoxState* edit_state = edit_it->second;
+            HDC hdc = (HDC)wparam;
+            SetTextColor(hdc, RGB(
+                (edit_state->fg_color >> 16) & 0xFF,
+                (edit_state->fg_color >> 8) & 0xFF,
+                edit_state->fg_color & 0xFF
+            ));
+            SetBkColor(hdc, RGB(
+                (edit_state->bg_color >> 16) & 0xFF,
+                (edit_state->bg_color >> 8) & 0xFF,
+                edit_state->bg_color & 0xFF
+            ));
+            return (LRESULT)edit_state->bg_brush;
+        }
+        
+        // 再查找标签
+        auto label_it = g_labels.find(hChild);
+        if (label_it != g_labels.end()) {
+            LabelState* label_state = label_it->second;
+            HDC hdc = (HDC)wparam;
+            SetTextColor(hdc, RGB(
+                (label_state->fg_color >> 16) & 0xFF,
+                (label_state->fg_color >> 8) & 0xFF,
+                label_state->fg_color & 0xFF
+            ));
+            SetBkColor(hdc, RGB(
+                (label_state->bg_color >> 16) & 0xFF,
+                (label_state->bg_color >> 8) & 0xFF,
+                label_state->bg_color & 0xFF
+            ));
+            return (LRESULT)label_state->bg_brush;
+        }
+        
+        break;
     }
 
     case WM_DESTROY:
@@ -413,32 +574,55 @@ void __stdcall set_window_icon(HWND hwnd, const char* icon_path) {
     }
 }
 
-// Draw message box - macOS Flat Style
+// Draw message box - Element UI Style
 void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state) {
     RECT rc;
     GetClientRect(state->hwnd, &rc);
     float width = (float)(rc.right - rc.left);
     float height = (float)(rc.bottom - rc.top);
 
-    // ========== 1. Pure White Background (macOS style) ==========
+    // ========== 1. Background with subtle gradient (Element UI style) ==========
     ID2D1SolidColorBrush* bg_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White, 1.0f), &bg_brush);
+    rt->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF, 1.0f), &bg_brush);  // Pure white
 
     D2D1_ROUNDED_RECT bg_rect = D2D1::RoundedRect(
         D2D1::RectF(0, 0, width, height),
-        10.0f, 10.0f  // 10px rounded corners
+        4.0f, 4.0f  // 4px rounded corners (Element UI standard)
     );
     rt->FillRoundedRectangle(bg_rect, bg_brush);
     bg_brush->Release();
 
-    // ========== 2. Subtle Border (1px, #E0E0E0) ==========
+    // ========== 2. Border (1px, #DCDFE6 - Element UI border color) ==========
     ID2D1SolidColorBrush* border_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0xE0E0E0, 1.0f), &border_brush);
+    rt->CreateSolidColorBrush(D2D1::ColorF(0xDCDFE6, 1.0f), &border_brush);
     rt->DrawRoundedRectangle(bg_rect, border_brush, 1.0f);
     border_brush->Release();
 
-    // ========== 3. Icon Emoji (24px, centered at top) ==========
+    // ========== 3. Top accent bar (Element UI primary color) ==========
+    ID2D1SolidColorBrush* accent_brush = nullptr;
+    rt->CreateSolidColorBrush(D2D1::ColorF(0x409EFF, 1.0f), &accent_brush);  // Element UI primary blue
+    
+    D2D1_ROUNDED_RECT accent_rect = D2D1::RoundedRect(
+        D2D1::RectF(0, 0, width, 3.0f),
+        4.0f, 4.0f
+    );
+    rt->FillRoundedRectangle(accent_rect, accent_brush);
+    accent_brush->Release();
+
+    // ========== 4. Icon Emoji (28px, with colored background circle) ==========
     if (!state->icon_emoji.empty()) {
+        // Draw colored circle background for icon
+        ID2D1SolidColorBrush* icon_bg_brush = nullptr;
+        rt->CreateSolidColorBrush(D2D1::ColorF(0xECF5FF, 1.0f), &icon_bg_brush);  // Light blue background
+        
+        D2D1_ELLIPSE icon_circle = D2D1::Ellipse(
+            D2D1::Point2F(width / 2, 45.0f),
+            24.0f, 24.0f
+        );
+        rt->FillEllipse(icon_circle, icon_bg_brush);
+        icon_bg_brush->Release();
+
+        // Draw icon emoji
         IDWriteTextFormat* icon_format = nullptr;
         factory->CreateTextFormat(
             L"Segoe UI Emoji",
@@ -446,7 +630,7 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
             DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
-            24.0f,  // 24px icon size
+            28.0f,  // Larger icon
             L"zh-CN",
             &icon_format
         );
@@ -454,9 +638,9 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
         icon_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
         ID2D1SolidColorBrush* icon_brush = nullptr;
-        rt->CreateSolidColorBrush(D2D1::ColorF(0x1C1C1E, 1.0f), &icon_brush);
+        rt->CreateSolidColorBrush(D2D1::ColorF(0x409EFF, 1.0f), &icon_brush);  // Primary blue
 
-        D2D1_RECT_F icon_rect = D2D1::RectF(24, 20, width - 24, 60);
+        D2D1_RECT_F icon_rect = D2D1::RectF(24, 20, width - 24, 70);
         rt->DrawText(
             state->icon_emoji.c_str(),
             (UINT32)state->icon_emoji.length(),
@@ -470,15 +654,15 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
         icon_format->Release();
     }
 
-    // ========== 4. Title (18px, Bold 600, #1C1C1E) ==========
+    // ========== 5. Title (16px, Medium 500, #303133 - Element UI text color) ==========
     IDWriteTextFormat* title_format = nullptr;
     factory->CreateTextFormat(
-        L"Segoe UI",  // Use Segoe UI for clean text
+        L"Microsoft YaHei UI",  // 微软雅黑 UI (Element UI 推荐字体)
         nullptr,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,  // 600 weight
+        DWRITE_FONT_WEIGHT_MEDIUM,  // 500 weight
         DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL,
-        18.0f,
+        16.0f,
         L"zh-CN",
         &title_format
     );
@@ -486,9 +670,9 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
     title_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
     ID2D1SolidColorBrush* title_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x1C1C1E, 1.0f), &title_brush);  // Deep gray
+    rt->CreateSolidColorBrush(D2D1::ColorF(0x303133, 1.0f), &title_brush);  // Element UI primary text
 
-    D2D1_RECT_F title_rect = D2D1::RectF(24, 60, width - 24, 90);
+    D2D1_RECT_F title_rect = D2D1::RectF(24, 75, width - 24, 105);
     rt->DrawText(
         state->title.c_str(),
         (UINT32)state->title.length(),
@@ -501,10 +685,10 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
     title_brush->Release();
     title_format->Release();
 
-    // ========== 5. Message (14px, Regular 400, #3C3C43, line-height 1.5) ==========
+    // ========== 6. Message (14px, Regular 400, #606266 - Element UI regular text) ==========
     IDWriteTextFormat* msg_format = nullptr;
     factory->CreateTextFormat(
-        L"Segoe UI Emoji",  // Support emoji in message
+        L"Microsoft YaHei UI",
         nullptr,
         DWRITE_FONT_WEIGHT_NORMAL,  // 400 weight
         DWRITE_FONT_STYLE_NORMAL,
@@ -516,15 +700,14 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
     msg_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     msg_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     msg_format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-    msg_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 21.0f, 14.0f);  // 1.5x line height
+    msg_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 22.0f, 14.0f);  // 1.57x line height
 
     ID2D1SolidColorBrush* msg_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x3C3C43, 1.0f), &msg_brush);  // Medium gray
+    rt->CreateSolidColorBrush(D2D1::ColorF(0x606266, 1.0f), &msg_brush);  // Element UI regular text
 
-    // Message area: from 96px to button_y - 25px (25px spacing before button)
-    float msg_top = 96;
-    float msg_bottom = (float)(state->ok_button.y - 25);  // Dynamic based on button position
-    D2D1_RECT_F msg_rect = D2D1::RectF(24, msg_top, width - 24, msg_bottom);
+    float msg_top = 115;
+    float msg_bottom = (float)(state->ok_button.y - 20);
+    D2D1_RECT_F msg_rect = D2D1::RectF(30, msg_top, width - 30, msg_bottom);
     rt->DrawText(
         state->message.c_str(),
         (UINT32)state->message.length(),
@@ -537,7 +720,7 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
     msg_brush->Release();
     msg_format->Release();
 
-    // ========== 6. Buttons (Flat macOS style) ==========
+    // ========== 7. Buttons (Element UI style) ==========
     DrawButton(rt, factory, state->ok_button);
 
     if (state->button_type == MSGBOX_OKCANCEL) {
@@ -697,9 +880,10 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     int box_width = 400;   // Fixed width for readability
 
     // Create temporary text format to measure message height
+    // ⚠️ CRITICAL: Use the SAME font as actual rendering (Microsoft YaHei UI)
     IDWriteTextFormat* temp_format = nullptr;
     g_dwrite_factory->CreateTextFormat(
-        L"Segoe UI Emoji",
+        L"Microsoft YaHei UI",  // ✅ Same as DrawMsgBox
         nullptr,
         DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL,
@@ -711,7 +895,7 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     temp_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     temp_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     temp_format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-    temp_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 21.0f, 14.0f);
+    temp_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 22.0f, 14.0f);  // ✅ Same as DrawMsgBox (1.57x line height)
 
     // Create text layout to measure actual text height
     IDWriteTextLayout* text_layout = nullptr;
@@ -719,8 +903,8 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
         message.c_str(),
         (UINT32)message.length(),
         temp_format,
-        (float)(box_width - 48),  // Text area width (24px padding on each side)
-        1000.0f,  // Max height for measurement
+        (float)(box_width - 60),  // ✅ Text area width: 30px padding on each side (same as DrawMsgBox)
+        2000.0f,  // Max height for measurement (increased for long messages)
         &text_layout
     );
 
@@ -732,9 +916,9 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     temp_format->Release();
 
     // Calculate window height based on content
-    // Layout: Icon(40px) + Title(30px) + Message(variable) + Spacing(25px) + Button(40px) + Bottom padding(15px)
-    float content_height = 40 + 30 + measured_text_height + 25 + 40 + 15;
-    int min_height = (type == MSGBOX_OKCANCEL) ? 220 : 200;  // Minimum height
+    // Layout: Top bar(3px) + Icon area(70px: 20px top + 50px icon) + Title(30px) + Message top spacing(10px) + Message(variable) + Message bottom spacing(20px) + Button(40px) + Bottom padding(15px)
+    float content_height = 3 + 70 + 30 + 10 + measured_text_height + 20 + 40 + 15;
+    int min_height = (type == MSGBOX_OKCANCEL) ? 240 : 220;  // Minimum height
     int box_height = (int)max(content_height, (float)min_height);
 
     // Calculate button Y position based on actual window height
@@ -795,12 +979,12 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     state->callback = callback;
     state->result = false;
 
-    // ========== macOS style buttons with Emoji ==========
-    // OK button - Primary button (#007AFF blue, white text, with emoji)
+    // ========== Element UI style buttons with Emoji ==========
+    // OK button - Primary button (Element UI #409EFF blue, white text, with emoji)
     state->ok_button.id = 1;
     state->ok_button.emoji = L"\u2713";  // ✓ checkmark emoji
     state->ok_button.text = L"\u786E\u5B9A";  // "确定"
-    state->ok_button.bg_color = 0xFF007AFF;  // macOS blue
+    state->ok_button.bg_color = 0xFF409EFF;  // Element UI primary blue
     state->ok_button.is_hovered = false;
     state->ok_button.is_pressed = false;
 
@@ -810,11 +994,11 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
         int btn_height = 40;
         int btn_spacing = 12;  // 12px spacing between buttons
 
-        // Cancel button on left (secondary style, with emoji)
+        // Cancel button on left (default style, with emoji)
         state->cancel_button.id = 2;
         state->cancel_button.emoji = L"\u2717";  // ✗ cross emoji
         state->cancel_button.text = L"\u53D6\u6D88";  // "取消"
-        state->cancel_button.bg_color = 0xFFF2F2F7;  // Light gray background
+        state->cancel_button.bg_color = 0xFFFFFFFF;  // Element UI default button (white background)
         state->cancel_button.x = (box_width / 2) - btn_width - (btn_spacing / 2);
         state->cancel_button.y = btn_y;  // Use calculated position
         state->cancel_button.width = btn_width;
@@ -1132,7 +1316,7 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
             wc.hInstance = GetModuleHandle(nullptr);
             wc.lpszClassName = content_class_name;
             wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            wc.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH);  // 透明背景
+            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);  // ✅ 使用标准背景色，避免闪烁
             RegisterClassW(&wc);
             content_class_registered = true;
         }
@@ -1142,7 +1326,7 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
             0,
             content_class_name,
             L"",
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,  // ✅ 添加 WS_CLIPCHILDREN 避免子控件闪烁
             0, 0, 0, 0,
             state->hParent,
             nullptr,
@@ -1410,13 +1594,15 @@ LRESULT CALLBACK EditBoxSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                 (state->bg_color >> 8) & 0xFF,
                 state->bg_color & 0xFF
             ));
-            return (LRESULT)CreateSolidBrush(RGB(
-                (state->bg_color >> 16) & 0xFF,
-                (state->bg_color >> 8) & 0xFF,
-                state->bg_color & 0xFF
-            ));
+            // ✅ 返回保存的画刷，而不是每次创建新的
+            return (LRESULT)state->bg_brush;
         }
         case WM_NCDESTROY: {
+            // ✅ 清理画刷资源
+            if (state->bg_brush) {
+                DeleteObject(state->bg_brush);
+                state->bg_brush = nullptr;
+            }
             RemoveWindowSubclass(hwnd, EditBoxSubclassProc, uIdSubclass);
             break;
         }
@@ -1437,14 +1623,8 @@ LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
             RECT rect;
             GetClientRect(hwnd, &rect);
             
-            // 设置背景色
-            HBRUSH bgBrush = CreateSolidBrush(RGB(
-                (state->bg_color >> 16) & 0xFF,
-                (state->bg_color >> 8) & 0xFF,
-                state->bg_color & 0xFF
-            ));
-            FillRect(hdc, &rect, bgBrush);
-            DeleteObject(bgBrush);
+            // ✅ 使用保存的背景画刷
+            FillRect(hdc, &rect, state->bg_brush);
             
             // 设置文本颜色
             SetTextColor(hdc, RGB(
@@ -1476,6 +1656,11 @@ LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
             return 0;
         }
         case WM_NCDESTROY: {
+            // ✅ 清理画刷资源
+            if (state->bg_brush) {
+                DeleteObject(state->bg_brush);
+                state->bg_brush = nullptr;
+            }
             RemoveWindowSubclass(hwnd, LabelSubclassProc, uIdSubclass);
             break;
         }
@@ -1571,6 +1756,13 @@ __declspec(dllexport) HWND __stdcall CreateEditBox(
     state->password = password != 0;
     state->has_border = has_border != 0;
     
+    // ✅ 创建背景画刷（只创建一次，避免重复创建导致闪烁）
+    state->bg_brush = CreateSolidBrush(RGB(
+        (bg_color >> 16) & 0xFF,
+        (bg_color >> 8) & 0xFF,
+        bg_color & 0xFF
+    ));
+    
     g_editboxes[hEdit] = state;
     
     // 设置字体
@@ -1656,6 +1848,16 @@ __declspec(dllexport) void __stdcall SetEditBoxColor(
     state->fg_color = fg_color;
     state->bg_color = bg_color;
     
+    // ✅ 重新创建背景画刷
+    if (state->bg_brush) {
+        DeleteObject(state->bg_brush);
+    }
+    state->bg_brush = CreateSolidBrush(RGB(
+        (bg_color >> 16) & 0xFF,
+        (bg_color >> 8) & 0xFF,
+        bg_color & 0xFF
+    ));
+    
     InvalidateRect(hEdit, NULL, TRUE);
 }
 
@@ -1739,6 +1941,13 @@ __declspec(dllexport) HWND __stdcall CreateLabel(
     state->font.underline = underline != 0;
     state->alignment = (TextAlignment)alignment;
     
+    // ✅ 创建背景画刷（只创建一次，避免重复创建导致闪烁）
+    state->bg_brush = CreateSolidBrush(RGB(
+        (bg_color >> 16) & 0xFF,
+        (bg_color >> 8) & 0xFF,
+        bg_color & 0xFF
+    ));
+    
     g_labels[hLabel] = state;
     
     // 子类化以自定义绘制
@@ -1794,6 +2003,16 @@ __declspec(dllexport) void __stdcall SetLabelColor(
     LabelState* state = it->second;
     state->fg_color = fg_color;
     state->bg_color = bg_color;
+    
+    // ✅ 重新创建背景画刷
+    if (state->bg_brush) {
+        DeleteObject(state->bg_brush);
+    }
+    state->bg_brush = CreateSolidBrush(RGB(
+        (bg_color >> 16) & 0xFF,
+        (bg_color >> 8) & 0xFF,
+        bg_color & 0xFF
+    ));
     
     InvalidateRect(hLabel, NULL, TRUE);
 }

@@ -52,6 +52,7 @@ struct EditBoxState {
     bool readonly;              // 只读模式
     bool password;              // 密码框
     bool has_border;            // 是否有边框
+    HBRUSH bg_brush;            // 背景画刷（避免每次创建）
 };
 
 // 标签状态
@@ -64,6 +65,7 @@ struct LabelState {
     UINT32 bg_color;            // 背景色 (ARGB)
     FontStyle font;             // 字体样式
     TextAlignment alignment;    // 文字对齐
+    HBRUSH bg_brush;            // 背景画刷（避免每次创建）
 };
 
 // Button structure
