@@ -1,0 +1,422 @@
+#pragma once
+
+#include <windows.h>
+#include <commctrl.h>
+#include <d2d1.h>
+#include <dwrite.h>
+#include <uxtheme.h>
+#include <string>
+#include <vector>
+#include <map>
+
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "uxtheme.lib")
+
+// Button click callback type (stdcall)
+typedef void (__stdcall *ButtonClickCallback)(int button_id);
+
+// Message box callback type (confirmed: 1=OK, 0=Cancel)
+typedef void (__stdcall *MessageBoxCallback)(int confirmed);
+
+// Tab 切换回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *TAB_CALLBACK)(HWND hTabControl, int selectedIndex);
+
+// ========== 编辑框样式和配置 ==========
+
+// 文本对齐方式
+enum EmojiEditTextAlignment {
+    EDIT_ALIGN_LEFT = 0,
+    EDIT_ALIGN_CENTER = 1,
+    EDIT_ALIGN_RIGHT = 2
+};
+
+// 边框样式
+enum EmojiEditBorderStyle {
+    EDIT_BORDER_NONE = 0,       // 无边框
+    EDIT_BORDER_SINGLE = 1,     // 单线边框
+    EDIT_BORDER_ROUNDED = 2     // 圆角边框
+};
+
+// 滚动条样式
+enum EmojiEditScrollStyle {
+    EDIT_SCROLL_NONE = 0,       // 无滚动条
+    EDIT_SCROLL_VERTICAL = 1,   // 垂直滚动条
+    EDIT_SCROLL_HORIZONTAL = 2, // 水平滚动条
+    EDIT_SCROLL_BOTH = 3        // 双向滚动条
+};
+
+// 编辑框状态
+struct EmojiEditState {
+    HWND hwnd;                              // 编辑框窗口句柄
+    HWND hParent;                           // 父窗口句柄
+    ID2D1HwndRenderTarget* render_target;   // D2D 渲染目标
+    IDWriteFactory* dwrite_factory;         // DWrite 工厂
+    IDWriteTextFormat* text_format;         // 文本格式
+    IDWriteTextLayout* text_layout;         // 文本布局（用于测量）
+
+    std::wstring text;                      // 编辑框内容
+    std::wstring font_name;                 // 字体名称
+    float font_size;                        // 字体大小
+    DWRITE_FONT_WEIGHT font_weight;         // 字体粗细
+
+    UINT32 text_color;                      // 文字颜色 (ARGB)
+    UINT32 bg_color;                        // 背景颜色 (ARGB)
+    UINT32 border_color;                    // 边框颜色 (ARGB)
+    UINT32 selection_color;                 // 选中背景颜色 (ARGB)
+    UINT32 cursor_color;                    // 光标颜色 (ARGB)
+
+    EmojiEditTextAlignment text_alignment;  // 文本对齐
+    EmojiEditBorderStyle border_style;      // 边框样式
+    EmojiEditScrollStyle scroll_style;      // 滚动条样式
+    bool multiline;                         // 是否多行
+    bool word_wrap;                         // 是否自动换行
+    bool readonly;                          // 是否只读
+    float corner_radius;                    // 圆角半径
+
+    int cursor_pos;                         // 光标位置（字符索引）
+    int selection_start;                    // 选择起始位置
+    int selection_end;                      // 选择结束位置
+    bool has_selection;                     // 是否有选中内容
+
+    int scroll_x;                           // 水平滚动偏移
+    int scroll_y;                           // 垂直滚动偏移
+    int line_height;                        // 行高
+    int max_scroll_x;                       // 最大水平滚动
+    int max_scroll_y;                       // 最大垂直滚动
+
+    bool is_focused;                        // 是否获得焦点
+    bool cursor_visible;                    // 光标是否可见（闪烁）
+    bool cursor_blink_state;                // 光标闪烁状态
+
+    int x, y, width, height;                // 位置和大小
+};
+
+// Button structure
+struct EmojiButton {
+    int id;
+    std::wstring emoji;
+    std::wstring text;
+    int x, y, width, height;
+    UINT32 bg_color;
+    bool is_hovered;
+    bool is_pressed;
+
+    bool ContainsPoint(int px, int py) const {
+        return px >= x && px <= x + width && py >= y && py <= y + height;
+    }
+};
+
+// Window state
+struct WindowState {
+    HWND hwnd;
+    ID2D1HwndRenderTarget* render_target;
+    IDWriteFactory* dwrite_factory;
+    std::vector<EmojiButton> buttons;
+};
+
+// Message box button type
+enum MsgBoxButtonType {
+    MSGBOX_OK = 0,
+    MSGBOX_OKCANCEL = 1
+};
+
+// Message box state
+struct MsgBoxState {
+    HWND hwnd;
+    HWND parent_hwnd;
+    ID2D1HwndRenderTarget* render_target;
+    IDWriteFactory* dwrite_factory;
+    std::wstring title;
+    std::wstring message;
+    std::wstring icon_emoji;
+    MsgBoxButtonType button_type;
+    MessageBoxCallback callback;
+    EmojiButton ok_button;
+    EmojiButton cancel_button;
+    bool result;
+};
+
+// Tab 页信息结构（C# TabControl 思路：不创建独立窗口，只管理控件集合）
+struct TabPageInfo {
+    int index;                          // Tab 索引
+    std::wstring title;                 // Tab 标题
+    std::vector<EmojiButton> buttons;   // 这个Tab的按钮集合
+    std::vector<HWND> childWindows;     // 这个Tab的子窗口（如Edit控件）
+    bool visible;                       // 是否可见
+};
+
+// TabControl 状态管理（C# TabControl 思路：单一容器窗口）
+struct TabControlState {
+    HWND hTabControl;                   // Tab Control 句柄
+    HWND hParent;                       // 父窗口句柄
+    HWND hContainerWindow;              // 单一容器窗口（所有Tab共享）
+    ID2D1HwndRenderTarget* render_target; // 容器的渲染目标
+    IDWriteFactory* dwrite_factory;     // DWrite 工厂
+    std::vector<TabPageInfo> pages;     // 所有 Tab 页信息
+    int currentIndex;                   // 当前选中的 Tab 索引
+    TAB_CALLBACK callback;              // 切换回调函数
+};
+
+// Global variables
+extern std::map<HWND, WindowState*> g_windows;
+extern std::map<HWND, MsgBoxState*> g_msgboxes;
+extern std::map<HWND, TabControlState*> g_tab_controls;
+extern std::map<HWND, EmojiEditState*> g_edits;
+extern ButtonClickCallback g_button_callback;
+
+// Export functions (stdcall calling convention)
+extern "C" {
+    HWND __stdcall create_window(const char* title, int width, int height);
+
+    int __stdcall create_emoji_button_bytes(
+        HWND parent,
+        const unsigned char* emoji_bytes,
+        int emoji_len,
+        const unsigned char* text_bytes,
+        int text_len,
+        int x, int y, int width, int height,
+        UINT32 bg_color
+    );
+
+    void __stdcall set_button_click_callback(ButtonClickCallback callback);
+    int __stdcall run_message_loop();
+    void __stdcall destroy_window(HWND hwnd);
+    void __stdcall set_window_icon(HWND hwnd, const char* icon_path);
+
+    // Message box (OK button only, supports Unicode and Emoji)
+    void __stdcall show_message_box_bytes(
+        HWND parent,
+        const unsigned char* title_bytes,
+        int title_len,
+        const unsigned char* message_bytes,
+        int message_len,
+        const unsigned char* icon_bytes,
+        int icon_len
+    );
+
+    // Confirm box (with callback, supports Unicode and Emoji)
+    void __stdcall show_confirm_box_bytes(
+        HWND parent,
+        const unsigned char* title_bytes,
+        int title_len,
+        const unsigned char* message_bytes,
+        int message_len,
+        const unsigned char* icon_bytes,
+        int icon_len,
+        MessageBoxCallback callback
+    );
+
+    // ========== TabControl 功能 ==========
+
+    // 创建 TabControl
+    HWND __stdcall CreateTabControl(
+        HWND hParent,
+        int x,
+        int y,
+        int width,
+        int height
+    );
+
+    // 添加 Tab 页
+    int __stdcall AddTabItem(
+        HWND hTabControl,
+        const unsigned char* title_bytes,
+        int title_len,
+        HWND hContentWindow  // 可选，若为 NULL 则自动创建
+    );
+
+    // 移除 Tab 页
+    BOOL __stdcall RemoveTabItem(
+        HWND hTabControl,
+        int index
+    );
+
+    // 设置 Tab 切换回调
+    void __stdcall SetTabCallback(
+        HWND hTabControl,
+        TAB_CALLBACK pCallback
+    );
+
+    // 获取当前选中的 Tab 索引
+    int __stdcall GetCurrentTabIndex(
+        HWND hTabControl
+    );
+
+    // 切换到指定 Tab
+    BOOL __stdcall SelectTab(
+        HWND hTabControl,
+        int index
+    );
+
+    // 获取 Tab 数量
+    int __stdcall GetTabCount(
+        HWND hTabControl
+    );
+
+    // 获取指定 Tab 的内容窗口句柄
+    HWND __stdcall GetTabContentWindow(
+        HWND hTabControl,
+        int index
+    );
+
+    // 销毁 TabControl（清理资源）
+    void __stdcall DestroyTabControl(
+        HWND hTabControl
+    );
+
+    // 添加子窗口到当前Tab（C# TabControl架构）
+    BOOL __stdcall AddChildWindowToCurrentTab(
+        HWND hTabControl,
+        HWND hChildWindow
+    );
+
+    // ========== EmojiEdit 编辑框功能 ==========
+
+    // 创建编辑框
+    HWND __stdcall CreateEmojiEdit(
+        HWND hParent,
+        int x,
+        int y,
+        int width,
+        int height
+    );
+
+    // 设置编辑框文本（UTF-8 字节集）
+    BOOL __stdcall SetEmojiEditText(
+        HWND hEdit,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+
+    // 获取编辑框文本长度（返回字符数，用于分配缓冲区）
+    int __stdcall GetEmojiEditTextLength(
+        HWND hEdit
+    );
+
+    // 获取编辑框文本（UTF-8 字节集）
+    int __stdcall GetEmojiEditText(
+        HWND hEdit,
+        unsigned char* buffer,
+        int buffer_size
+    );
+
+    // 设置字体（UTF-8 字节集）
+    BOOL __stdcall SetEmojiEditFont(
+        HWND hEdit,
+        const unsigned char* font_name_bytes,
+        int font_name_len,
+        float font_size,
+        int font_weight
+    );
+
+    // 设置颜色（文字、背景、边框、选中、光标）
+    BOOL __stdcall SetEmojiEditColors(
+        HWND hEdit,
+        UINT32 text_color,
+        UINT32 bg_color,
+        UINT32 border_color,
+        UINT32 selection_color,
+        UINT32 cursor_color
+    );
+
+    // 设置样式（对齐、边框、滚动条、多行、换行、只读、圆角）
+    BOOL __stdcall SetEmojiEditStyle(
+        HWND hEdit,
+        int text_alignment,     // EmojiEditTextAlignment
+        int border_style,       // EmojiEditBorderStyle
+        int scroll_style,       // EmojiEditScrollStyle
+        BOOL multiline,
+        BOOL word_wrap,
+        BOOL readonly,
+        float corner_radius
+    );
+
+    // 设置滚动位置
+    BOOL __stdcall SetEmojiEditScroll(
+        HWND hEdit,
+        int scroll_x,
+        int scroll_y
+    );
+
+    // 获取滚动信息
+    BOOL __stdcall GetEmojiEditScrollInfo(
+        HWND hEdit,
+        int* max_scroll_x,
+        int* max_scroll_y,
+        int* current_scroll_x,
+        int* current_scroll_y
+    );
+
+    // 设置选择范围
+    BOOL __stdcall SetEmojiEditSelection(
+        HWND hEdit,
+        int start_pos,
+        int end_pos
+    );
+
+    // 获取选择范围
+    BOOL __stdcall GetEmojiEditSelection(
+        HWND hEdit,
+        int* start_pos,
+        int* end_pos
+    );
+
+    // 设置光标位置
+    BOOL __stdcall SetEmojiEditCursorPos(
+        HWND hEdit,
+        int pos
+    );
+
+    // 获取光标位置
+    int __stdcall GetEmojiEditCursorPos(
+        HWND hEdit
+    );
+
+    // 设置焦点
+    void __stdcall SetEmojiEditFocus(
+        HWND hEdit,
+        BOOL focused
+    );
+
+    // 清空编辑框
+    void __stdcall ClearEmojiEdit(
+        HWND hEdit
+    );
+
+    // 销毁编辑框
+    void __stdcall DestroyEmojiEdit(
+        HWND hEdit
+    );
+}
+
+// Internal functions
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK MsgBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiButton& button);
+void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state);
+std::wstring Utf8ToWide(const unsigned char* bytes, int len);
+D2D1_COLOR_F ColorFromUInt32(UINT32 color);
+UINT32 LightenColor(UINT32 color, float factor);
+UINT32 DarkenColor(UINT32 color, float factor);
+HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::wstring& message,
+                            const std::wstring& icon, MsgBoxButtonType type, MessageBoxCallback callback);
+void CloseMessageBox(HWND hwnd, bool result);
+
+// TabControl 内部辅助函数
+void UpdateTabLayout(TabControlState* state);
+LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+
+// EmojiEdit 内部辅助函数
+LRESULT CALLBACK EmojiEditProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+void DrawEmojiEdit(EmojiEditState* state);
+void UpdateEmojiEditLayout(EmojiEditState* state);
+void UpdateEmojiEditScrollInfo(EmojiEditState* state);
+int CharFromPoint(EmojiEditState* state, int x, int y);
+void PointFromChar(EmojiEditState* state, int char_pos, int* x, int* y);
+void DeleteSelection(EmojiEditState* state);
+std::wstring GetSelectedText(EmojiEditState* state);
+void MoveCursor(EmojiEditState* state, int new_pos, bool shift_pressed);
+void ScrollToCursor(EmojiEditState* state);
+std::wstring Utf8ToWide(const unsigned char* bytes, int len);

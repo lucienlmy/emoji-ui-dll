@@ -17,3 +17,18 @@ EXPORTS
     GetTabCount
     GetTabContentWindow
     DestroyTabControl
+    CreateEditBox
+    GetEditBoxText
+    SetEditBoxText
+    SetEditBoxFont
+    SetEditBoxColor
+    SetEditBoxBounds
+    EnableEditBox
+    ShowEditBox
+    CreateLabel
+    SetLabelText
+    SetLabelFont
+    SetLabelColor
+    SetLabelBounds
+    EnableLabel
+    ShowLabel

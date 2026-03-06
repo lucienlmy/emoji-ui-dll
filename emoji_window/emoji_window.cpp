@@ -5,9 +5,12 @@
 std::map<HWND, WindowState*> g_windows;
 std::map<HWND, MsgBoxState*> g_msgboxes;
 std::map<HWND, TabControlState*> g_tab_controls;
+std::map<HWND, EditBoxState*> g_editboxes;
+std::map<HWND, LabelState*> g_labels;
 ButtonClickCallback g_button_callback = nullptr;
 ID2D1Factory* g_d2d_factory = nullptr;
 IDWriteFactory* g_dwrite_factory = nullptr;
+int g_next_control_id = 10000;  // 控件ID起始值
 
 // UTF-8 to Wide String
 std::wstring Utf8ToWide(const unsigned char* bytes, int len) {
@@ -1363,3 +1366,460 @@ void __stdcall DestroyTabControl(HWND hTabControl) {
 
     DestroyWindow(hTabControl);
 }
+
+// ========================================
+// 编辑框和标签辅助函数
+// ========================================
+
+// 创建字体
+HFONT CreateCustomFont(const FontStyle& font, int dpi = 96) {
+    int height = -MulDiv(font.font_size, dpi, 72);
+    return CreateFontW(
+        height,
+        0,
+        0,
+        0,
+        font.bold ? FW_BOLD : FW_NORMAL,
+        font.italic ? TRUE : FALSE,
+        font.underline ? TRUE : FALSE,
+        FALSE,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE,
+        font.font_name.c_str()
+    );
+}
+
+// 编辑框子类化处理
+LRESULT CALLBACK EditBoxSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    EditBoxState* state = (EditBoxState*)dwRefData;
+    
+    switch (msg) {
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = (HDC)wparam;
+            SetTextColor(hdc, RGB(
+                (state->fg_color >> 16) & 0xFF,
+                (state->fg_color >> 8) & 0xFF,
+                state->fg_color & 0xFF
+            ));
+            SetBkColor(hdc, RGB(
+                (state->bg_color >> 16) & 0xFF,
+                (state->bg_color >> 8) & 0xFF,
+                state->bg_color & 0xFF
+            ));
+            return (LRESULT)CreateSolidBrush(RGB(
+                (state->bg_color >> 16) & 0xFF,
+                (state->bg_color >> 8) & 0xFF,
+                state->bg_color & 0xFF
+            ));
+        }
+        case WM_NCDESTROY: {
+            RemoveWindowSubclass(hwnd, EditBoxSubclassProc, uIdSubclass);
+            break;
+        }
+    }
+    
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// 标签子类化处理
+LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    LabelState* state = (LabelState*)dwRefData;
+    
+    switch (msg) {
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            
+            RECT rect;
+            GetClientRect(hwnd, &rect);
+            
+            // 设置背景色
+            HBRUSH bgBrush = CreateSolidBrush(RGB(
+                (state->bg_color >> 16) & 0xFF,
+                (state->bg_color >> 8) & 0xFF,
+                state->bg_color & 0xFF
+            ));
+            FillRect(hdc, &rect, bgBrush);
+            DeleteObject(bgBrush);
+            
+            // 设置文本颜色
+            SetTextColor(hdc, RGB(
+                (state->fg_color >> 16) & 0xFF,
+                (state->fg_color >> 8) & 0xFF,
+                state->fg_color & 0xFF
+            ));
+            SetBkMode(hdc, TRANSPARENT);
+            
+            // 设置字体
+            HFONT hFont = CreateCustomFont(state->font);
+            HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+            
+            // 设置对齐方式
+            UINT format = DT_VCENTER | DT_SINGLELINE;
+            switch (state->alignment) {
+                case ALIGN_LEFT: format |= DT_LEFT; break;
+                case ALIGN_CENTER: format |= DT_CENTER; break;
+                case ALIGN_RIGHT: format |= DT_RIGHT; break;
+            }
+            
+            // 绘制文本
+            DrawTextW(hdc, state->text.c_str(), -1, &rect, format);
+            
+            SelectObject(hdc, hOldFont);
+            DeleteObject(hFont);
+            
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_NCDESTROY: {
+            RemoveWindowSubclass(hwnd, LabelSubclassProc, uIdSubclass);
+            break;
+        }
+    }
+    
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// ========================================
+// 编辑框导出函数
+// ========================================
+
+extern "C" {
+
+__declspec(dllexport) HWND __stdcall CreateEditBox(
+    HWND hParent,
+    int x, int y, int width, int height,
+    const unsigned char* text_bytes,
+    int text_len,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    const unsigned char* font_name_bytes,
+    int font_name_len,
+    int font_size,
+    BOOL bold,
+    BOOL italic,
+    BOOL underline,
+    int alignment,
+    BOOL multiline,
+    BOOL readonly,
+    BOOL password,
+    BOOL has_border
+) {
+    // 转换文本
+    std::wstring text = Utf8ToWide(text_bytes, text_len);
+    std::wstring font_name = Utf8ToWide(font_name_bytes, font_name_len);
+    
+    // 创建编辑框样式
+    DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP;
+    if (multiline) {
+        style |= ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL;
+    }
+    if (readonly) {
+        style |= ES_READONLY;
+    }
+    if (password) {
+        style |= ES_PASSWORD;
+    }
+    if (has_border) {
+        style |= WS_BORDER;
+    }
+    
+    // 设置对齐方式
+    switch (alignment) {
+        case ALIGN_LEFT: style |= ES_LEFT; break;
+        case ALIGN_CENTER: style |= ES_CENTER; break;
+        case ALIGN_RIGHT: style |= ES_RIGHT; break;
+    }
+    
+    // 创建编辑框
+    int id = g_next_control_id++;
+    HWND hEdit = CreateWindowExW(
+        0,
+        L"EDIT",
+        text.c_str(),
+        style,
+        x, y, width, height,
+        hParent,
+        (HMENU)(INT_PTR)id,
+        GetModuleHandle(NULL),
+        NULL
+    );
+    
+    if (!hEdit) {
+        return NULL;
+    }
+    
+    // 创建状态对象
+    EditBoxState* state = new EditBoxState();
+    state->hwnd = hEdit;
+    state->parent = hParent;
+    state->id = id;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->font.font_name = font_name;
+    state->font.font_size = font_size;
+    state->font.bold = bold != 0;
+    state->font.italic = italic != 0;
+    state->font.underline = underline != 0;
+    state->alignment = (TextAlignment)alignment;
+    state->multiline = multiline != 0;
+    state->readonly = readonly != 0;
+    state->password = password != 0;
+    state->has_border = has_border != 0;
+    
+    g_editboxes[hEdit] = state;
+    
+    // 设置字体
+    HFONT hFont = CreateCustomFont(state->font);
+    SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+    
+    // 子类化以处理颜色
+    SetWindowSubclass(hEdit, EditBoxSubclassProc, 0, (DWORD_PTR)state);
+    
+    return hEdit;
+}
+
+__declspec(dllexport) int __stdcall GetEditBoxText(
+    HWND hEdit,
+    unsigned char* buffer,
+    int buffer_size
+) {
+    if (!hEdit || !buffer || buffer_size <= 0) {
+        return 0;
+    }
+    
+    int len = GetWindowTextLengthW(hEdit);
+    if (len <= 0) {
+        return 0;
+    }
+    
+    std::wstring text(len + 1, 0);
+    GetWindowTextW(hEdit, &text[0], len + 1);
+    
+    // 转换为 UTF-8
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, NULL, 0, NULL, NULL);
+    if (utf8_len <= 0 || utf8_len > buffer_size) {
+        return 0;
+    }
+    
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, (LPSTR)buffer, buffer_size, NULL, NULL);
+    return utf8_len - 1;  // 不包括结尾的 null
+}
+
+__declspec(dllexport) void __stdcall SetEditBoxText(
+    HWND hEdit,
+    const unsigned char* text_bytes,
+    int text_len
+) {
+    if (!hEdit) return;
+    
+    std::wstring text = Utf8ToWide(text_bytes, text_len);
+    SetWindowTextW(hEdit, text.c_str());
+}
+
+__declspec(dllexport) void __stdcall SetEditBoxFont(
+    HWND hEdit,
+    const unsigned char* font_name_bytes,
+    int font_name_len,
+    int font_size,
+    BOOL bold,
+    BOOL italic,
+    BOOL underline
+) {
+    auto it = g_editboxes.find(hEdit);
+    if (it == g_editboxes.end()) return;
+    
+    EditBoxState* state = it->second;
+    state->font.font_name = Utf8ToWide(font_name_bytes, font_name_len);
+    state->font.font_size = font_size;
+    state->font.bold = bold != 0;
+    state->font.italic = italic != 0;
+    state->font.underline = underline != 0;
+    
+    HFONT hFont = CreateCustomFont(state->font);
+    SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+}
+
+__declspec(dllexport) void __stdcall SetEditBoxColor(
+    HWND hEdit,
+    UINT32 fg_color,
+    UINT32 bg_color
+) {
+    auto it = g_editboxes.find(hEdit);
+    if (it == g_editboxes.end()) return;
+    
+    EditBoxState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    
+    InvalidateRect(hEdit, NULL, TRUE);
+}
+
+__declspec(dllexport) void __stdcall SetEditBoxBounds(
+    HWND hEdit,
+    int x, int y, int width, int height
+) {
+    if (!hEdit) return;
+    SetWindowPos(hEdit, NULL, x, y, width, height, SWP_NOZORDER);
+}
+
+__declspec(dllexport) void __stdcall EnableEditBox(
+    HWND hEdit,
+    BOOL enable
+) {
+    if (!hEdit) return;
+    EnableWindow(hEdit, enable);
+}
+
+__declspec(dllexport) void __stdcall ShowEditBox(
+    HWND hEdit,
+    BOOL show
+) {
+    if (!hEdit) return;
+    ShowWindow(hEdit, show ? SW_SHOW : SW_HIDE);
+}
+
+// ========================================
+// 标签导出函数
+// ========================================
+
+__declspec(dllexport) HWND __stdcall CreateLabel(
+    HWND hParent,
+    int x, int y, int width, int height,
+    const unsigned char* text_bytes,
+    int text_len,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    const unsigned char* font_name_bytes,
+    int font_name_len,
+    int font_size,
+    BOOL bold,
+    BOOL italic,
+    BOOL underline,
+    int alignment
+) {
+    // 转换文本
+    std::wstring text = Utf8ToWide(text_bytes, text_len);
+    std::wstring font_name = Utf8ToWide(font_name_bytes, font_name_len);
+    
+    // 创建标签
+    int id = g_next_control_id++;
+    HWND hLabel = CreateWindowExW(
+        0,
+        L"STATIC",
+        text.c_str(),
+        WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
+        x, y, width, height,
+        hParent,
+        (HMENU)(INT_PTR)id,
+        GetModuleHandle(NULL),
+        NULL
+    );
+    
+    if (!hLabel) {
+        return NULL;
+    }
+    
+    // 创建状态对象
+    LabelState* state = new LabelState();
+    state->hwnd = hLabel;
+    state->parent = hParent;
+    state->id = id;
+    state->text = text;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->font.font_name = font_name;
+    state->font.font_size = font_size;
+    state->font.bold = bold != 0;
+    state->font.italic = italic != 0;
+    state->font.underline = underline != 0;
+    state->alignment = (TextAlignment)alignment;
+    
+    g_labels[hLabel] = state;
+    
+    // 子类化以自定义绘制
+    SetWindowSubclass(hLabel, LabelSubclassProc, 0, (DWORD_PTR)state);
+    
+    return hLabel;
+}
+
+__declspec(dllexport) void __stdcall SetLabelText(
+    HWND hLabel,
+    const unsigned char* text_bytes,
+    int text_len
+) {
+    auto it = g_labels.find(hLabel);
+    if (it == g_labels.end()) return;
+    
+    LabelState* state = it->second;
+    state->text = Utf8ToWide(text_bytes, text_len);
+    
+    InvalidateRect(hLabel, NULL, TRUE);
+}
+
+__declspec(dllexport) void __stdcall SetLabelFont(
+    HWND hLabel,
+    const unsigned char* font_name_bytes,
+    int font_name_len,
+    int font_size,
+    BOOL bold,
+    BOOL italic,
+    BOOL underline
+) {
+    auto it = g_labels.find(hLabel);
+    if (it == g_labels.end()) return;
+    
+    LabelState* state = it->second;
+    state->font.font_name = Utf8ToWide(font_name_bytes, font_name_len);
+    state->font.font_size = font_size;
+    state->font.bold = bold != 0;
+    state->font.italic = italic != 0;
+    state->font.underline = underline != 0;
+    
+    InvalidateRect(hLabel, NULL, TRUE);
+}
+
+__declspec(dllexport) void __stdcall SetLabelColor(
+    HWND hLabel,
+    UINT32 fg_color,
+    UINT32 bg_color
+) {
+    auto it = g_labels.find(hLabel);
+    if (it == g_labels.end()) return;
+    
+    LabelState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    
+    InvalidateRect(hLabel, NULL, TRUE);
+}
+
+__declspec(dllexport) void __stdcall SetLabelBounds(
+    HWND hLabel,
+    int x, int y, int width, int height
+) {
+    if (!hLabel) return;
+    SetWindowPos(hLabel, NULL, x, y, width, height, SWP_NOZORDER);
+}
+
+__declspec(dllexport) void __stdcall EnableLabel(
+    HWND hLabel,
+    BOOL enable
+) {
+    if (!hLabel) return;
+    EnableWindow(hLabel, enable);
+}
+
+__declspec(dllexport) void __stdcall ShowLabel(
+    HWND hLabel,
+    BOOL show
+) {
+    if (!hLabel) return;
+    ShowWindow(hLabel, show ? SW_SHOW : SW_HIDE);
+}
+
+} // extern "C"

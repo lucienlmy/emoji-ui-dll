@@ -23,6 +23,49 @@ typedef void (__stdcall *MessageBoxCallback)(int confirmed);
 // Tab 切换回调函数类型 (stdcall 调用约定)
 typedef void (__stdcall *TAB_CALLBACK)(HWND hTabControl, int selectedIndex);
 
+// 文本对齐方式
+enum TextAlignment {
+    ALIGN_LEFT = 0,
+    ALIGN_CENTER = 1,
+    ALIGN_RIGHT = 2
+};
+
+// 字体样式结构
+struct FontStyle {
+    std::wstring font_name;     // 字体名称
+    int font_size;              // 字体大小
+    bool bold;                  // 粗体
+    bool italic;                // 斜体
+    bool underline;             // 下划线
+};
+
+// 编辑框状态
+struct EditBoxState {
+    HWND hwnd;                  // 编辑框句柄
+    HWND parent;                // 父窗口句柄
+    int id;                     // 控件ID
+    UINT32 fg_color;            // 前景色 (ARGB)
+    UINT32 bg_color;            // 背景色 (ARGB)
+    FontStyle font;             // 字体样式
+    TextAlignment alignment;    // 文字对齐
+    bool multiline;             // 多行模式
+    bool readonly;              // 只读模式
+    bool password;              // 密码框
+    bool has_border;            // 是否有边框
+};
+
+// 标签状态
+struct LabelState {
+    HWND hwnd;                  // 标签句柄
+    HWND parent;                // 父窗口句柄
+    int id;                     // 控件ID
+    std::wstring text;          // 文本内容
+    UINT32 fg_color;            // 前景色 (ARGB)
+    UINT32 bg_color;            // 背景色 (ARGB)
+    FontStyle font;             // 字体样式
+    TextAlignment alignment;    // 文字对齐
+};
+
 // Button structure
 struct EmojiButton {
     int id;
@@ -89,6 +132,8 @@ struct TabControlState {
 extern std::map<HWND, WindowState*> g_windows;
 extern std::map<HWND, MsgBoxState*> g_msgboxes;
 extern std::map<HWND, TabControlState*> g_tab_controls;
+extern std::map<HWND, EditBoxState*> g_editboxes;
+extern std::map<HWND, LabelState*> g_labels;
 extern ButtonClickCallback g_button_callback;
 
 // Export functions (stdcall calling convention)
@@ -189,6 +234,141 @@ extern "C" {
     // 销毁 TabControl（清理资源）
     __declspec(dllexport) void __stdcall DestroyTabControl(
         HWND hTabControl
+    );
+
+    // ========== 编辑框功能 ==========
+
+    // 创建编辑框
+    __declspec(dllexport) HWND __stdcall CreateEditBox(
+        HWND hParent,
+        int x, int y, int width, int height,
+        const unsigned char* text_bytes,
+        int text_len,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        const unsigned char* font_name_bytes,
+        int font_name_len,
+        int font_size,
+        BOOL bold,
+        BOOL italic,
+        BOOL underline,
+        int alignment,  // 0=左, 1=中, 2=右
+        BOOL multiline,
+        BOOL readonly,
+        BOOL password,
+        BOOL has_border
+    );
+
+    // 获取编辑框文本
+    __declspec(dllexport) int __stdcall GetEditBoxText(
+        HWND hEdit,
+        unsigned char* buffer,
+        int buffer_size
+    );
+
+    // 设置编辑框文本
+    __declspec(dllexport) void __stdcall SetEditBoxText(
+        HWND hEdit,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+
+    // 设置编辑框字体
+    __declspec(dllexport) void __stdcall SetEditBoxFont(
+        HWND hEdit,
+        const unsigned char* font_name_bytes,
+        int font_name_len,
+        int font_size,
+        BOOL bold,
+        BOOL italic,
+        BOOL underline
+    );
+
+    // 设置编辑框颜色
+    __declspec(dllexport) void __stdcall SetEditBoxColor(
+        HWND hEdit,
+        UINT32 fg_color,
+        UINT32 bg_color
+    );
+
+    // 设置编辑框位置和大小
+    __declspec(dllexport) void __stdcall SetEditBoxBounds(
+        HWND hEdit,
+        int x, int y, int width, int height
+    );
+
+    // 启用/禁用编辑框
+    __declspec(dllexport) void __stdcall EnableEditBox(
+        HWND hEdit,
+        BOOL enable
+    );
+
+    // 显示/隐藏编辑框
+    __declspec(dllexport) void __stdcall ShowEditBox(
+        HWND hEdit,
+        BOOL show
+    );
+
+    // ========== 标签功能 ==========
+
+    // 创建标签
+    __declspec(dllexport) HWND __stdcall CreateLabel(
+        HWND hParent,
+        int x, int y, int width, int height,
+        const unsigned char* text_bytes,
+        int text_len,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        const unsigned char* font_name_bytes,
+        int font_name_len,
+        int font_size,
+        BOOL bold,
+        BOOL italic,
+        BOOL underline,
+        int alignment  // 0=左, 1=中, 2=右
+    );
+
+    // 设置标签文本
+    __declspec(dllexport) void __stdcall SetLabelText(
+        HWND hLabel,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+
+    // 设置标签字体
+    __declspec(dllexport) void __stdcall SetLabelFont(
+        HWND hLabel,
+        const unsigned char* font_name_bytes,
+        int font_name_len,
+        int font_size,
+        BOOL bold,
+        BOOL italic,
+        BOOL underline
+    );
+
+    // 设置标签颜色
+    __declspec(dllexport) void __stdcall SetLabelColor(
+        HWND hLabel,
+        UINT32 fg_color,
+        UINT32 bg_color
+    );
+
+    // 设置标签位置和大小
+    __declspec(dllexport) void __stdcall SetLabelBounds(
+        HWND hLabel,
+        int x, int y, int width, int height
+    );
+
+    // 启用/禁用标签
+    __declspec(dllexport) void __stdcall EnableLabel(
+        HWND hLabel,
+        BOOL enable
+    );
+
+    // 显示/隐藏标签
+    __declspec(dllexport) void __stdcall ShowLabel(
+        HWND hLabel,
+        BOOL show
     );
 }
 

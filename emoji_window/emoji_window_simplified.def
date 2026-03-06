@@ -1,0 +1,26 @@
+LIBRARY emoji_window
+EXPORTS
+    create_window
+    create_emoji_button_bytes
+    set_button_click_callback
+    run_message_loop
+    destroy_window
+    set_window_icon
+    show_message_box_bytes
+    show_confirm_box_bytes
+    CreateEmojiEdit
+    SetEmojiEditText
+    GetEmojiEditTextLength
+    GetEmojiEditText
+    SetEmojiEditFont
+    SetEmojiEditColors
+    SetEmojiEditStyle
+    SetEmojiEditScroll
+    GetEmojiEditScrollInfo
+    SetEmojiEditSelection
+    GetEmojiEditSelection
+    SetEmojiEditCursorPos
+    GetEmojiEditCursorPos
+    SetEmojiEditFocus
+    ClearEmojiEdit
+    DestroyEmojiEdit
