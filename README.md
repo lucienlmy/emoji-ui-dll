@@ -61,9 +61,90 @@ int create_emoji_button_bytes(
 ### 设置按钮点击回调
 
 ```c++
-typedef void (*ButtonClickCallback)(int button_id);
-void set_button_click_callback(ButtonClickCallback callback);
+typedef void (__stdcall *ButtonClickCallback)(int button_id);
+void __stdcall set_button_click_callback(ButtonClickCallback callback);
 ```
+
+### 设置窗口大小改变回调
+
+当自绘窗口大小被用户或代码改变时触发。
+
+```c++
+typedef void (__stdcall *WindowResizeCallback)(HWND hwnd, int width, int height);
+void __stdcall SetWindowResizeCallback(WindowResizeCallback callback);
+```
+
+| 参数 | 说明 |
+|------|------|
+| `hwnd` | 发生大小改变的窗口句柄 |
+| `width` | 窗口新的客户区宽度（像素） |
+| `height` | 窗口新的客户区高度（像素） |
+
+**易语言声明：**
+```
+.DLL命令 设置窗口大小改变回调, , "emoji_window.dll", "SetWindowResizeCallback"
+    .参数 回调函数指针, 子程序指针
+```
+
+**易语言使用示例：**
+```
+.子程序 窗口大小改变回调, , 公开
+.参数 窗口句柄_, 整数型
+.参数 新宽度, 整数型
+.参数 新高度, 整数型
+
+' 窗口大小改变时更新布局
+调试输出 ("窗口大小改变: " + 到文本 (新宽度) + " x " + 到文本 (新高度))
+
+' 注册（程序初始化时调用一次）
+设置窗口大小改变回调 (&窗口大小改变回调)
+```
+
+> **注意**：回调必须在创建窗口后、运行消息循环前完成注册。
+
+---
+
+### 设置窗口被关闭回调
+
+当自绘窗口被关闭时触发（用户点击关闭按钮 ×，或代码调用 `destroy_window`，均会触发 `WM_DESTROY`）。
+
+```c++
+typedef void (__stdcall *WindowCloseCallback)(HWND hwnd);
+void __stdcall SetWindowCloseCallback(WindowCloseCallback callback);
+```
+
+| 参数 | 说明 |
+|------|------|
+| `hwnd` | 被关闭的窗口句柄（触发时 HWND 已失效，仅用于识别是哪个窗口） |
+
+**易语言声明：**
+```
+.DLL命令 设置窗口关闭回调, , "emoji_window.dll", "SetWindowCloseCallback"
+    .参数 回调函数指针, 子程序指针
+```
+
+**易语言使用示例：**
+```
+.子程序 自绘窗口关闭回调, , 公开
+.参数 已关闭的窗口句柄, 整数型
+
+' 重置句柄变量，防止后续误用失效的 HWND
+调试输出 ("自绘窗口已关闭, HWND=" + 到文本 (已关闭的窗口句柄))
+.如果真 (窗口句柄 = 已关闭的窗口句柄)
+    窗口句柄 = 0
+.如果真结束
+TabControl句柄 = 0
+
+' 注册（程序初始化时调用一次）
+设置窗口关闭回调 (&自绘窗口关闭回调)
+```
+
+> **注意**：
+> - 回调触发时窗口已销毁，不要在回调内对该 `hwnd` 执行任何窗口操作。
+> - 只有顶层窗口（非子窗口）关闭时才会触发此回调。
+> - 若程序同时运行了 `run_message_loop`，关闭窗口后消息循环会自动退出；若由易语言消息循环驱动，则不会影响易语言进程。
+
+---
 
 ### 运行消息循环
 

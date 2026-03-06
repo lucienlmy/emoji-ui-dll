@@ -1317,6 +1317,137 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
         break;
     }
 
+    // TCS_OWNERDRAWFIXED: 父窗口负责绘制每个 Tab 标签
+    // 用 ID2D1DCRenderTarget 渲染彩色 Emoji（等同于按钮的 D2D 渲染路径）
+    case WM_DRAWITEM: {
+        DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lparam;
+        // 只处理属于此 TabControl 的绘制请求
+        if (dis->CtlType != ODT_TAB || dis->hwndItem != hTabControl) break;
+
+        int tabIdx = (int)dis->itemID;
+        // 若标题尚未加入 pages（极少数时序问题），跳过，让系统默认处理
+        if (tabIdx < 0 || tabIdx >= (int)state->pages.size()) break;
+
+        const std::wstring& title = state->pages[tabIdx].title;
+        bool isSelected = (dis->itemState & ODS_SELECTED) != 0;
+
+        int w = dis->rcItem.right  - dis->rcItem.left;
+        int h = dis->rcItem.bottom - dis->rcItem.top;
+        if (w <= 0 || h <= 0) break;
+
+        // ── 1. 创建内存 DC + 32 位 DIBSection（D2D Premultiplied Alpha 所需）──
+        HDC memDC = CreateCompatibleDC(dis->hDC);
+        if (!memDC) break;
+
+        BITMAPINFO bmi        = {};
+        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth       = w;
+        bmi.bmiHeader.biHeight      = -h;   // top-down
+        bmi.bmiHeader.biPlanes      = 1;
+        bmi.bmiHeader.biBitCount    = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void*   pvBits  = nullptr;
+        HBITMAP hBmp    = CreateDIBSection(dis->hDC, &bmi, DIB_RGB_COLORS, &pvBits, nullptr, 0);
+        if (!hBmp) { DeleteDC(memDC); break; }
+        HBITMAP hOldBmp = (HBITMAP)SelectObject(memDC, hBmp);
+
+        // ── 2. 创建 D2D DCRenderTarget（Premultiplied Alpha = 彩色 Emoji 渲染所需）──
+        D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        );
+        ID2D1DCRenderTarget* dcRT = nullptr;
+        if (SUCCEEDED(g_d2d_factory->CreateDCRenderTarget(&rtProps, &dcRT))) {
+            RECT rcBind = { 0, 0, w, h };
+            dcRT->BindDC(memDC, &rcBind);
+            // Grayscale 抗锯齿：与 Premultiplied Alpha 兼容，且支持彩色字体
+            dcRT->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+
+            dcRT->BeginDraw();
+
+            // ── 3. 背景填充 ──
+            // 选中: 白色；未选中: Element UI 浅灰 #F5F7FA
+            D2D1_COLOR_F bgColor = isSelected
+                ? D2D1::ColorF(1.00f, 1.00f, 1.00f, 1.0f)
+                : D2D1::ColorF(0.961f, 0.969f, 0.980f, 1.0f);
+
+            ID2D1SolidColorBrush* bgBrush = nullptr;
+            dcRT->CreateSolidColorBrush(bgColor, &bgBrush);
+            D2D1_RECT_F fillRect = D2D1::RectF(0.0f, 0.0f, (FLOAT)w, (FLOAT)h);
+            dcRT->FillRectangle(fillRect, bgBrush);
+            bgBrush->Release();
+
+            // ── 4. 文字（含彩色 Emoji） ──
+            if (!title.empty() && g_dwrite_factory) {
+                IDWriteTextFormat* fmt = nullptr;
+                g_dwrite_factory->CreateTextFormat(
+                    L"Segoe UI Emoji",   // 支持彩色 Emoji；中文字符由 DWrite 自动 Fallback
+                    nullptr,
+                    DWRITE_FONT_WEIGHT_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    13.0f,
+                    L"zh-CN",
+                    &fmt
+                );
+                if (fmt) {
+                    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+                    // 选中: Element UI 主蓝 #409EFF；未选中: 常规文字色 #606266
+                    D2D1_COLOR_F textColor = isSelected
+                        ? D2D1::ColorF(0x409EFF)
+                        : D2D1::ColorF(0x606266);
+
+                    ID2D1SolidColorBrush* textBrush = nullptr;
+                    dcRT->CreateSolidColorBrush(textColor, &textBrush);
+
+                    // 文字区域：底部留 2px 给选中指示条
+                    D2D1_RECT_F textRect = D2D1::RectF(
+                        2.0f, 0.0f,
+                        (FLOAT)(w - 2), (FLOAT)(h - (isSelected ? 2.0f : 0.0f))
+                    );
+
+                    // D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT: 关键 —— 彩色 Emoji 渲染
+                    dcRT->DrawText(
+                        title.c_str(),
+                        (UINT32)title.length(),
+                        fmt,
+                        textRect,
+                        textBrush,
+                        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
+                    );
+
+                    textBrush->Release();
+                    fmt->Release();
+                }
+            }
+
+            // ── 5. 选中指示条（底部 2px 蓝线，Element UI 风格）──
+            if (isSelected) {
+                ID2D1SolidColorBrush* lineBrush = nullptr;
+                dcRT->CreateSolidColorBrush(D2D1::ColorF(0x409EFF), &lineBrush);
+                D2D1_RECT_F lineRect = D2D1::RectF(0.0f, (FLOAT)(h - 2), (FLOAT)w, (FLOAT)h);
+                dcRT->FillRectangle(lineRect, lineBrush);
+                lineBrush->Release();
+            }
+
+            dcRT->EndDraw();
+            dcRT->Release();
+        }
+
+        // ── 6. 将渲染结果 Blit 到 TabControl 的 HDC ──
+        BitBlt(dis->hDC, dis->rcItem.left, dis->rcItem.top, w, h, memDC, 0, 0, SRCCOPY);
+
+        // ── 7. 清理资源 ──
+        SelectObject(memDC, hOldBmp);
+        DeleteObject(hBmp);
+        DeleteDC(memDC);
+
+        return TRUE;
+    }
+
     case WM_SIZE: {
         // 窗口大小改变时，更新布局
         UpdateTabLayout(state);
@@ -1345,12 +1476,13 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
         comctl_initialized = true;
     }
 
-    // 创建 Tab Control（使用现代样式）
+    // 创建 Tab Control（TCS_OWNERDRAWFIXED：父窗口自绘标签，实现彩色 Emoji 渲染）
     HWND hTabControl = CreateWindowExW(
         0,
         WC_TABCONTROLW,
         L"",
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS | TCS_FOCUSNEVER,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS | TCS_FOCUSNEVER
+        | TCS_OWNERDRAWFIXED | TCS_FIXEDWIDTH,
         x, y, width, height,
         hParent,
         nullptr,
@@ -1360,7 +1492,10 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
 
     if (!hTabControl) return nullptr;
 
-    // 启用现代视觉样式（XP/Vista+ 风格）
+    // 设置固定标签尺寸（宽=120px 能容纳 Emoji + 中文；高=34px 给 Emoji 足够空间）
+    SendMessage(hTabControl, TCM_SETITEMSIZE, 0, MAKELPARAM(120, 34));
+
+    // 启用现代视觉样式（XP/Vista+ 风格，仅影响标签边框；标签内容由 WM_DRAWITEM 自绘）
     SetWindowTheme(hTabControl, L"Explorer", nullptr);
 
     // 设置字体（使用 Segoe UI 以获得现代外观）
