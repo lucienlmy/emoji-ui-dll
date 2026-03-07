@@ -6,6 +6,7 @@ EXPORTS
     run_message_loop
     destroy_window
     set_window_icon
+    set_window_title
     show_message_box_bytes
     show_confirm_box_bytes
     CreateTabControl

@@ -29,6 +29,11 @@
     .参数 窗口句柄, 整数型
     .参数 图标路径, 文本型
 
+.DLL命令 设置窗口标题, , "emoji_window.dll", "set_window_title", , , 设置窗口标题（UTF-8）
+    .参数 窗口句柄, 整数型
+    .参数 标题字节集指针, 整数型, , UTF-8字节集指针
+    .参数 标题长度, 整数型, , 字节集长度
+
 .DLL命令 MultiByteToWideChar, 整数型, "Kernel32.dll", "MultiByteToWideChar", 公开
     .参数 CodePage, 整数型
     .参数 dwFlags, 整数型

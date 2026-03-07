@@ -170,6 +170,7 @@ extern "C" {
     __declspec(dllexport) int __stdcall run_message_loop();
     __declspec(dllexport) void __stdcall destroy_window(HWND hwnd);
     __declspec(dllexport) void __stdcall set_window_icon(HWND hwnd, const char* icon_path);
+    __declspec(dllexport) void __stdcall set_window_title(HWND hwnd, const char* title_utf8, int title_len);
 
     // Message box (OK button only, supports Unicode and Emoji)
     __declspec(dllexport) void __stdcall show_message_box_bytes(

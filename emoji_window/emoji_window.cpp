@@ -691,6 +691,21 @@ void __stdcall set_window_icon(HWND hwnd, const char* icon_path) {
     }
 }
 
+// Set window title (UTF-8 input)
+void __stdcall set_window_title(HWND hwnd, const char* title_utf8, int title_len) {
+    if (!hwnd || !title_utf8 || title_len <= 0) return;
+
+    // Convert UTF-8 to wide string
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, title_utf8, title_len, nullptr, 0);
+    if (wlen <= 0) return;
+
+    std::wstring wtitle(wlen, 0);
+    MultiByteToWideChar(CP_UTF8, 0, title_utf8, title_len, &wtitle[0], wlen);
+
+    // Set window title
+    SetWindowTextW(hwnd, wtitle.c_str());
+}
+
 // Draw message box - Element UI Style
 void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state) {
     RECT rc;
