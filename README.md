@@ -146,6 +146,63 @@ TabControl句柄 = 0
 
 ---
 
+### 编辑框
+
+#### 创建编辑框（含文本垂直居中）
+
+单行编辑框支持**文本垂直居中**：创建时最后一个参数传 `TRUE` 即可；仅对单行有效，多行编辑框忽略该选项。
+
+```c++
+HWND __stdcall CreateEditBox(
+    HWND hParent,
+    int x, int y, int width, int height,
+    const unsigned char* text_bytes, int text_len,
+    UINT32 fg_color, UINT32 bg_color,
+    const unsigned char* font_name_bytes, int font_name_len,
+    int font_size, BOOL bold, BOOL italic, BOOL underline,
+    int alignment,    // 0=左 1=中 2=右
+    BOOL multiline, BOOL readonly, BOOL password, BOOL has_border,
+    BOOL vertical_center   // 文本垂直居中（仅单行有效）
+);
+```
+
+**说明**：系统单行 EDIT 不支持垂直居中，DLL 在“单行 + 垂直居中”时内部使用多行样式（`EM_SETRECTNP`）实现垂直居中，并拦截回车以保持单行行为；左右边距设为 0 以减少白边。
+
+**易语言声明：** 在 `创建编辑框` 的 DLL 命令中，最后一个参数为 `文本垂直居中`（逻辑型）。
+
+**易语言示例：**
+```
+编辑框1 ＝ 创建编辑框 (父句柄, 140, 30, 280, 60, 文本指针, 文本长, 前景色, 背景色, 字体名指针, 字体名长, 12, 假, 假, 假, 1, 假, 假, 假, 真, 真)
+' 最后一参 真 = 启用文本垂直居中
+```
+
+#### 设置编辑框垂直居中（创建后修改）
+
+创建后也可随时开关垂直居中：
+
+```c++
+void __stdcall SetEditBoxVerticalCenter(HWND hEdit, BOOL vertical_center);
+```
+
+#### 设置编辑框按键回调
+
+可接收编辑框的按键按下/松开通知（不拦截按键）：
+
+```c++
+typedef void (__stdcall *EditBoxKeyCallback)(HWND hEdit, int key_code, int key_down, int shift, int ctrl, int alt);
+void __stdcall SetEditBoxKeyCallback(HWND hEdit, EditBoxKeyCallback callback);
+```
+
+| 参数 | 说明 |
+|------|------|
+| `key_code` | Windows 虚拟键码（如 13=回车 27=Esc） |
+| `key_down` | 1=按下 0=松开 |
+| `shift` / `ctrl` / `alt` | 1=按下 0=未按 |
+
+**易语言**：子程序需 stdcall，参数为（编辑框句柄, 键码, 按下或松开, Shift, Ctrl, Alt）整数型；注册时传 `设置编辑框按键回调(编辑框句柄, 到整数(&子程序))`。
+
+---
+
 ### 运行消息循环
 
 ```c++

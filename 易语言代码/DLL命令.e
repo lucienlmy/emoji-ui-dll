@@ -199,6 +199,7 @@
     .参数 只读模式, 逻辑型
     .参数 密码框, 逻辑型
     .参数 显示边框, 逻辑型
+    .参数 文本垂直居中, 逻辑型, , 仅单行有效
 
 .DLL命令 获取编辑框文本, 整数型, "emoji_window.dll", "GetEditBoxText", , , 获取编辑框文本
     .参数 编辑框句柄, 整数型
@@ -238,6 +239,14 @@
 .DLL命令 显示编辑框, , "emoji_window.dll", "ShowEditBox", , , 显示或隐藏编辑框
     .参数 编辑框句柄, 整数型
     .参数 显示, 逻辑型
+
+.DLL命令 设置编辑框垂直居中, , "emoji_window.dll", "SetEditBoxVerticalCenter", , , 设置编辑框文本是否垂直居中（仅单行有效）
+    .参数 编辑框句柄, 整数型
+    .参数 垂直居中, 逻辑型
+
+.DLL命令 设置编辑框按键回调, , "emoji_window.dll", "SetEditBoxKeyCallback", , , 设置编辑框按键回调（key_down: 1=按下 0=松开）
+    .参数 编辑框句柄, 整数型
+    .参数 回调子程序指针, 整数型, , 子程序需 stdcall，参数：hEdit, key_code, key_down, shift, ctrl, alt（均为整数型）
 
 .DLL命令 创建标签, 整数型, "emoji_window.dll", "CreateLabel", , , 创建标签
     .参数 父窗口句柄, 整数型

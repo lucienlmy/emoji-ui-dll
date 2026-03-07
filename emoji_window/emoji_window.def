@@ -28,6 +28,8 @@ EXPORTS
     SetEditBoxBounds
     EnableEditBox
     ShowEditBox
+    SetEditBoxVerticalCenter
+    SetEditBoxKeyCallback
     CreateLabel
     SetLabelText
     SetLabelFont

@@ -1836,6 +1836,36 @@ HFONT CreateCustomFont(const FontStyle& font, int dpi = 96) {
     );
 }
 
+// 更新编辑框格式矩形以实现垂直居中（需为“多行样式”的编辑框，EM_SETRECTNP 仅对多行有效）
+static void UpdateEditBoxFormatRect(HWND hwnd) {
+    auto it = g_editboxes.find(hwnd);
+    if (it == g_editboxes.end()) return;
+    EditBoxState* state = it->second;
+    if (!state->vertical_center) return;
+    // 多行编辑框不设垂直居中；单行垂直居中时 state->multiline 为 false 但控件实际带 ES_MULTILINE
+    if (state->multiline) return;
+
+    RECT client;
+    if (!GetClientRect(hwnd, &client) || client.bottom <= 0) return;
+
+    HDC hdc = GetDC(hwnd);
+    HFONT hFont = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
+    HGDIOBJ oldFont = hFont ? SelectObject(hdc, hFont) : NULL;
+    TEXTMETRICW tm = {};
+    if (GetTextMetricsW(hdc, &tm)) {
+        int line_height = tm.tmHeight;
+        int top = (client.bottom - line_height) / 2;
+        if (top < 0) top = 0;
+        RECT format_rect = { 0, top, client.right, top + line_height };
+        SendMessageW(hwnd, EM_SETRECTNP, 0, (LPARAM)&format_rect);
+        // 左右边距设为 0，避免多行编辑框默认留白造成两侧白边
+        SendMessageW(hwnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(0, 0));
+        InvalidateRect(hwnd, NULL, TRUE);
+    }
+    if (oldFont) SelectObject(hdc, oldFont);
+    ReleaseDC(hwnd, hdc);
+}
+
 // 编辑框子类化处理
 LRESULT CALLBACK EditBoxSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
     EditBoxState* state = (EditBoxState*)dwRefData;
@@ -1855,6 +1885,32 @@ LRESULT CALLBACK EditBoxSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                 state->bg_color & 0xFF
             ));
             return (LRESULT)state->bg_brush;
+        }
+        case WM_SIZE: {
+            if (state->vertical_center && !state->multiline) {
+                UpdateEditBoxFormatRect(hwnd);
+            }
+            break;
+        }
+        case WM_CHAR: {
+            // 单行+垂直居中时用多行样式创建，需拦截回车防止换行
+            if (state->vertical_center && !state->multiline) {
+                if (wparam == VK_RETURN || wparam == '\r' || wparam == '\n') {
+                    return 0;
+                }
+            }
+            break;
+        }
+        case WM_KEYDOWN:
+        case WM_KEYUP: {
+            if (state->key_callback) {
+                int key_down = (msg == WM_KEYDOWN) ? 1 : 0;
+                int shift = (GetKeyState(VK_SHIFT) & 0x8000) ? 1 : 0;
+                int ctrl = (GetKeyState(VK_CONTROL) & 0x8000) ? 1 : 0;
+                int alt = (GetKeyState(VK_MENU) & 0x8000) ? 1 : 0;
+                state->key_callback(hwnd, (int)wparam, key_down, shift, ctrl, alt);
+            }
+            break;
         }
         case WM_NCDESTROY: {
             RemoveWindowSubclass(hwnd, EditBoxSubclassProc, uIdSubclass);
@@ -1946,16 +2002,22 @@ __declspec(dllexport) HWND __stdcall CreateEditBox(
     BOOL multiline,
     BOOL readonly,
     BOOL password,
-    BOOL has_border
+    BOOL has_border,
+    BOOL vertical_center
 ) {
     // 转换文本
     std::wstring text = Utf8ToWide(text_bytes, text_len);
     std::wstring font_name = Utf8ToWide(font_name_bytes, font_name_len);
     
     // 创建编辑框样式
+    // 单行+垂直居中时用 ES_MULTILINE+ES_AUTOHSCROLL，使 EM_SETRECTNP 生效（系统单行 EDIT 忽略格式矩形）
+    BOOL use_multiline_for_center = (vertical_center && !multiline);
     DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP;
-    if (multiline) {
-        style |= ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL;
+    if (multiline || use_multiline_for_center) {
+        style |= ES_MULTILINE | ES_AUTOHSCROLL;
+        if (multiline) {
+            style |= ES_AUTOVSCROLL | WS_VSCROLL;
+        }
     }
     if (readonly) {
         style |= ES_READONLY;
@@ -2009,7 +2071,9 @@ __declspec(dllexport) HWND __stdcall CreateEditBox(
     state->readonly = readonly != 0;
     state->password = password != 0;
     state->has_border = has_border != 0;
-    
+    state->vertical_center = (vertical_center != 0);
+    state->key_callback = nullptr;
+
     // ✅ 创建背景画刷（只创建一次，避免重复创建导致闪烁）
     state->bg_brush = CreateSolidBrush(RGB(
         (bg_color >> 16) & 0xFF,
@@ -2022,10 +2086,17 @@ __declspec(dllexport) HWND __stdcall CreateEditBox(
     // 设置字体
     HFONT hFont = CreateCustomFont(state->font);
     SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
-    
-    // 子类化以处理颜色
+
+    // 子类化以处理颜色、垂直居中、按键回调
     SetWindowSubclass(hEdit, EditBoxSubclassProc, 0, (DWORD_PTR)state);
-    
+
+    // 所有编辑框：左右边距设为 0，去掉系统默认留白（消除左右白边）
+    SendMessageW(hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(0, 0));
+
+    if (state->vertical_center && !state->multiline) {
+        UpdateEditBoxFormatRect(hEdit);
+    }
+
     return hEdit;
 }
 
@@ -2088,6 +2159,9 @@ __declspec(dllexport) void __stdcall SetEditBoxFont(
     
     HFONT hFont = CreateCustomFont(state->font);
     SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+    if (state->vertical_center && !state->multiline) {
+        UpdateEditBoxFormatRect(hEdit);
+    }
 }
 
 __declspec(dllexport) void __stdcall SetEditBoxColor(
@@ -2121,6 +2195,10 @@ __declspec(dllexport) void __stdcall SetEditBoxBounds(
 ) {
     if (!hEdit) return;
     SetWindowPos(hEdit, NULL, x, y, width, height, SWP_NOZORDER);
+    auto it = g_editboxes.find(hEdit);
+    if (it != g_editboxes.end() && it->second->vertical_center && !it->second->multiline) {
+        UpdateEditBoxFormatRect(hEdit);
+    }
 }
 
 __declspec(dllexport) void __stdcall EnableEditBox(
@@ -2137,6 +2215,33 @@ __declspec(dllexport) void __stdcall ShowEditBox(
 ) {
     if (!hEdit) return;
     ShowWindow(hEdit, show ? SW_SHOW : SW_HIDE);
+}
+
+__declspec(dllexport) void __stdcall SetEditBoxVerticalCenter(
+    HWND hEdit,
+    BOOL vertical_center
+) {
+    auto it = g_editboxes.find(hEdit);
+    if (it == g_editboxes.end()) return;
+    EditBoxState* state = it->second;
+    state->vertical_center = (vertical_center != 0);
+    if (state->vertical_center && !state->multiline) {
+        UpdateEditBoxFormatRect(hEdit);
+    } else if (!state->vertical_center) {
+        RECT client;
+        if (GetClientRect(hEdit, &client)) {
+            SendMessageW(hEdit, EM_SETRECTNP, 0, (LPARAM)&client);
+        }
+    }
+}
+
+__declspec(dllexport) void __stdcall SetEditBoxKeyCallback(
+    HWND hEdit,
+    EditBoxKeyCallback callback
+) {
+    auto it = g_editboxes.find(hEdit);
+    if (it == g_editboxes.end()) return;
+    it->second->key_callback = callback;
 }
 
 // ========================================

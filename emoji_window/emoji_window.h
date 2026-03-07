@@ -30,6 +30,9 @@ typedef void (__stdcall *WindowResizeCallback)(HWND hwnd, int width, int height)
 // hwnd: 被关闭的窗口句柄（此时 HWND 已失效，仅用于识别是哪个窗口）
 typedef void (__stdcall *WindowCloseCallback)(HWND hwnd);
 
+// 编辑框按键回调 (stdcall)：hEdit 句柄, key_code 虚拟键码, key_down 1=按下 0=松开, shift/ctrl/alt 修饰键是否按下(0/1)
+typedef void (__stdcall *EditBoxKeyCallback)(HWND hEdit, int key_code, int key_down, int shift, int ctrl, int alt);
+
 // 文本对齐方式
 enum TextAlignment {
     ALIGN_LEFT = 0,
@@ -59,7 +62,9 @@ struct EditBoxState {
     bool readonly;              // 只读模式
     bool password;              // 密码框
     bool has_border;            // 是否有边框
+    bool vertical_center;       // 文本垂直居中（仅单行有效）
     HBRUSH bg_brush;            // 背景画刷（避免每次创建）
+    EditBoxKeyCallback key_callback;  // 按键按下/松开回调，可为 NULL
 };
 
 // 标签状态
@@ -267,7 +272,7 @@ extern "C" {
 
     // ========== 编辑框功能 ==========
 
-    // 创建编辑框
+    // 创建编辑框（vertical_center 仅单行有效）
     __declspec(dllexport) HWND __stdcall CreateEditBox(
         HWND hParent,
         int x, int y, int width, int height,
@@ -285,7 +290,8 @@ extern "C" {
         BOOL multiline,
         BOOL readonly,
         BOOL password,
-        BOOL has_border
+        BOOL has_border,
+        BOOL vertical_center  // 文本垂直居中（仅单行有效）
     );
 
     // 获取编辑框文本
@@ -336,6 +342,18 @@ extern "C" {
     __declspec(dllexport) void __stdcall ShowEditBox(
         HWND hEdit,
         BOOL show
+    );
+
+    // 设置编辑框文本是否垂直居中（仅单行编辑框有效）
+    __declspec(dllexport) void __stdcall SetEditBoxVerticalCenter(
+        HWND hEdit,
+        BOOL vertical_center
+    );
+
+    // 设置编辑框按键回调（key_down: 1=按下 0=松开; shift/ctrl/alt: 0=未按 1=按下）
+    __declspec(dllexport) void __stdcall SetEditBoxKeyCallback(
+        HWND hEdit,
+        EditBoxKeyCallback callback
     );
 
     // ========== 标签功能 ==========
