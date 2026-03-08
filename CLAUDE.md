@@ -127,3 +127,6 @@ Colors use `UINT32` in ARGB format (`0xAARRGGBB`).
 4. Implement `DrawNewControl()` rendering function
 5. Add to `emoji_window.def` exports
 6. Handle WM_PAINT and input messages in window proc
+
+## 大文件写入规则
+当需要写入超过500行的文件时，禁止使用Write工具，改用Bash的cat heredoc分段写入。

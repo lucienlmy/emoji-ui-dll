@@ -18,6 +18,7 @@ std::map<HWND, ListBoxState*> g_listboxes;
 std::map<HWND, ComboBoxState*> g_comboboxes;
 std::map<HWND, HotKeyState*> g_hotkeys;
 std::map<HWND, GroupBoxState*> g_groupboxes;
+std::map<HWND, DataGridViewState*> g_datagrids;
 ButtonClickCallback g_button_callback = nullptr;
 WindowResizeCallback g_window_resize_callback = nullptr;
 WindowCloseCallback g_window_close_callback = nullptr;
@@ -8816,3 +8817,1171 @@ extern "C" __declspec(dllexport) void __stdcall SetD2DComboBoxBounds(
 
     SetWindowPos(hComboBox, NULL, x, y, width, height, SWP_NOZORDER);
 }
+
+// ========================================================================
+// DataGridView 实现
+// ========================================================================
+
+// --- 辅助函数 ---
+
+// 计算所有列的总宽度
+static int DataGrid_GetTotalColumnsWidth(DataGridViewState* state) {
+    int total = 0;
+    for (auto& col : state->columns) {
+        total += col.width;
+    }
+    return total;
+}
+
+// 计算所有行的总高度
+static int DataGrid_GetTotalRowsHeight(DataGridViewState* state) {
+    int row_count = state->virtual_mode ? state->virtual_row_count : (int)state->rows.size();
+    return row_count * state->default_row_height;
+}
+
+// 获取行数（考虑虚拟模式）
+static int DataGrid_GetEffectiveRowCount(DataGridViewState* state) {
+    return state->virtual_mode ? state->virtual_row_count : (int)state->rows.size();
+}
+
+// 获取单元格文本（考虑虚拟模式）
+static std::wstring DataGrid_GetCellDisplayText(DataGridViewState* state, int row, int col) {
+    if (state->virtual_mode) {
+        if (state->virtual_data_cb) {
+            unsigned char buffer[4096];
+            int len = state->virtual_data_cb(state->hwnd, row, col, buffer, sizeof(buffer));
+            if (len > 0) {
+                return Utf8ToWide(buffer, len);
+            }
+        }
+        return L"";
+    }
+    if (row >= 0 && row < (int)state->rows.size() &&
+        col >= 0 && col < (int)state->rows[row].cells.size()) {
+        return state->rows[row].cells[col].text;
+    }
+    return L"";
+}
+
+// 获取单元格复选框状态（考虑虚拟模式）
+static bool DataGrid_GetCellCheckedState(DataGridViewState* state, int row, int col) {
+    if (!state->virtual_mode &&
+        row >= 0 && row < (int)state->rows.size() &&
+        col >= 0 && col < (int)state->rows[row].cells.size()) {
+        return state->rows[row].cells[col].checked;
+    }
+    return false;
+}
+
+// 命中测试：根据像素坐标返回行列
+static void DataGrid_HitTest(DataGridViewState* state, int px, int py, int& out_row, int& out_col) {
+    out_row = -1;
+    out_col = -1;
+
+    // 检查是否在列头区域
+    if (py < state->header_height) {
+        out_row = -1; // 列头
+    } else {
+        int y_offset = py - state->header_height + state->scroll_y;
+        out_row = y_offset / state->default_row_height;
+        int row_count = DataGrid_GetEffectiveRowCount(state);
+        if (out_row < 0 || out_row >= row_count) {
+            out_row = -1;
+        }
+    }
+
+    // 计算列
+    int x_accum = -state->scroll_x;
+    for (int c = 0; c < (int)state->columns.size(); c++) {
+        if (px >= x_accum && px < x_accum + state->columns[c].width) {
+            out_col = c;
+            break;
+        }
+        x_accum += state->columns[c].width;
+    }
+}
+
+// 检查是否在列边界上（用于调整列宽）
+static int DataGrid_HitTestColumnBorder(DataGridViewState* state, int px, int py) {
+    if (py >= state->header_height) return -1; // 只在列头区域
+    int x_accum = -state->scroll_x;
+    for (int c = 0; c < (int)state->columns.size(); c++) {
+        x_accum += state->columns[c].width;
+        if (px >= x_accum - 4 && px <= x_accum + 4) {
+            if (state->columns[c].resizable) return c;
+        }
+    }
+    return -1;
+}
+
+// 确保选中单元格可见（自动滚动）
+static void DataGrid_EnsureVisible(DataGridViewState* state, int row, int col) {
+    if (row < 0) return;
+    // 垂直滚动
+    int row_top = row * state->default_row_height;
+    int row_bottom = row_top + state->default_row_height;
+    int visible_top = state->scroll_y;
+    int visible_bottom = state->scroll_y + (state->height - state->header_height);
+    if (row_top < visible_top) {
+        state->scroll_y = row_top;
+    } else if (row_bottom > visible_bottom) {
+        state->scroll_y = row_bottom - (state->height - state->header_height);
+    }
+    // 水平滚动
+    if (col >= 0 && col < (int)state->columns.size()) {
+        int col_left = 0;
+        for (int c = 0; c < col; c++) col_left += state->columns[c].width;
+        int col_right = col_left + state->columns[col].width;
+        if (col_left < state->scroll_x) {
+            state->scroll_x = col_left;
+        } else if (col_right > state->scroll_x + state->width) {
+            state->scroll_x = col_right - state->width;
+        }
+    }
+    // 限制滚动范围
+    int max_scroll_y = max(0, DataGrid_GetTotalRowsHeight(state) - (state->height - state->header_height));
+    int max_scroll_x = max(0, DataGrid_GetTotalColumnsWidth(state) - state->width);
+    state->scroll_y = max(0, min(state->scroll_y, max_scroll_y));
+    state->scroll_x = max(0, min(state->scroll_x, max_scroll_x));
+}
+
+// 结束编辑模式
+static void DataGrid_EndEdit(DataGridViewState* state, bool apply) {
+    if (!state->editing || !state->edit_hwnd) return;
+    if (apply && !state->virtual_mode) {
+        // 获取编辑框文本
+        int len = GetWindowTextLengthW(state->edit_hwnd);
+        std::wstring text(len, L'\0');
+        GetWindowTextW(state->edit_hwnd, &text[0], len + 1);
+        // 写回单元格
+        int r = state->edit_row, c = state->edit_col;
+        if (r >= 0 && r < (int)state->rows.size() &&
+            c >= 0 && c < (int)state->rows[r].cells.size()) {
+            state->rows[r].cells[c].text = text;
+            if (state->cell_value_changed_cb) {
+                state->cell_value_changed_cb(state->hwnd, r, c);
+            }
+        }
+    }
+    DestroyWindow(state->edit_hwnd);
+    state->edit_hwnd = nullptr;
+    state->editing = false;
+    state->edit_row = -1;
+    state->edit_col = -1;
+    SetFocus(state->hwnd);
+}
+
+// 开始编辑模式
+static void DataGrid_BeginEdit(DataGridViewState* state, int row, int col) {
+    if (state->virtual_mode) return; // 虚拟模式不支持编辑
+    if (col < 0 || col >= (int)state->columns.size()) return;
+    if (state->columns[col].type != DGCOL_TEXT) return; // 只有文本列可编辑
+    if (row < 0 || row >= (int)state->rows.size()) return;
+
+    DataGrid_EndEdit(state, false); // 结束之前的编辑
+
+    // 计算单元格位置
+    int cell_x = -state->scroll_x;
+    for (int c = 0; c < col; c++) cell_x += state->columns[c].width;
+    int cell_y = state->header_height + row * state->default_row_height - state->scroll_y;
+    int cell_w = state->columns[col].width;
+    int cell_h = state->default_row_height;
+
+    // 创建编辑框
+    state->edit_hwnd = CreateWindowExW(
+        0, L"EDIT", state->rows[row].cells[col].text.c_str(),
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_BORDER,
+        cell_x, cell_y, cell_w, cell_h,
+        state->hwnd, nullptr, GetModuleHandle(nullptr), nullptr
+    );
+    if (state->edit_hwnd) {
+        state->editing = true;
+        state->edit_row = row;
+        state->edit_col = col;
+        // 设置字体
+        HFONT hFont = CreateFontW(
+            -(int)state->font.font_size, 0, 0, 0,
+            state->font.bold ? FW_BOLD : FW_NORMAL,
+            state->font.italic, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            state->font.font_name.c_str()
+        );
+        SendMessageW(state->edit_hwnd, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetFocus(state->edit_hwnd);
+        SendMessageW(state->edit_hwnd, EM_SETSEL, 0, -1); // 全选
+    }
+}
+
+
+// --- DrawDataGridView ---
+void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGridViewState* state) {
+    if (!rt || !factory || !state) return;
+
+    D2D1_SIZE_F size = rt->GetSize();
+    int row_count = DataGrid_GetEffectiveRowCount(state);
+
+    ID2D1SolidColorBrush* brush = nullptr;
+    rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
+    if (!brush) return;
+
+    IDWriteTextFormat* text_format = nullptr;
+    factory->CreateTextFormat(L"Segoe UI Emoji", nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        (float)state->font.font_size, L"zh-CN", &text_format);
+    if (!text_format) { brush->Release(); return; }
+    text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    text_format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+
+    IDWriteTextFormat* header_format = nullptr;
+    factory->CreateTextFormat(L"Segoe UI Emoji", nullptr,
+        DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        (float)state->font.font_size, L"zh-CN", &header_format);
+    if (header_format) {
+        header_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        header_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        header_format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    brush->SetColor(ColorFromUInt32(state->bg_color));
+    rt->FillRectangle(D2D1::RectF(0, 0, size.width, size.height), brush);
+
+    float hdr_h = (float)state->header_height;
+    D2D1_COLOR_F grid_color = ColorFromUInt32(state->grid_line_color);
+
+    // Column headers
+    brush->SetColor(ColorFromUInt32(state->header_bg_color));
+    rt->FillRectangle(D2D1::RectF(0, 0, size.width, hdr_h), brush);
+
+    float col_x = (float)(-state->scroll_x);
+    for (int c = 0; c < (int)state->columns.size(); c++) {
+        float col_w = (float)state->columns[c].width;
+        if (col_x + col_w > 0 && col_x < size.width) {
+            D2D1_RECT_F hdr_rect = D2D1::RectF(col_x + 8, 0, col_x + col_w - 8, hdr_h);
+            brush->SetColor(ColorFromUInt32(state->header_fg_color));
+            std::wstring hdr_text = state->columns[c].header_text;
+            if (state->sort_col == c) {
+                if (state->sort_order == DGSORT_ASC) hdr_text += L" \u25B2";
+                else if (state->sort_order == DGSORT_DESC) hdr_text += L" \u25BC";
+            }
+            IDWriteTextLayout* layout = nullptr;
+            factory->CreateTextLayout(hdr_text.c_str(), (UINT32)hdr_text.length(),
+                header_format ? header_format : text_format,
+                hdr_rect.right - hdr_rect.left, hdr_rect.bottom - hdr_rect.top, &layout);
+            if (layout) {
+                rt->DrawTextLayout(D2D1::Point2F(hdr_rect.left, hdr_rect.top), layout, brush,
+                    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                layout->Release();
+            }
+            if (state->show_grid_lines) {
+                brush->SetColor(grid_color);
+                rt->DrawLine(D2D1::Point2F(col_x + col_w, 0), D2D1::Point2F(col_x + col_w, hdr_h), brush, 1.0f);
+            }
+        }
+        col_x += col_w;
+    }
+    if (state->show_grid_lines) {
+        brush->SetColor(grid_color);
+        rt->DrawLine(D2D1::Point2F(0, hdr_h), D2D1::Point2F(size.width, hdr_h), brush, 1.0f);
+    }
+
+    // Data rows
+    rt->PushAxisAlignedClip(D2D1::RectF(0, hdr_h, size.width, size.height), D2D1_ANTIALIAS_MODE_ALIASED);
+
+    int visible_start = state->scroll_y / state->default_row_height;
+    int visible_count = (int)((size.height - hdr_h) / state->default_row_height) + 2;
+    int visible_end = min(visible_start + visible_count, row_count);
+
+    D2D1_COLOR_F select_color = ColorFromUInt32(state->select_color);
+    D2D1_COLOR_F hover_color = ColorFromUInt32(state->hover_color);
+    D2D1_COLOR_F zebra_color = ColorFromUInt32(state->zebra_color);
+
+    for (int r = visible_start; r < visible_end; r++) {
+        float row_y = hdr_h + (float)(r * state->default_row_height - state->scroll_y);
+        float row_h = (float)state->default_row_height;
+        if (row_y + row_h < hdr_h || row_y > size.height) continue;
+
+        bool is_selected_row = (r == state->selected_row);
+        bool is_hovered = (r == state->hovered_row);
+
+        if (is_selected_row && state->selection_mode == DGSEL_ROW) {
+            brush->SetColor(select_color);
+            rt->FillRectangle(D2D1::RectF(0, row_y, size.width, row_y + row_h), brush);
+        } else if (is_hovered && state->enabled) {
+            brush->SetColor(hover_color);
+            rt->FillRectangle(D2D1::RectF(0, row_y, size.width, row_y + row_h), brush);
+        } else if (state->zebra_stripe && (r % 2 == 1)) {
+            brush->SetColor(zebra_color);
+            rt->FillRectangle(D2D1::RectF(0, row_y, size.width, row_y + row_h), brush);
+        }
+
+        col_x = (float)(-state->scroll_x);
+        for (int c = 0; c < (int)state->columns.size(); c++) {
+            float cw = (float)state->columns[c].width;
+            if (col_x + cw <= 0 || col_x >= size.width) { col_x += cw; continue; }
+
+            if (state->selection_mode == DGSEL_CELL && r == state->selected_row && c == state->selected_col) {
+                brush->SetColor(select_color);
+                rt->FillRectangle(D2D1::RectF(col_x, row_y, col_x + cw, row_y + row_h), brush);
+            }
+
+            DataGridCellStyle cell_style = {};
+            if (!state->virtual_mode && r < (int)state->rows.size() && c < (int)state->rows[r].cells.size()) {
+                cell_style = state->rows[r].cells[c].style;
+            }
+
+            switch (state->columns[c].type) {
+                case DGCOL_TEXT: {
+                    std::wstring text = DataGrid_GetCellDisplayText(state, r, c);
+                    if (!text.empty()) {
+                        D2D1_RECT_F tr = D2D1::RectF(col_x + 8, row_y, col_x + cw - 8, row_y + row_h);
+                        UINT32 cell_fg = cell_style.fg_color ? cell_style.fg_color : state->fg_color;
+                        brush->SetColor(ColorFromUInt32(cell_fg));
+                        IDWriteTextFormat* cf = text_format;
+                        bool custom_f = false;
+                        if (cell_style.bold || cell_style.italic) {
+                            IDWriteTextFormat* tmp = nullptr;
+                            factory->CreateTextFormat(L"Segoe UI Emoji", nullptr,
+                                cell_style.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+                                cell_style.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+                                DWRITE_FONT_STRETCH_NORMAL, (float)state->font.font_size, L"zh-CN", &tmp);
+                            if (tmp) { cf = tmp; custom_f = true;
+                                cf->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                                cf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                                cf->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                            }
+                        }
+                        IDWriteTextLayout* layout = nullptr;
+                        factory->CreateTextLayout(text.c_str(), (UINT32)text.length(), cf,
+                            tr.right - tr.left, tr.bottom - tr.top, &layout);
+                        if (layout) {
+                            rt->DrawTextLayout(D2D1::Point2F(tr.left, tr.top), layout, brush,
+                                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                            layout->Release();
+                        }
+                        if (custom_f) cf->Release();
+                    }
+                    break;
+                }
+                case DGCOL_CHECKBOX: {
+                    bool checked = DataGrid_GetCellCheckedState(state, r, c);
+                    float bs = 16.0f;
+                    float bx = col_x + (cw - bs) / 2;
+                    float by = row_y + (row_h - bs) / 2;
+                    D2D1_RECT_F br = D2D1::RectF(bx, by, bx + bs, by + bs);
+                    brush->SetColor(D2D1::ColorF(0xDCDFE6, 1.0f));
+                    rt->DrawRectangle(br, brush, 1.0f);
+                    if (checked) {
+                        brush->SetColor(D2D1::ColorF(0x409EFF, 1.0f));
+                        rt->FillRectangle(br, brush);
+                        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                        rt->DrawLine(D2D1::Point2F(bx + 3, by + bs / 2),
+                                     D2D1::Point2F(bx + bs / 2 - 1, by + bs - 4), brush, 2.0f);
+                        rt->DrawLine(D2D1::Point2F(bx + bs / 2 - 1, by + bs - 4),
+                                     D2D1::Point2F(bx + bs - 3, by + 3), brush, 2.0f);
+                    }
+                    break;
+                }
+                case DGCOL_BUTTON: {
+                    std::wstring text = DataGrid_GetCellDisplayText(state, r, c);
+                    if (text.empty()) text = L"...";
+                    float bw = min(cw - 16, 80.0f);
+                    float bh = row_h - 8;
+                    float bx = col_x + (cw - bw) / 2;
+                    float by = row_y + 4;
+                    brush->SetColor(D2D1::ColorF(0x409EFF, 1.0f));
+                    rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + bw, by + bh), 3.0f, 3.0f), brush);
+                    brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                    IDWriteTextLayout* layout = nullptr;
+                    factory->CreateTextLayout(text.c_str(), (UINT32)text.length(), text_format, bw, bh, &layout);
+                    if (layout) {
+                        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        rt->DrawTextLayout(D2D1::Point2F(bx, by), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                        layout->Release();
+                    }
+                    break;
+                }
+                case DGCOL_LINK: {
+                    std::wstring text = DataGrid_GetCellDisplayText(state, r, c);
+                    if (!text.empty()) {
+                        D2D1_RECT_F tr = D2D1::RectF(col_x + 8, row_y, col_x + cw - 8, row_y + row_h);
+                        brush->SetColor(D2D1::ColorF(0x409EFF, 1.0f));
+                        IDWriteTextLayout* layout = nullptr;
+                        factory->CreateTextLayout(text.c_str(), (UINT32)text.length(), text_format,
+                            tr.right - tr.left, tr.bottom - tr.top, &layout);
+                        if (layout) {
+                            DWRITE_TEXT_RANGE range = { 0, (UINT32)text.length() };
+                            layout->SetUnderline(TRUE, range);
+                            rt->DrawTextLayout(D2D1::Point2F(tr.left, tr.top), layout, brush,
+                                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                            layout->Release();
+                        }
+                    }
+                    break;
+                }
+                case DGCOL_IMAGE:
+                    break;
+            }
+
+            if (state->show_grid_lines) {
+                brush->SetColor(grid_color);
+                rt->DrawLine(D2D1::Point2F(col_x + cw, row_y), D2D1::Point2F(col_x + cw, row_y + row_h), brush, 0.5f);
+            }
+            col_x += cw;
+        }
+
+        if (state->show_grid_lines) {
+            brush->SetColor(grid_color);
+            rt->DrawLine(D2D1::Point2F(0, row_y + row_h), D2D1::Point2F(size.width, row_y + row_h), brush, 0.5f);
+        }
+    }
+
+    rt->PopAxisAlignedClip();
+
+    brush->SetColor(D2D1::ColorF(0xDCDFE6, 1.0f));
+    rt->DrawRectangle(D2D1::RectF(0, 0, size.width, size.height), brush, 1.0f);
+
+    // Scrollbar indicators
+    int total_rows_h = DataGrid_GetTotalRowsHeight(state);
+    int visible_h = state->height - state->header_height;
+    if (total_rows_h > visible_h && visible_h > 0) {
+        float track_h = (float)visible_h;
+        float thumb_h = max(20.0f, track_h * visible_h / total_rows_h);
+        float thumb_y = hdr_h + (track_h - thumb_h) * state->scroll_y / (total_rows_h - visible_h);
+        brush->SetColor(D2D1::ColorF(0xC0C4CC, 0.6f));
+        rt->FillRoundedRectangle(D2D1::RoundedRect(
+            D2D1::RectF(size.width - 6, thumb_y, size.width - 2, thumb_y + thumb_h), 2.0f, 2.0f), brush);
+    }
+    int total_cols_w = DataGrid_GetTotalColumnsWidth(state);
+    if (total_cols_w > state->width && state->width > 0) {
+        float track_w = (float)state->width;
+        float thumb_w = max(20.0f, track_w * state->width / total_cols_w);
+        float thumb_x = (track_w - thumb_w) * state->scroll_x / (total_cols_w - state->width);
+        brush->SetColor(D2D1::ColorF(0xC0C4CC, 0.6f));
+        rt->FillRoundedRectangle(D2D1::RoundedRect(
+            D2D1::RectF(thumb_x, size.height - 6, thumb_x + thumb_w, size.height - 2), 2.0f, 2.0f), brush);
+    }
+
+    if (header_format) header_format->Release();
+    text_format->Release();
+    brush->Release();
+}
+
+// --- DataGridViewProc ---
+LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                   UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    auto it = g_datagrids.find(hwnd);
+    if (it == g_datagrids.end()) return DefSubclassProc(hwnd, msg, wparam, lparam);
+    DataGridViewState* state = it->second;
+
+    switch (msg) {
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            ID2D1HwndRenderTarget* rt = nullptr;
+            D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+            D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_props = D2D1::HwndRenderTargetProperties(
+                hwnd, D2D1::SizeU(state->width, state->height));
+            if (g_d2d_factory) g_d2d_factory->CreateHwndRenderTarget(props, hwnd_props, &rt);
+            if (rt && g_dwrite_factory) {
+                rt->BeginDraw();
+                rt->Clear(D2D1::ColorF(D2D1::ColorF::White));
+                DrawDataGridView(rt, g_dwrite_factory, state);
+                rt->EndDraw();
+                rt->Release();
+            }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_LBUTTONDOWN: {
+            if (!state->enabled) break;
+            SetFocus(hwnd);
+            int px = GET_X_LPARAM(lparam);
+            int py = GET_Y_LPARAM(lparam);
+
+            // Check column resize
+            int resize_col = DataGrid_HitTestColumnBorder(state, px, py);
+            if (resize_col >= 0) {
+                state->resizing_col = true;
+                state->resize_col_index = resize_col;
+                state->resize_start_x = px;
+                state->resize_start_width = state->columns[resize_col].width;
+                SetCapture(hwnd);
+                return 0;
+            }
+
+            int hit_row, hit_col;
+            DataGrid_HitTest(state, px, py, hit_row, hit_col);
+
+            if (hit_row == -1 && hit_col >= 0 && py < state->header_height) {
+                // Column header click
+                if (state->col_header_click_cb) state->col_header_click_cb(hwnd, hit_col);
+                // Auto sort
+                if (state->columns[hit_col].sortable) {
+                    DataGridSortOrder new_order = DGSORT_ASC;
+                    if (state->sort_col == hit_col && state->sort_order == DGSORT_ASC) new_order = DGSORT_DESC;
+                    else if (state->sort_col == hit_col && state->sort_order == DGSORT_DESC) new_order = DGSORT_NONE;
+                    state->sort_col = hit_col;
+                    state->sort_order = new_order;
+                    // Sort rows
+                    if (!state->virtual_mode && new_order != DGSORT_NONE) {
+                        int sc = hit_col;
+                        bool asc = (new_order == DGSORT_ASC);
+                        std::sort(state->rows.begin(), state->rows.end(),
+                            [sc, asc](const DataGridRow& a, const DataGridRow& b) {
+                                if (sc >= (int)a.cells.size() || sc >= (int)b.cells.size()) return false;
+                                return asc ? (a.cells[sc].text < b.cells[sc].text) : (a.cells[sc].text > b.cells[sc].text);
+                            });
+                    }
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+                return 0;
+            }
+
+            if (hit_row >= 0) {
+                // Handle checkbox toggle
+                if (hit_col >= 0 && hit_col < (int)state->columns.size() &&
+                    state->columns[hit_col].type == DGCOL_CHECKBOX && !state->virtual_mode) {
+                    if (hit_row < (int)state->rows.size() && hit_col < (int)state->rows[hit_row].cells.size()) {
+                        state->rows[hit_row].cells[hit_col].checked = !state->rows[hit_row].cells[hit_col].checked;
+                        if (state->cell_value_changed_cb) state->cell_value_changed_cb(hwnd, hit_row, hit_col);
+                    }
+                }
+
+                bool changed = (state->selected_row != hit_row || state->selected_col != hit_col);
+                state->selected_row = hit_row;
+                state->selected_col = hit_col;
+                if (changed && state->selection_changed_cb) state->selection_changed_cb(hwnd, hit_row, hit_col);
+                if (state->cell_click_cb) state->cell_click_cb(hwnd, hit_row, hit_col);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+
+        case WM_LBUTTONDBLCLK: {
+            if (!state->enabled) break;
+            int px = GET_X_LPARAM(lparam);
+            int py = GET_Y_LPARAM(lparam);
+            int hit_row, hit_col;
+            DataGrid_HitTest(state, px, py, hit_row, hit_col);
+            if (hit_row >= 0 && hit_col >= 0) {
+                if (state->cell_dblclick_cb) state->cell_dblclick_cb(hwnd, hit_row, hit_col);
+                // Enter edit mode for text columns
+                if (state->columns[hit_col].type == DGCOL_TEXT) {
+                    DataGrid_BeginEdit(state, hit_row, hit_col);
+                }
+            }
+            return 0;
+        }
+
+        case WM_LBUTTONUP: {
+            if (state->resizing_col) {
+                state->resizing_col = false;
+                ReleaseCapture();
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+
+        case WM_MOUSEMOVE: {
+            if (!state->enabled) break;
+            int px = GET_X_LPARAM(lparam);
+            int py = GET_Y_LPARAM(lparam);
+
+            if (state->resizing_col) {
+                int delta = px - state->resize_start_x;
+                int new_width = max(state->columns[state->resize_col_index].min_width,
+                                    state->resize_start_width + delta);
+                state->columns[state->resize_col_index].width = new_width;
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
+
+            // Check cursor for column resize
+            int resize_col = DataGrid_HitTestColumnBorder(state, px, py);
+            if (resize_col >= 0) {
+                SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+            } else {
+                SetCursor(LoadCursor(nullptr, IDC_ARROW));
+            }
+
+            int hit_row, hit_col;
+            DataGrid_HitTest(state, px, py, hit_row, hit_col);
+            if (hit_row != state->hovered_row || hit_col != state->hovered_col) {
+                state->hovered_row = hit_row;
+                state->hovered_col = hit_col;
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+
+            TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT) };
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            TrackMouseEvent(&tme);
+            return 0;
+        }
+
+        case WM_MOUSELEAVE: {
+            if (state->hovered_row != -1 || state->hovered_col != -1) {
+                state->hovered_row = -1;
+                state->hovered_col = -1;
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+
+        case WM_MOUSEWHEEL: {
+            if (!state->enabled) break;
+            int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            int scroll_amount = -delta / 3;
+            int max_scroll = max(0, DataGrid_GetTotalRowsHeight(state) - (state->height - state->header_height));
+            state->scroll_y = max(0, min(max_scroll, state->scroll_y + scroll_amount));
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+
+        case WM_MOUSEHWHEEL: {
+            if (!state->enabled) break;
+            int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            int scroll_amount = delta / 3;
+            int max_scroll = max(0, DataGrid_GetTotalColumnsWidth(state) - state->width);
+            state->scroll_x = max(0, min(max_scroll, state->scroll_x + scroll_amount));
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+
+        case WM_KEYDOWN: {
+            if (!state->enabled) break;
+            if (state->editing) break; // Let edit control handle keys
+
+            int row = state->selected_row;
+            int col = state->selected_col;
+            int row_count = DataGrid_GetEffectiveRowCount(state);
+            int col_count = (int)state->columns.size();
+
+            switch (wparam) {
+                case VK_UP:
+                    if (row > 0) { state->selected_row = row - 1; }
+                    break;
+                case VK_DOWN:
+                    if (row < row_count - 1) { state->selected_row = row + 1; }
+                    break;
+                case VK_LEFT:
+                    if (state->selection_mode == DGSEL_CELL && col > 0) { state->selected_col = col - 1; }
+                    break;
+                case VK_RIGHT:
+                    if (state->selection_mode == DGSEL_CELL && col < col_count - 1) { state->selected_col = col + 1; }
+                    break;
+                case VK_TAB:
+                    if (state->selection_mode == DGSEL_CELL) {
+                        if (GetKeyState(VK_SHIFT) & 0x8000) {
+                            if (col > 0) state->selected_col = col - 1;
+                            else if (row > 0) { state->selected_row = row - 1; state->selected_col = col_count - 1; }
+                        } else {
+                            if (col < col_count - 1) state->selected_col = col + 1;
+                            else if (row < row_count - 1) { state->selected_row = row + 1; state->selected_col = 0; }
+                        }
+                    }
+                    break;
+                case VK_HOME:
+                    state->selected_row = 0;
+                    if (state->selection_mode == DGSEL_CELL) state->selected_col = 0;
+                    break;
+                case VK_END:
+                    state->selected_row = row_count - 1;
+                    if (state->selection_mode == DGSEL_CELL) state->selected_col = col_count - 1;
+                    break;
+                case VK_PRIOR: // Page Up
+                    state->selected_row = max(0, row - (state->height - state->header_height) / state->default_row_height);
+                    break;
+                case VK_NEXT: // Page Down
+                    state->selected_row = min(row_count - 1, row + (state->height - state->header_height) / state->default_row_height);
+                    break;
+                case VK_RETURN:
+                case VK_F2:
+                    if (col >= 0 && col < col_count && state->columns[col].type == DGCOL_TEXT) {
+                        DataGrid_BeginEdit(state, state->selected_row, state->selected_col);
+                    }
+                    return 0;
+                case VK_ESCAPE:
+                    DataGrid_EndEdit(state, false);
+                    return 0;
+                default:
+                    break;
+            }
+
+            if (state->selected_row != row || state->selected_col != col) {
+                DataGrid_EnsureVisible(state, state->selected_row, state->selected_col);
+                if (state->selection_changed_cb) state->selection_changed_cb(hwnd, state->selected_row, state->selected_col);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+
+        case WM_SIZE: {
+            state->width = LOWORD(lparam);
+            state->height = HIWORD(lparam);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+
+        case WM_SETFOCUS: {
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+
+        case WM_KILLFOCUS: {
+            if (state->editing && (HWND)wparam != state->edit_hwnd) {
+                DataGrid_EndEdit(state, true);
+            }
+            return 0;
+        }
+
+        case WM_COMMAND: {
+            // Handle edit box notifications
+            if (state->editing && (HWND)lparam == state->edit_hwnd) {
+                if (HIWORD(wparam) == EN_KILLFOCUS) {
+                    DataGrid_EndEdit(state, true);
+                }
+            }
+            return 0;
+        }
+
+        case WM_NCDESTROY: {
+            DataGrid_EndEdit(state, false);
+            RemoveWindowSubclass(hwnd, DataGridViewProc, uIdSubclass);
+            g_datagrids.erase(hwnd);
+            delete state;
+            return 0;
+        }
+    }
+
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// ========== DataGridView Export Functions ==========
+
+extern "C" {
+
+// Create DataGridView
+__declspec(dllexport) HWND __stdcall CreateDataGridView(
+    HWND hParent, int x, int y, int width, int height,
+    BOOL virtual_mode, BOOL zebra_stripe, UINT32 fg_color, UINT32 bg_color
+) {
+    if (!hParent || !IsWindow(hParent)) return nullptr;
+
+    HWND hwnd = CreateWindowExW(0, L"STATIC", L"",
+        WS_CHILD | WS_VISIBLE | SS_NOTIFY | WS_TABSTOP,
+        x, y, width, height, hParent,
+        (HMENU)(UINT_PTR)(g_next_control_id++),
+        GetModuleHandle(nullptr), nullptr);
+    if (!hwnd) return nullptr;
+
+    DataGridViewState* state = new DataGridViewState();
+    state->hwnd = hwnd;
+    state->parent = hParent;
+    state->id = (int)(UINT_PTR)GetMenu(hwnd);
+    state->x = x; state->y = y; state->width = width; state->height = height;
+    state->virtual_mode = (virtual_mode != 0);
+    state->virtual_row_count = 0;
+    state->selected_row = -1; state->selected_col = -1;
+    state->selection_mode = DGSEL_ROW;
+    state->editing = false; state->edit_row = -1; state->edit_col = -1; state->edit_hwnd = nullptr;
+    state->hovered_row = -1; state->hovered_col = -1;
+    state->scroll_x = 0; state->scroll_y = 0;
+    state->resizing_col = false; state->resize_col_index = -1;
+    state->sort_col = -1; state->sort_order = DGSORT_NONE;
+    state->freeze_header = true; state->freeze_first_col = false;
+    state->header_height = 36;
+    state->default_row_height = 32;
+    state->zebra_stripe = (zebra_stripe != 0);
+    state->show_grid_lines = true;
+    state->enabled = true;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->header_bg_color = 0xFFF5F7FA;
+    state->header_fg_color = 0xFF606266;
+    state->grid_line_color = 0xFFEBEEF5;
+    state->select_color = 0xFFECF5FF;
+    state->hover_color = 0xFFF5F7FA;
+    state->zebra_color = 0xFFFAFAFA;
+    state->font.font_name = L"Microsoft YaHei UI";
+    state->font.font_size = 14;
+    state->font.bold = false; state->font.italic = false; state->font.underline = false;
+    state->cell_click_cb = nullptr;
+    state->cell_dblclick_cb = nullptr;
+    state->cell_value_changed_cb = nullptr;
+    state->col_header_click_cb = nullptr;
+    state->selection_changed_cb = nullptr;
+    state->virtual_data_cb = nullptr;
+
+    g_datagrids[hwnd] = state;
+    SetWindowSubclass(hwnd, DataGridViewProc, 0, (DWORD_PTR)state);
+    return hwnd;
+}
+
+// --- Column management ---
+
+static int DataGrid_AddColumn(HWND hGrid, const unsigned char* header_bytes, int header_len, int width, DataGridColumnType type) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return -1;
+    DataGridViewState* state = it->second;
+    DataGridColumn col;
+    col.header_text = Utf8ToWide(header_bytes, header_len);
+    col.width = width > 0 ? width : 100;
+    col.min_width = 30;
+    col.type = type;
+    col.resizable = true;
+    col.sortable = (type == DGCOL_TEXT);
+    col.sort_order = DGSORT_NONE;
+    state->columns.push_back(col);
+    // Add cells to existing rows
+    for (auto& row : state->rows) {
+        DataGridCell cell;
+        cell.checked = false;
+        cell.style = {};
+        row.cells.push_back(cell);
+    }
+    InvalidateRect(hGrid, nullptr, TRUE);
+    return (int)state->columns.size() - 1;
+}
+
+__declspec(dllexport) int __stdcall DataGrid_AddTextColumn(HWND hGrid, const unsigned char* h, int hl, int w) {
+    return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_TEXT);
+}
+__declspec(dllexport) int __stdcall DataGrid_AddCheckBoxColumn(HWND hGrid, const unsigned char* h, int hl, int w) {
+    return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_CHECKBOX);
+}
+__declspec(dllexport) int __stdcall DataGrid_AddButtonColumn(HWND hGrid, const unsigned char* h, int hl, int w) {
+    return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_BUTTON);
+}
+__declspec(dllexport) int __stdcall DataGrid_AddLinkColumn(HWND hGrid, const unsigned char* h, int hl, int w) {
+    return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_LINK);
+}
+__declspec(dllexport) int __stdcall DataGrid_AddImageColumn(HWND hGrid, const unsigned char* h, int hl, int w) {
+    return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_IMAGE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_RemoveColumn(HWND hGrid, int col_index) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (col_index < 0 || col_index >= (int)state->columns.size()) return;
+    state->columns.erase(state->columns.begin() + col_index);
+    for (auto& row : state->rows) {
+        if (col_index < (int)row.cells.size()) row.cells.erase(row.cells.begin() + col_index);
+    }
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_ClearColumns(HWND hGrid) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->columns.clear();
+    it->second->rows.clear();
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) int __stdcall DataGrid_GetColumnCount(HWND hGrid) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return 0;
+    return (int)it->second->columns.size();
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetColumnWidth(HWND hGrid, int col_index, int width) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    if (col_index < 0 || col_index >= (int)it->second->columns.size()) return;
+    it->second->columns[col_index].width = max(it->second->columns[col_index].min_width, width);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+// --- Row management ---
+
+__declspec(dllexport) int __stdcall DataGrid_AddRow(HWND hGrid) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return -1;
+    DataGridViewState* state = it->second;
+    if (state->virtual_mode) return -1;
+    DataGridRow row;
+    row.height = 0;
+    for (size_t i = 0; i < state->columns.size(); i++) {
+        DataGridCell cell;
+        cell.checked = false;
+        cell.style = {};
+        row.cells.push_back(cell);
+    }
+    state->rows.push_back(row);
+    InvalidateRect(hGrid, nullptr, TRUE);
+    return (int)state->rows.size() - 1;
+}
+
+__declspec(dllexport) void __stdcall DataGrid_RemoveRow(HWND hGrid, int row_index) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (state->virtual_mode) return;
+    if (row_index < 0 || row_index >= (int)state->rows.size()) return;
+    state->rows.erase(state->rows.begin() + row_index);
+    if (state->selected_row >= (int)state->rows.size()) state->selected_row = (int)state->rows.size() - 1;
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_ClearRows(HWND hGrid) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (state->virtual_mode) { state->virtual_row_count = 0; }
+    else { state->rows.clear(); }
+    state->selected_row = -1; state->selected_col = -1;
+    state->scroll_y = 0;
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) int __stdcall DataGrid_GetRowCount(HWND hGrid) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return 0;
+    return DataGrid_GetEffectiveRowCount(it->second);
+}
+
+// --- Cell operations ---
+
+__declspec(dllexport) void __stdcall DataGrid_SetCellText(HWND hGrid, int row, int col,
+    const unsigned char* text_bytes, int text_len) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (state->virtual_mode) return;
+    if (row < 0 || row >= (int)state->rows.size()) return;
+    if (col < 0 || col >= (int)state->rows[row].cells.size()) return;
+    state->rows[row].cells[col].text = Utf8ToWide(text_bytes, text_len);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) int __stdcall DataGrid_GetCellText(HWND hGrid, int row, int col,
+    unsigned char* buffer, int buffer_size) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return 0;
+    DataGridViewState* state = it->second;
+    std::wstring text = DataGrid_GetCellDisplayText(state, row, col);
+    if (text.empty()) return 0;
+    int needed = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (!buffer || buffer_size <= 0) return needed;
+    int written = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, (char*)buffer, buffer_size, nullptr, nullptr);
+    return written > 0 ? written - 1 : 0;
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetCellChecked(HWND hGrid, int row, int col, BOOL checked) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (state->virtual_mode) return;
+    if (row < 0 || row >= (int)state->rows.size()) return;
+    if (col < 0 || col >= (int)state->rows[row].cells.size()) return;
+    state->rows[row].cells[col].checked = (checked != 0);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) BOOL __stdcall DataGrid_GetCellChecked(HWND hGrid, int row, int col) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return FALSE;
+    return DataGrid_GetCellCheckedState(it->second, row, col) ? TRUE : FALSE;
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetCellStyle(HWND hGrid, int row, int col,
+    UINT32 fg_color, UINT32 bg_color, BOOL bold, BOOL italic) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (state->virtual_mode) return;
+    if (row < 0 || row >= (int)state->rows.size()) return;
+    if (col < 0 || col >= (int)state->rows[row].cells.size()) return;
+    state->rows[row].cells[col].style.fg_color = fg_color;
+    state->rows[row].cells[col].style.bg_color = bg_color;
+    state->rows[row].cells[col].style.bold = (bold != 0);
+    state->rows[row].cells[col].style.italic = (italic != 0);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+// --- Selection ---
+
+__declspec(dllexport) int __stdcall DataGrid_GetSelectedRow(HWND hGrid) {
+    auto it = g_datagrids.find(hGrid);
+    return it != g_datagrids.end() ? it->second->selected_row : -1;
+}
+
+__declspec(dllexport) int __stdcall DataGrid_GetSelectedCol(HWND hGrid) {
+    auto it = g_datagrids.find(hGrid);
+    return it != g_datagrids.end() ? it->second->selected_col : -1;
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetSelectedCell(HWND hGrid, int row, int col) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->selected_row = row;
+    it->second->selected_col = col;
+    DataGrid_EnsureVisible(it->second, row, col);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetSelectionMode(HWND hGrid, int mode) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->selection_mode = (mode == 1) ? DGSEL_ROW : DGSEL_CELL;
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+// --- Sort ---
+
+__declspec(dllexport) void __stdcall DataGrid_SortByColumn(HWND hGrid, int col_index, int sort_order) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (col_index < 0 || col_index >= (int)state->columns.size()) return;
+    state->sort_col = col_index;
+    state->sort_order = (DataGridSortOrder)sort_order;
+    if (!state->virtual_mode && state->sort_order != DGSORT_NONE) {
+        int sc = col_index;
+        bool asc = (state->sort_order == DGSORT_ASC);
+        std::sort(state->rows.begin(), state->rows.end(),
+            [sc, asc](const DataGridRow& a, const DataGridRow& b) {
+                if (sc >= (int)a.cells.size() || sc >= (int)b.cells.size()) return false;
+                return asc ? (a.cells[sc].text < b.cells[sc].text) : (a.cells[sc].text > b.cells[sc].text);
+            });
+    }
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+// --- Freeze ---
+
+__declspec(dllexport) void __stdcall DataGrid_SetFreezeHeader(HWND hGrid, BOOL freeze) {
+    auto it = g_datagrids.find(hGrid);
+    if (it != g_datagrids.end()) it->second->freeze_header = (freeze != 0);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetFreezeFirstColumn(HWND hGrid, BOOL freeze) {
+    auto it = g_datagrids.find(hGrid);
+    if (it != g_datagrids.end()) it->second->freeze_first_col = (freeze != 0);
+}
+
+// --- Virtual mode ---
+
+__declspec(dllexport) void __stdcall DataGrid_SetVirtualRowCount(HWND hGrid, int row_count) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->virtual_row_count = row_count;
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetVirtualDataCallback(HWND hGrid, DataGridVirtualDataCallback callback) {
+    auto it = g_datagrids.find(hGrid);
+    if (it != g_datagrids.end()) it->second->virtual_data_cb = callback;
+}
+
+// --- Appearance ---
+
+__declspec(dllexport) void __stdcall DataGrid_SetShowGridLines(HWND hGrid, BOOL show) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->show_grid_lines = (show != 0);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetDefaultRowHeight(HWND hGrid, int height) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->default_row_height = max(16, height);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetHeaderHeight(HWND hGrid, int height) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->header_height = max(16, height);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+// --- Event callbacks ---
+
+__declspec(dllexport) void __stdcall DataGrid_SetCellClickCallback(HWND hGrid, DataGridCellClickCallback cb) {
+    auto it = g_datagrids.find(hGrid); if (it != g_datagrids.end()) it->second->cell_click_cb = cb;
+}
+__declspec(dllexport) void __stdcall DataGrid_SetCellDoubleClickCallback(HWND hGrid, DataGridCellDoubleClickCallback cb) {
+    auto it = g_datagrids.find(hGrid); if (it != g_datagrids.end()) it->second->cell_dblclick_cb = cb;
+}
+__declspec(dllexport) void __stdcall DataGrid_SetCellValueChangedCallback(HWND hGrid, DataGridCellValueChangedCallback cb) {
+    auto it = g_datagrids.find(hGrid); if (it != g_datagrids.end()) it->second->cell_value_changed_cb = cb;
+}
+__declspec(dllexport) void __stdcall DataGrid_SetColumnHeaderClickCallback(HWND hGrid, DataGridColumnHeaderClickCallback cb) {
+    auto it = g_datagrids.find(hGrid); if (it != g_datagrids.end()) it->second->col_header_click_cb = cb;
+}
+__declspec(dllexport) void __stdcall DataGrid_SetSelectionChangedCallback(HWND hGrid, DataGridSelectionChangedCallback cb) {
+    auto it = g_datagrids.find(hGrid); if (it != g_datagrids.end()) it->second->selection_changed_cb = cb;
+}
+
+// --- Other ---
+
+__declspec(dllexport) void __stdcall DataGrid_Enable(HWND hGrid, BOOL enable) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->enabled = (enable != 0);
+    EnableWindow(hGrid, enable);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_Show(HWND hGrid, BOOL show) {
+    ShowWindow(hGrid, show ? SW_SHOW : SW_HIDE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetBounds(HWND hGrid, int x, int y, int width, int height) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    it->second->x = x; it->second->y = y;
+    it->second->width = width; it->second->height = height;
+    SetWindowPos(hGrid, NULL, x, y, width, height, SWP_NOZORDER);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_Refresh(HWND hGrid) {
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) BOOL __stdcall DataGrid_ExportCSV(HWND hGrid, const unsigned char* file_path_bytes, int path_len) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return FALSE;
+    DataGridViewState* state = it->second;
+
+    std::wstring path = Utf8ToWide(file_path_bytes, path_len);
+    FILE* fp = nullptr;
+    _wfopen_s(&fp, path.c_str(), L"w,ccs=UTF-8");
+    if (!fp) return FALSE;
+
+    // Write header
+    for (int c = 0; c < (int)state->columns.size(); c++) {
+        if (c > 0) fwprintf(fp, L",");
+        fwprintf(fp, L"\"%s\"", state->columns[c].header_text.c_str());
+    }
+    fwprintf(fp, L"\n");
+
+    // Write rows
+    int row_count = DataGrid_GetEffectiveRowCount(state);
+    for (int r = 0; r < row_count; r++) {
+        for (int c = 0; c < (int)state->columns.size(); c++) {
+            if (c > 0) fwprintf(fp, L",");
+            std::wstring text = DataGrid_GetCellDisplayText(state, r, c);
+            // Escape quotes
+            std::wstring escaped;
+            for (wchar_t ch : text) {
+                if (ch == L'"') escaped += L"\"\"";
+                else escaped += ch;
+            }
+            fwprintf(fp, L"\"%s\"", escaped.c_str());
+        }
+        fwprintf(fp, L"\n");
+    }
+
+    fclose(fp);
+    return TRUE;
+}
+
+} // extern "C"

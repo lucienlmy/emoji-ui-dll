@@ -337,6 +337,155 @@ struct HotKeyState {
 // 分组框回调函数类型 (stdcall 调用约定)
 typedef void (__stdcall *GroupBoxCallback)(HWND hGroupBox);
 
+// ========== DataGridView 回调函数类型 ==========
+
+// 单元格点击回调 (hGrid, row, col)
+typedef void (__stdcall *DataGridCellClickCallback)(HWND hGrid, int row, int col);
+
+// 单元格双击回调 (hGrid, row, col)
+typedef void (__stdcall *DataGridCellDoubleClickCallback)(HWND hGrid, int row, int col);
+
+// 单元格值改变回调 (hGrid, row, col)
+typedef void (__stdcall *DataGridCellValueChangedCallback)(HWND hGrid, int row, int col);
+
+// 列头点击回调 (hGrid, col)
+typedef void (__stdcall *DataGridColumnHeaderClickCallback)(HWND hGrid, int col);
+
+// 选择改变回调 (hGrid, row, col)
+typedef void (__stdcall *DataGridSelectionChangedCallback)(HWND hGrid, int row, int col);
+
+// 虚拟模式数据请求回调 (hGrid, row, col, buffer, buffer_size) -> 返回写入的字节数
+typedef int (__stdcall *DataGridVirtualDataCallback)(HWND hGrid, int row, int col, unsigned char* buffer, int buffer_size);
+
+// ========== DataGridView 枚举和结构 ==========
+
+// 列类型
+enum DataGridColumnType {
+    DGCOL_TEXT = 0,         // 文本列
+    DGCOL_CHECKBOX = 1,     // 复选框列
+    DGCOL_BUTTON = 2,       // 按钮列
+    DGCOL_LINK = 3,         // 链接列
+    DGCOL_IMAGE = 4         // 图片列
+};
+
+// 排序方向
+enum DataGridSortOrder {
+    DGSORT_NONE = 0,        // 无排序
+    DGSORT_ASC = 1,         // 升序
+    DGSORT_DESC = 2         // 降序
+};
+
+// 选择模式
+enum DataGridSelectionMode {
+    DGSEL_CELL = 0,         // 单元格选择
+    DGSEL_ROW = 1           // 整行选择
+};
+
+// 单元格样式
+struct DataGridCellStyle {
+    UINT32 fg_color;        // 前景色 (0=使用默认)
+    UINT32 bg_color;        // 背景色 (0=使用默认)
+    bool bold;              // 粗体
+    bool italic;            // 斜体
+};
+
+// 列定义
+struct DataGridColumn {
+    std::wstring header_text;   // 列头文本
+    int width;                  // 列宽（像素）
+    int min_width;              // 最小列宽
+    DataGridColumnType type;    // 列类型
+    bool resizable;             // 是否可调整宽度
+    bool sortable;              // 是否可排序
+    DataGridSortOrder sort_order; // 当前排序方向
+};
+
+// 单元格数据
+struct DataGridCell {
+    std::wstring text;          // 文本内容
+    bool checked;               // 复选框状态 (DGCOL_CHECKBOX)
+    DataGridCellStyle style;    // 单元格样式
+};
+
+// 行数据
+struct DataGridRow {
+    std::vector<DataGridCell> cells; // 单元格列表
+    int height;                      // 行高（0=使用默认）
+};
+
+// DataGridView 状态
+struct DataGridViewState {
+    HWND hwnd;                  // 控件句柄
+    HWND parent;                // 父窗口句柄
+    int id;                     // 控件ID
+    int x, y, width, height;   // 位置和尺寸
+
+    // 列和行数据
+    std::vector<DataGridColumn> columns;
+    std::vector<DataGridRow> rows;
+
+    // 虚拟模式
+    bool virtual_mode;          // 是否虚拟模式
+    int virtual_row_count;      // 虚拟模式总行数
+
+    // 选择状态
+    int selected_row;           // 选中行 (-1=无)
+    int selected_col;           // 选中列 (-1=无)
+    DataGridSelectionMode selection_mode; // 选择模式
+
+    // 编辑状态
+    bool editing;               // 是否正在编辑
+    int edit_row;               // 编辑行
+    int edit_col;               // 编辑列
+    HWND edit_hwnd;             // 编辑框句柄
+
+    // 悬停状态
+    int hovered_row;            // 悬停行
+    int hovered_col;            // 悬停列
+
+    // 滚动
+    int scroll_x;               // 水平滚动偏移
+    int scroll_y;               // 垂直滚动偏移
+
+    // 列宽调整
+    bool resizing_col;          // 是否正在调整列宽
+    int resize_col_index;       // 正在调整的列索引
+    int resize_start_x;         // 调整起始X坐标
+    int resize_start_width;     // 调整起始列宽
+
+    // 排序
+    int sort_col;               // 排序列 (-1=无)
+    DataGridSortOrder sort_order; // 排序方向
+
+    // 冻结
+    bool freeze_header;         // 冻结首行（列头）
+    bool freeze_first_col;      // 冻结首列
+
+    // 外观
+    int header_height;          // 列头高度
+    int default_row_height;     // 默认行高
+    bool zebra_stripe;          // 隔行变色
+    bool show_grid_lines;       // 显示网格线
+    bool enabled;               // 启用状态
+    UINT32 fg_color;            // 前景色
+    UINT32 bg_color;            // 背景色
+    UINT32 header_bg_color;     // 列头背景色
+    UINT32 header_fg_color;     // 列头前景色
+    UINT32 grid_line_color;     // 网格线颜色
+    UINT32 select_color;        // 选中背景色
+    UINT32 hover_color;         // 悬停背景色
+    UINT32 zebra_color;         // 隔行变色背景色
+    FontStyle font;             // 字体样式
+
+    // 回调
+    DataGridCellClickCallback cell_click_cb;
+    DataGridCellDoubleClickCallback cell_dblclick_cb;
+    DataGridCellValueChangedCallback cell_value_changed_cb;
+    DataGridColumnHeaderClickCallback col_header_click_cb;
+    DataGridSelectionChangedCallback selection_changed_cb;
+    DataGridVirtualDataCallback virtual_data_cb;
+};
+
 // 分组框状态
 struct GroupBoxState {
     HWND hwnd;                  // 控件句柄
@@ -432,6 +581,7 @@ extern std::map<HWND, ComboBoxState*> g_comboboxes;
 extern std::map<HWND, D2DComboBoxState*> g_d2d_comboboxes;
 extern std::map<HWND, HotKeyState*> g_hotkeys;
 extern std::map<HWND, GroupBoxState*> g_groupboxes;
+extern std::map<HWND, DataGridViewState*> g_datagrids;
 extern ButtonClickCallback g_button_callback;
 extern WindowResizeCallback g_window_resize_callback;
 extern WindowCloseCallback g_window_close_callback;
@@ -1351,6 +1501,292 @@ extern "C" {
         HWND hGroupBox,
         GroupBoxCallback callback
     );
+
+    // ========== DataGridView 功能 ==========
+
+    // 创建DataGridView
+    __declspec(dllexport) HWND __stdcall CreateDataGridView(
+        HWND hParent,
+        int x, int y, int width, int height,
+        BOOL virtual_mode,
+        BOOL zebra_stripe,
+        UINT32 fg_color,
+        UINT32 bg_color
+    );
+
+    // --- 列管理 ---
+
+    // 添加文本列
+    __declspec(dllexport) int __stdcall DataGrid_AddTextColumn(
+        HWND hGrid,
+        const unsigned char* header_bytes,
+        int header_len,
+        int width
+    );
+
+    // 添加复选框列
+    __declspec(dllexport) int __stdcall DataGrid_AddCheckBoxColumn(
+        HWND hGrid,
+        const unsigned char* header_bytes,
+        int header_len,
+        int width
+    );
+
+    // 添加按钮列
+    __declspec(dllexport) int __stdcall DataGrid_AddButtonColumn(
+        HWND hGrid,
+        const unsigned char* header_bytes,
+        int header_len,
+        int width
+    );
+
+    // 添加链接列
+    __declspec(dllexport) int __stdcall DataGrid_AddLinkColumn(
+        HWND hGrid,
+        const unsigned char* header_bytes,
+        int header_len,
+        int width
+    );
+
+    // 添加图片列
+    __declspec(dllexport) int __stdcall DataGrid_AddImageColumn(
+        HWND hGrid,
+        const unsigned char* header_bytes,
+        int header_len,
+        int width
+    );
+
+    // 移除列
+    __declspec(dllexport) void __stdcall DataGrid_RemoveColumn(
+        HWND hGrid,
+        int col_index
+    );
+
+    // 清空所有列
+    __declspec(dllexport) void __stdcall DataGrid_ClearColumns(
+        HWND hGrid
+    );
+
+    // 获取列数
+    __declspec(dllexport) int __stdcall DataGrid_GetColumnCount(
+        HWND hGrid
+    );
+
+    // 设置列宽
+    __declspec(dllexport) void __stdcall DataGrid_SetColumnWidth(
+        HWND hGrid,
+        int col_index,
+        int width
+    );
+
+    // --- 行管理 ---
+
+    // 添加行
+    __declspec(dllexport) int __stdcall DataGrid_AddRow(
+        HWND hGrid
+    );
+
+    // 移除行
+    __declspec(dllexport) void __stdcall DataGrid_RemoveRow(
+        HWND hGrid,
+        int row_index
+    );
+
+    // 清空所有行
+    __declspec(dllexport) void __stdcall DataGrid_ClearRows(
+        HWND hGrid
+    );
+
+    // 获取行数
+    __declspec(dllexport) int __stdcall DataGrid_GetRowCount(
+        HWND hGrid
+    );
+
+    // --- 单元格操作 ---
+
+    // 设置单元格文本
+    __declspec(dllexport) void __stdcall DataGrid_SetCellText(
+        HWND hGrid,
+        int row, int col,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+
+    // 获取单元格文本
+    __declspec(dllexport) int __stdcall DataGrid_GetCellText(
+        HWND hGrid,
+        int row, int col,
+        unsigned char* buffer,
+        int buffer_size
+    );
+
+    // 设置单元格复选框状态
+    __declspec(dllexport) void __stdcall DataGrid_SetCellChecked(
+        HWND hGrid,
+        int row, int col,
+        BOOL checked
+    );
+
+    // 获取单元格复选框状态
+    __declspec(dllexport) BOOL __stdcall DataGrid_GetCellChecked(
+        HWND hGrid,
+        int row, int col
+    );
+
+    // 设置单元格样式
+    __declspec(dllexport) void __stdcall DataGrid_SetCellStyle(
+        HWND hGrid,
+        int row, int col,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        BOOL bold,
+        BOOL italic
+    );
+
+    // --- 选择和导航 ---
+
+    // 获取选中行
+    __declspec(dllexport) int __stdcall DataGrid_GetSelectedRow(
+        HWND hGrid
+    );
+
+    // 获取选中列
+    __declspec(dllexport) int __stdcall DataGrid_GetSelectedCol(
+        HWND hGrid
+    );
+
+    // 设置选中单元格
+    __declspec(dllexport) void __stdcall DataGrid_SetSelectedCell(
+        HWND hGrid,
+        int row, int col
+    );
+
+    // 设置选择模式
+    __declspec(dllexport) void __stdcall DataGrid_SetSelectionMode(
+        HWND hGrid,
+        int mode  // 0=单元格, 1=整行
+    );
+
+    // --- 排序 ---
+
+    // 按列排序
+    __declspec(dllexport) void __stdcall DataGrid_SortByColumn(
+        HWND hGrid,
+        int col_index,
+        int sort_order  // 0=无, 1=升序, 2=降序
+    );
+
+    // --- 冻结 ---
+
+    // 设置冻结首行
+    __declspec(dllexport) void __stdcall DataGrid_SetFreezeHeader(
+        HWND hGrid,
+        BOOL freeze
+    );
+
+    // 设置冻结首列
+    __declspec(dllexport) void __stdcall DataGrid_SetFreezeFirstColumn(
+        HWND hGrid,
+        BOOL freeze
+    );
+
+    // --- 虚拟模式 ---
+
+    // 设置虚拟模式行数
+    __declspec(dllexport) void __stdcall DataGrid_SetVirtualRowCount(
+        HWND hGrid,
+        int row_count
+    );
+
+    // 设置虚拟模式数据回调
+    __declspec(dllexport) void __stdcall DataGrid_SetVirtualDataCallback(
+        HWND hGrid,
+        DataGridVirtualDataCallback callback
+    );
+
+    // --- 外观 ---
+
+    // 设置显示网格线
+    __declspec(dllexport) void __stdcall DataGrid_SetShowGridLines(
+        HWND hGrid,
+        BOOL show
+    );
+
+    // 设置默认行高
+    __declspec(dllexport) void __stdcall DataGrid_SetDefaultRowHeight(
+        HWND hGrid,
+        int height
+    );
+
+    // 设置列头高度
+    __declspec(dllexport) void __stdcall DataGrid_SetHeaderHeight(
+        HWND hGrid,
+        int height
+    );
+
+    // --- 事件回调 ---
+
+    // 设置单元格点击回调
+    __declspec(dllexport) void __stdcall DataGrid_SetCellClickCallback(
+        HWND hGrid,
+        DataGridCellClickCallback callback
+    );
+
+    // 设置单元格双击回调
+    __declspec(dllexport) void __stdcall DataGrid_SetCellDoubleClickCallback(
+        HWND hGrid,
+        DataGridCellDoubleClickCallback callback
+    );
+
+    // 设置单元格值改变回调
+    __declspec(dllexport) void __stdcall DataGrid_SetCellValueChangedCallback(
+        HWND hGrid,
+        DataGridCellValueChangedCallback callback
+    );
+
+    // 设置列头点击回调
+    __declspec(dllexport) void __stdcall DataGrid_SetColumnHeaderClickCallback(
+        HWND hGrid,
+        DataGridColumnHeaderClickCallback callback
+    );
+
+    // 设置选择改变回调
+    __declspec(dllexport) void __stdcall DataGrid_SetSelectionChangedCallback(
+        HWND hGrid,
+        DataGridSelectionChangedCallback callback
+    );
+
+    // --- 其他 ---
+
+    // 启用/禁用DataGridView
+    __declspec(dllexport) void __stdcall DataGrid_Enable(
+        HWND hGrid,
+        BOOL enable
+    );
+
+    // 显示/隐藏DataGridView
+    __declspec(dllexport) void __stdcall DataGrid_Show(
+        HWND hGrid,
+        BOOL show
+    );
+
+    // 设置DataGridView位置和大小
+    __declspec(dllexport) void __stdcall DataGrid_SetBounds(
+        HWND hGrid,
+        int x, int y, int width, int height
+    );
+
+    // 刷新DataGridView
+    __declspec(dllexport) void __stdcall DataGrid_Refresh(
+        HWND hGrid
+    );
+
+    // 导出CSV
+    __declspec(dllexport) BOOL __stdcall DataGrid_ExportCSV(
+        HWND hGrid,
+        const unsigned char* file_path_bytes,
+        int path_len
+    );
 }
 
 // Internal functions
@@ -1365,6 +1801,7 @@ LRESULT CALLBACK ComboBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
 LRESULT CALLBACK ComboDropDownProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK HotKeyProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiButton& button);
 void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state);
 void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxState* state);
@@ -1376,6 +1813,7 @@ void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxSt
 void DrawComboDropDown(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxState* state);
 void DrawHotKey(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, HotKeyState* state);
 void DrawGroupBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxState* state);
+void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGridViewState* state);
 std::wstring Utf8ToWide(const unsigned char* bytes, int len);
 D2D1_COLOR_F ColorFromUInt32(UINT32 color);
 UINT32 LightenColor(UINT32 color, float factor);

@@ -140,3 +140,44 @@ EXPORTS
     EnableD2DComboBox
     ShowD2DComboBox
     SetD2DComboBoxBounds
+    CreateDataGridView
+    DataGrid_AddTextColumn
+    DataGrid_AddCheckBoxColumn
+    DataGrid_AddButtonColumn
+    DataGrid_AddLinkColumn
+    DataGrid_AddImageColumn
+    DataGrid_RemoveColumn
+    DataGrid_ClearColumns
+    DataGrid_GetColumnCount
+    DataGrid_SetColumnWidth
+    DataGrid_AddRow
+    DataGrid_RemoveRow
+    DataGrid_ClearRows
+    DataGrid_GetRowCount
+    DataGrid_SetCellText
+    DataGrid_GetCellText
+    DataGrid_SetCellChecked
+    DataGrid_GetCellChecked
+    DataGrid_SetCellStyle
+    DataGrid_GetSelectedRow
+    DataGrid_GetSelectedCol
+    DataGrid_SetSelectedCell
+    DataGrid_SetSelectionMode
+    DataGrid_SortByColumn
+    DataGrid_SetFreezeHeader
+    DataGrid_SetFreezeFirstColumn
+    DataGrid_SetVirtualRowCount
+    DataGrid_SetVirtualDataCallback
+    DataGrid_SetShowGridLines
+    DataGrid_SetDefaultRowHeight
+    DataGrid_SetHeaderHeight
+    DataGrid_SetCellClickCallback
+    DataGrid_SetCellDoubleClickCallback
+    DataGrid_SetCellValueChangedCallback
+    DataGrid_SetColumnHeaderClickCallback
+    DataGrid_SetSelectionChangedCallback
+    DataGrid_Enable
+    DataGrid_Show
+    DataGrid_SetBounds
+    DataGrid_Refresh
+    DataGrid_ExportCSV
