@@ -38,3 +38,11 @@ EXPORTS
     SetLabelBounds
     EnableLabel
     ShowLabel
+    CreateCheckBox
+    GetCheckBoxState
+    SetCheckBoxState
+    SetCheckBoxCallback
+    EnableCheckBox
+    ShowCheckBox
+    SetCheckBoxText
+    SetCheckBoxBounds

@@ -5,6 +5,7 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <uxtheme.h>
+#include <wincodec.h>  // WIC (Windows Imaging Component)
 #include <string>
 #include <vector>
 #include <map>
@@ -13,6 +14,7 @@
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "windowscodecs.lib")  // WIC库
 
 // Button click callback type (stdcall)
 typedef void (__stdcall *ButtonClickCallback)(int button_id);
@@ -32,6 +34,23 @@ typedef void (__stdcall *WindowCloseCallback)(HWND hwnd);
 
 // 编辑框按键回调 (stdcall)：hEdit 句柄, key_code 虚拟键码, key_down 1=按下 0=松开, shift/ctrl/alt 修饰键是否按下(0/1)
 typedef void (__stdcall *EditBoxKeyCallback)(HWND hEdit, int key_code, int key_down, int shift, int ctrl, int alt);
+
+// 复选框回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *CheckBoxCallback)(HWND hCheckBox, BOOL checked);
+
+// 进度条回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *ProgressBarCallback)(HWND hProgressBar, int value);
+
+// 图片缩放模式
+enum ImageScaleMode {
+    SCALE_NONE = 0,         // 不缩放
+    SCALE_STRETCH = 1,      // 拉伸填充
+    SCALE_FIT = 2,          // 等比缩放适应
+    SCALE_CENTER = 3        // 居中显示
+};
+
+// 图片框回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *PictureBoxCallback)(HWND hPictureBox);
 
 // 文本对齐方式
 enum TextAlignment {
@@ -78,6 +97,61 @@ struct LabelState {
     FontStyle font;             // 字体样式
     TextAlignment alignment;    // 文字对齐
     HBRUSH bg_brush;            // 背景画刷（避免每次创建）
+    bool word_wrap;             // 是否换行显示
+};
+
+// 复选框状态
+struct CheckBoxState {
+    HWND hwnd;                  // 控件句柄
+    HWND parent;                // 父窗口句柄
+    int id;                     // 控件ID
+    int x, y, width, height;    // 位置和尺寸
+    std::wstring text;          // 显示文本
+    bool checked;               // 选中状态
+    bool enabled;               // 启用状态
+    bool hovered;               // 悬停状态
+    bool pressed;               // 按下状态
+    UINT32 fg_color;            // 前景色
+    UINT32 bg_color;            // 背景色
+    UINT32 check_color;         // 勾选标记颜色
+    FontStyle font;             // 字体样式
+    CheckBoxCallback callback;  // 回调函数
+};
+
+// 进度条状态
+struct ProgressBarState {
+    HWND hwnd;                  // 控件句柄
+    HWND parent;                // 父窗口句柄
+    int id;                     // 控件ID
+    int x, y, width, height;    // 位置和尺寸
+    int current_value;          // 当前值 (0-100)
+    int target_value;           // 目标值 (0-100)
+    float animation_value;      // 动画中间值 (用于平滑过渡)
+    bool indeterminate;         // 不确定模式
+    float indeterminate_pos;    // 不确定模式动画位置 (0.0-1.0)
+    bool enabled;               // 启用状态
+    UINT32 fg_color;            // 前景色 (进度条颜色)
+    UINT32 bg_color;            // 背景色
+    UINT32 border_color;        // 边框颜色
+    bool show_text;             // 是否显示百分比文本
+    FontStyle font;             // 字体样式
+    ProgressBarCallback callback; // 回调函数
+    UINT_PTR timer_id;          // 动画定时器ID
+};
+
+// 图片框状态
+struct PictureBoxState {
+    HWND hwnd;                  // 控件句柄
+    HWND parent;                // 父窗口句柄
+    int id;                     // 控件ID
+    int x, y, width, height;    // 位置和尺寸
+    ID2D1Bitmap* bitmap;        // D2D1位图
+    IWICBitmapSource* wic_source; // WIC位图源
+    ImageScaleMode scale_mode;  // 缩放模式
+    float opacity;              // 透明度 (0.0 - 1.0)
+    UINT32 bg_color;            // 背景色
+    bool enabled;               // 启用状态
+    PictureBoxCallback callback; // 回调函数
 };
 
 // Button structure
@@ -148,6 +222,9 @@ extern std::map<HWND, MsgBoxState*> g_msgboxes;
 extern std::map<HWND, TabControlState*> g_tab_controls;
 extern std::map<HWND, EditBoxState*> g_editboxes;
 extern std::map<HWND, LabelState*> g_labels;
+extern std::map<HWND, CheckBoxState*> g_checkboxes;
+extern std::map<HWND, ProgressBarState*> g_progressbars;
+extern std::map<HWND, PictureBoxState*> g_pictureboxes;
 extern ButtonClickCallback g_button_callback;
 extern WindowResizeCallback g_window_resize_callback;
 extern WindowCloseCallback g_window_close_callback;
@@ -373,7 +450,8 @@ extern "C" {
         BOOL bold,
         BOOL italic,
         BOOL underline,
-        int alignment  // 0=左, 1=中, 2=右
+        int alignment,  // 0=左, 1=中, 2=右
+        BOOL word_wrap  // 是否换行显示
     );
 
     // 设置标签文本
@@ -418,13 +496,211 @@ extern "C" {
         HWND hLabel,
         BOOL show
     );
+
+    // ========== 复选框功能 ==========
+
+    // 创建复选框
+    __declspec(dllexport) HWND __stdcall CreateCheckBox(
+        HWND hParent,
+        int x, int y, int width, int height,
+        const unsigned char* text_bytes,
+        int text_len,
+        BOOL checked,
+        UINT32 fg_color,
+        UINT32 bg_color
+    );
+
+    // 获取复选框选中状态
+    __declspec(dllexport) BOOL __stdcall GetCheckBoxState(
+        HWND hCheckBox
+    );
+
+    // 设置复选框选中状态
+    __declspec(dllexport) void __stdcall SetCheckBoxState(
+        HWND hCheckBox,
+        BOOL checked
+    );
+
+    // 设置复选框回调
+    __declspec(dllexport) void __stdcall SetCheckBoxCallback(
+        HWND hCheckBox,
+        CheckBoxCallback callback
+    );
+
+    // 启用/禁用复选框
+    __declspec(dllexport) void __stdcall EnableCheckBox(
+        HWND hCheckBox,
+        BOOL enable
+    );
+
+    // 显示/隐藏复选框
+    __declspec(dllexport) void __stdcall ShowCheckBox(
+        HWND hCheckBox,
+        BOOL show
+    );
+
+    // 设置复选框文本
+    __declspec(dllexport) void __stdcall SetCheckBoxText(
+        HWND hCheckBox,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+
+    // 设置复选框位置和大小
+    __declspec(dllexport) void __stdcall SetCheckBoxBounds(
+        HWND hCheckBox,
+        int x, int y, int width, int height
+    );
+
+    // ========== 进度条功能 ==========
+
+    // 创建进度条
+    __declspec(dllexport) HWND __stdcall CreateProgressBar(
+        HWND hParent,
+        int x, int y, int width, int height,
+        int initial_value,  // 初始值 (0-100)
+        UINT32 fg_color,
+        UINT32 bg_color,
+        BOOL show_text      // 是否显示百分比文本
+    );
+
+    // 设置进度条值 (0-100)
+    __declspec(dllexport) void __stdcall SetProgressValue(
+        HWND hProgressBar,
+        int value
+    );
+
+    // 获取进度条值
+    __declspec(dllexport) int __stdcall GetProgressValue(
+        HWND hProgressBar
+    );
+
+    // 设置进度条不确定模式
+    __declspec(dllexport) void __stdcall SetProgressIndeterminate(
+        HWND hProgressBar,
+        BOOL indeterminate
+    );
+
+    // 设置进度条颜色
+    __declspec(dllexport) void __stdcall SetProgressBarColor(
+        HWND hProgressBar,
+        UINT32 fg_color,
+        UINT32 bg_color
+    );
+
+    // 设置进度条回调
+    __declspec(dllexport) void __stdcall SetProgressBarCallback(
+        HWND hProgressBar,
+        ProgressBarCallback callback
+    );
+
+    // 启用/禁用进度条
+    __declspec(dllexport) void __stdcall EnableProgressBar(
+        HWND hProgressBar,
+        BOOL enable
+    );
+
+    // 显示/隐藏进度条
+    __declspec(dllexport) void __stdcall ShowProgressBar(
+        HWND hProgressBar,
+        BOOL show
+    );
+
+    // 设置进度条位置和大小
+    __declspec(dllexport) void __stdcall SetProgressBarBounds(
+        HWND hProgressBar,
+        int x, int y, int width, int height
+    );
+
+    // 设置是否显示百分比文本
+    __declspec(dllexport) void __stdcall SetProgressBarShowText(
+        HWND hProgressBar,
+        BOOL show_text
+    );
+
+    // ========== 图片框功能 ==========
+
+    // 创建图片框
+    __declspec(dllexport) HWND __stdcall CreatePictureBox(
+        HWND hParent,
+        int x, int y, int width, int height,
+        int scale_mode,     // 缩放模式: 0=不缩放, 1=拉伸, 2=等比缩放, 3=居中
+        UINT32 bg_color
+    );
+
+    // 从文件加载图片
+    __declspec(dllexport) BOOL __stdcall LoadImageFromFile(
+        HWND hPictureBox,
+        const unsigned char* file_path_bytes,
+        int path_len
+    );
+
+    // 从内存加载图片
+    __declspec(dllexport) BOOL __stdcall LoadImageFromMemory(
+        HWND hPictureBox,
+        const unsigned char* image_data,
+        int data_len
+    );
+
+    // 清除图片
+    __declspec(dllexport) void __stdcall ClearImage(
+        HWND hPictureBox
+    );
+
+    // 设置图片透明度
+    __declspec(dllexport) void __stdcall SetImageOpacity(
+        HWND hPictureBox,
+        float opacity  // 0.0 - 1.0
+    );
+
+    // 设置图片框回调
+    __declspec(dllexport) void __stdcall SetPictureBoxCallback(
+        HWND hPictureBox,
+        PictureBoxCallback callback
+    );
+
+    // 启用/禁用图片框
+    __declspec(dllexport) void __stdcall EnablePictureBox(
+        HWND hPictureBox,
+        BOOL enable
+    );
+
+    // 显示/隐藏图片框
+    __declspec(dllexport) void __stdcall ShowPictureBox(
+        HWND hPictureBox,
+        BOOL show
+    );
+
+    // 设置图片框位置和大小
+    __declspec(dllexport) void __stdcall SetPictureBoxBounds(
+        HWND hPictureBox,
+        int x, int y, int width, int height
+    );
+
+    // 设置图片框缩放模式
+    __declspec(dllexport) void __stdcall SetPictureBoxScaleMode(
+        HWND hPictureBox,
+        int scale_mode
+    );
+
+    // 设置图片框背景色
+    __declspec(dllexport) void __stdcall SetPictureBoxBackgroundColor(
+        HWND hPictureBox,
+        UINT32 bg_color
+    );
 }
 
 // Internal functions
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK MsgBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK CheckBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK ProgressBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK PictureBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiButton& button);
 void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state);
+void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxState* state);
+void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ProgressBarState* state);
+void DrawPictureBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PictureBoxState* state);
 std::wstring Utf8ToWide(const unsigned char* bytes, int len);
 D2D1_COLOR_F ColorFromUInt32(UINT32 color);
 UINT32 LightenColor(UINT32 color, float factor);

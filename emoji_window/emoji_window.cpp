@@ -7,11 +7,15 @@ std::map<HWND, MsgBoxState*> g_msgboxes;
 std::map<HWND, TabControlState*> g_tab_controls;
 std::map<HWND, EditBoxState*> g_editboxes;
 std::map<HWND, LabelState*> g_labels;
+std::map<HWND, CheckBoxState*> g_checkboxes;
+std::map<HWND, ProgressBarState*> g_progressbars;
+std::map<HWND, PictureBoxState*> g_pictureboxes;
 ButtonClickCallback g_button_callback = nullptr;
 WindowResizeCallback g_window_resize_callback = nullptr;
 WindowCloseCallback g_window_close_callback = nullptr;
 ID2D1Factory* g_d2d_factory = nullptr;
 IDWriteFactory* g_dwrite_factory = nullptr;
+IWICImagingFactory* g_wic_factory = nullptr;  // WIC工厂
 int g_next_control_id = 10000;  // 控件ID起始值
 // 标记 run_message_loop 是否正在运行
 // 只有在 DLL 自己的消息循环里才应该 PostQuitMessage，
@@ -1965,7 +1969,17 @@ LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
             HFONT hFont = CreateCustomFont(state->font);
             HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
             
-            UINT format = DT_VCENTER | DT_SINGLELINE;
+            // ✅ 根据 word_wrap 参数决定是否换行
+            UINT format = 0;
+            if (state->word_wrap) {
+                // 换行模式: 使用 DT_WORDBREAK 自动换行
+                format = DT_WORDBREAK;
+            } else {
+                // 单行模式: 使用 DT_SINGLELINE 和 DT_VCENTER
+                format = DT_VCENTER | DT_SINGLELINE;
+            }
+            
+            // 添加对齐方式
             switch (state->alignment) {
                 case ALIGN_LEFT: format |= DT_LEFT; break;
                 case ALIGN_CENTER: format |= DT_CENTER; break;
@@ -2276,7 +2290,8 @@ __declspec(dllexport) HWND __stdcall CreateLabel(
     BOOL bold,
     BOOL italic,
     BOOL underline,
-    int alignment
+    int alignment,
+    BOOL word_wrap  // ✅ 新增参数: 是否换行显示
 ) {
     // 转换文本
     std::wstring text = Utf8ToWide(text_bytes, text_len);
@@ -2314,6 +2329,7 @@ __declspec(dllexport) HWND __stdcall CreateLabel(
     state->font.italic = italic != 0;
     state->font.underline = underline != 0;
     state->alignment = (TextAlignment)alignment;
+    state->word_wrap = word_wrap != 0;  // ✅ 保存换行设置
     
     // ✅ 创建背景画刷（只创建一次，避免重复创建导致闪烁）
     state->bg_brush = CreateSolidBrush(RGB(
@@ -2416,3 +2432,1321 @@ __declspec(dllexport) void __stdcall ShowLabel(
 }
 
 } // extern "C"
+
+
+// ========== 复选框功能实现 ==========
+
+// 绘制复选框（Element UI风格）
+void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxState* state) {
+    if (!rt || !factory || !state) return;
+
+    // Element UI 配色
+    UINT32 primary_color = 0xFF409EFF;  // 主色
+    UINT32 border_color = 0xFFDCDFE6;   // 边框色
+    UINT32 disabled_color = 0xFFC0C4CC; // 禁用色
+    UINT32 hover_border = 0xFF409EFF;   // 悬停边框色
+
+    // 复选框尺寸（Element UI标准）
+    int box_size = 14;
+    int box_x = state->x;
+    int box_y = state->y + (state->height - box_size) / 2;
+
+    // 确定复选框颜色
+    UINT32 current_bg = state->bg_color;
+    UINT32 current_border = border_color;
+    
+    if (!state->enabled) {
+        current_bg = 0xFFF5F7FA;
+        current_border = disabled_color;
+    } else if (state->checked) {
+        current_bg = primary_color;
+        current_border = primary_color;
+    } else if (state->hovered) {
+        current_border = hover_border;
+    }
+
+    // 绘制复选框背景
+    ID2D1SolidColorBrush* bg_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(current_bg), &bg_brush);
+    
+    D2D1_ROUNDED_RECT box_rect = D2D1::RoundedRect(
+        D2D1::RectF(
+            (FLOAT)box_x,
+            (FLOAT)box_y,
+            (FLOAT)(box_x + box_size),
+            (FLOAT)(box_y + box_size)
+        ),
+        2.0f, 2.0f  // Element UI 圆角
+    );
+    rt->FillRoundedRectangle(box_rect, bg_brush);
+    bg_brush->Release();
+
+    // 绘制边框
+    ID2D1SolidColorBrush* border_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(current_border), &border_brush);
+    rt->DrawRoundedRectangle(box_rect, border_brush, 1.0f);
+    border_brush->Release();
+
+    // 如果选中，绘制勾选标记
+    if (state->checked) {
+        ID2D1SolidColorBrush* check_brush = nullptr;
+        rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &check_brush);
+
+        // 绘制勾选路径（使用路径几何）
+        ID2D1PathGeometry* path = nullptr;
+        g_d2d_factory->CreatePathGeometry(&path);
+        
+        ID2D1GeometrySink* sink = nullptr;
+        path->Open(&sink);
+        
+        // 勾选标记的路径点
+        float cx = box_x + box_size / 2.0f;
+        float cy = box_y + box_size / 2.0f;
+        
+        sink->BeginFigure(D2D1::Point2F(cx - 3, cy), D2D1_FIGURE_BEGIN_FILLED);
+        sink->AddLine(D2D1::Point2F(cx - 1, cy + 2));
+        sink->AddLine(D2D1::Point2F(cx + 3, cy - 2));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->Close();
+        
+        rt->DrawGeometry(path, check_brush, 1.5f);
+        
+        sink->Release();
+        path->Release();
+        check_brush->Release();
+    }
+
+    // 绘制文本标签
+    if (!state->text.empty()) {
+        IDWriteTextFormat* text_format = nullptr;
+        factory->CreateTextFormat(
+            state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+            nullptr,
+            state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            (FLOAT)(state->font.font_size > 0 ? state->font.font_size : 14),
+            L"zh-CN",
+            &text_format
+        );
+
+        text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        UINT32 text_color = state->enabled ? state->fg_color : disabled_color;
+        ID2D1SolidColorBrush* text_brush = nullptr;
+        rt->CreateSolidColorBrush(ColorFromUInt32(text_color), &text_brush);
+
+        D2D1_RECT_F text_rect = D2D1::RectF(
+            (FLOAT)(box_x + box_size + 8),
+            (FLOAT)state->y,
+            (FLOAT)(state->x + state->width),
+            (FLOAT)(state->y + state->height)
+        );
+
+        rt->DrawText(
+            state->text.c_str(),
+            (UINT32)state->text.length(),
+            text_format,
+            text_rect,
+            text_brush
+        );
+
+        text_brush->Release();
+        text_format->Release();
+    }
+}
+
+// 复选框窗口过程（子类化）
+LRESULT CALLBACK CheckBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    CheckBoxState* state = (CheckBoxState*)dwRefData;
+    
+    switch (msg) {
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            
+            // 创建D2D渲染目标
+            ID2D1HwndRenderTarget* rt = nullptr;
+            D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+            D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_props = D2D1::HwndRenderTargetProperties(
+                hwnd,
+                D2D1::SizeU(state->width, state->height)
+            );
+            
+            g_d2d_factory->CreateHwndRenderTarget(props, hwnd_props, &rt);
+            
+            if (rt) {
+                rt->BeginDraw();
+                rt->Clear(ColorFromUInt32(state->bg_color));
+                DrawCheckBox(rt, g_dwrite_factory, state);
+                rt->EndDraw();
+                rt->Release();
+            }
+            
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        
+        case WM_LBUTTONDOWN: {
+            if (state->enabled) {
+                state->pressed = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+        
+        case WM_LBUTTONUP: {
+            if (state->enabled && state->pressed) {
+                state->pressed = false;
+                
+                // 切换选中状态
+                state->checked = !state->checked;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                
+                // 触发回调
+                if (state->callback) {
+                    state->callback(hwnd, state->checked);
+                }
+            }
+            return 0;
+        }
+        
+        case WM_MOUSEMOVE: {
+            if (state->enabled && !state->hovered) {
+                state->hovered = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                
+                // 跟踪鼠标离开
+                TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT) };
+                tme.dwFlags = TME_LEAVE;
+                tme.hwndTrack = hwnd;
+                TrackMouseEvent(&tme);
+            }
+            return 0;
+        }
+        
+        case WM_MOUSELEAVE: {
+            if (state->hovered) {
+                state->hovered = false;
+                state->pressed = false;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+        
+        case WM_NCDESTROY: {
+            // 清理资源
+            RemoveWindowSubclass(hwnd, CheckBoxProc, uIdSubclass);
+            g_checkboxes.erase(hwnd);
+            delete state;
+            return 0;
+        }
+    }
+    
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// 创建复选框
+HWND __stdcall CreateCheckBox(
+    HWND hParent,
+    int x, int y, int width, int height,
+    const unsigned char* text_bytes,
+    int text_len,
+    BOOL checked,
+    UINT32 fg_color,
+    UINT32 bg_color
+) {
+    if (!hParent) return nullptr;
+    
+    // 初始化D2D和DirectWrite（如果尚未初始化）
+    if (!g_d2d_factory) {
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_d2d_factory);
+    }
+    if (!g_dwrite_factory) {
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                           reinterpret_cast<IUnknown**>(&g_dwrite_factory));
+    }
+    
+    // 创建静态控件作为复选框容器
+    HWND hwnd = CreateWindowExW(
+        0,
+        L"STATIC",
+        L"",
+        WS_CHILD | WS_VISIBLE | SS_NOTIFY,
+        x, y, width, height,
+        hParent,
+        (HMENU)(INT_PTR)g_next_control_id++,
+        GetModuleHandle(nullptr),
+        nullptr
+    );
+    
+    if (!hwnd) return nullptr;
+    
+    // 创建状态对象
+    CheckBoxState* state = new CheckBoxState();
+    state->hwnd = hwnd;
+    state->parent = hParent;
+    state->id = (int)(INT_PTR)GetMenu(hwnd);
+    state->x = 0;  // 相对于控件自身
+    state->y = 0;
+    state->width = width;
+    state->height = height;
+    state->text = Utf8ToWide(text_bytes, text_len);
+    state->checked = (checked != 0);
+    state->enabled = true;
+    state->hovered = false;
+    state->pressed = false;
+    state->fg_color = fg_color ? fg_color : 0xFF303133;  // Element UI 主要文本色
+    state->bg_color = bg_color ? bg_color : 0xFFFFFFFF;  // 白色背景
+    state->check_color = 0xFF409EFF;  // Element UI 主色
+    state->font.font_name = L"Microsoft YaHei UI";
+    state->font.font_size = 14;
+    state->font.bold = false;
+    state->font.italic = false;
+    state->font.underline = false;
+    state->callback = nullptr;
+    
+    // 保存到全局map
+    g_checkboxes[hwnd] = state;
+    
+    // 子类化窗口
+    SetWindowSubclass(hwnd, CheckBoxProc, 0, (DWORD_PTR)state);
+    
+    return hwnd;
+}
+
+// 获取复选框选中状态
+BOOL __stdcall GetCheckBoxState(HWND hCheckBox) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return FALSE;
+    return it->second->checked ? TRUE : FALSE;
+}
+
+// 设置复选框选中状态
+void __stdcall SetCheckBoxState(HWND hCheckBox, BOOL checked) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return;
+    
+    it->second->checked = (checked != 0);
+    InvalidateRect(hCheckBox, nullptr, FALSE);
+}
+
+// 设置复选框回调
+void __stdcall SetCheckBoxCallback(HWND hCheckBox, CheckBoxCallback callback) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return;
+    
+    it->second->callback = callback;
+}
+
+// 启用/禁用复选框
+void __stdcall EnableCheckBox(HWND hCheckBox, BOOL enable) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return;
+    
+    it->second->enabled = (enable != 0);
+    InvalidateRect(hCheckBox, nullptr, FALSE);
+}
+
+// 显示/隐藏复选框
+void __stdcall ShowCheckBox(HWND hCheckBox, BOOL show) {
+    if (!hCheckBox) return;
+    ShowWindow(hCheckBox, show ? SW_SHOW : SW_HIDE);
+}
+
+// 设置复选框文本
+void __stdcall SetCheckBoxText(HWND hCheckBox, const unsigned char* text_bytes, int text_len) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return;
+    
+    it->second->text = Utf8ToWide(text_bytes, text_len);
+    InvalidateRect(hCheckBox, nullptr, FALSE);
+}
+
+// 设置复选框位置和大小
+void __stdcall SetCheckBoxBounds(HWND hCheckBox, int x, int y, int width, int height) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return;
+    
+    it->second->width = width;
+    it->second->height = height;
+    SetWindowPos(hCheckBox, nullptr, x, y, width, height, SWP_NOZORDER);
+    InvalidateRect(hCheckBox, nullptr, FALSE);
+}
+
+
+// ========== 进度条功能实现 ==========
+
+// 进度条动画定时器ID基数
+#define PROGRESSBAR_TIMER_BASE 20000
+
+// 绘制进度条
+void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ProgressBarState* state) {
+    if (!rt || !factory || !state) return;
+    
+    ID2D1SolidColorBrush* brush = nullptr;
+    rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0), &brush);
+    if (!brush) return;
+    
+    float width = (float)state->width;
+    float height = (float)state->height;
+    
+    // Element UI 风格配色
+    UINT32 bg_color = state->bg_color;
+    UINT32 fg_color = state->fg_color;
+    UINT32 border_color = state->border_color;
+    
+    // 如果禁用，使用灰色
+    if (!state->enabled) {
+        fg_color = 0xFFC0C4CC;  // Element UI 禁用色
+        bg_color = 0xFFF5F7FA;
+    }
+    
+    // 绘制背景（圆角矩形）
+    D2D1_ROUNDED_RECT bg_rect = D2D1::RoundedRect(
+        D2D1::RectF(0, 0, width, height),
+        4.0f, 4.0f  // 4px 圆角
+    );
+    brush->SetColor(ColorFromUInt32(bg_color));
+    rt->FillRoundedRectangle(bg_rect, brush);
+    
+    // 绘制边框
+    brush->SetColor(ColorFromUInt32(border_color));
+    rt->DrawRoundedRectangle(bg_rect, brush, 1.0f);
+    
+    // 计算进度条宽度
+    float progress_width = 0;
+    
+    if (state->indeterminate) {
+        // 不确定模式：绘制移动的进度条
+        float bar_width = width * 0.3f;  // 进度条宽度为总宽度的30%
+        float start_x = state->indeterminate_pos * (width + bar_width) - bar_width;
+        progress_width = bar_width;
+        
+        if (start_x + bar_width > 0 && start_x < width) {
+            float visible_start = (std::max)(0.0f, start_x);
+            float visible_end = (std::min)(width, start_x + bar_width);
+            float visible_width = visible_end - visible_start;
+            
+            if (visible_width > 0) {
+                D2D1_ROUNDED_RECT progress_rect = D2D1::RoundedRect(
+                    D2D1::RectF(visible_start + 2, 2, visible_end - 2, height - 2),
+                    3.0f, 3.0f
+                );
+                
+                // 使用渐变色
+                ID2D1GradientStopCollection* gradient_stops = nullptr;
+                D2D1_GRADIENT_STOP stops[2];
+                stops[0].position = 0.0f;
+                stops[0].color = ColorFromUInt32(LightenColor(fg_color, 1.2f));
+                stops[1].position = 1.0f;
+                stops[1].color = ColorFromUInt32(fg_color);
+                
+                rt->CreateGradientStopCollection(stops, 2, &gradient_stops);
+                if (gradient_stops) {
+                    ID2D1LinearGradientBrush* gradient_brush = nullptr;
+                    rt->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(
+                            D2D1::Point2F(0, 0),
+                            D2D1::Point2F(0, height)
+                        ),
+                        gradient_stops,
+                        &gradient_brush
+                    );
+                    
+                    if (gradient_brush) {
+                        rt->FillRoundedRectangle(progress_rect, gradient_brush);
+                        gradient_brush->Release();
+                    }
+                    gradient_stops->Release();
+                }
+            }
+        }
+    } else {
+        // 确定模式：根据动画值绘制进度
+        progress_width = (state->animation_value / 100.0f) * (width - 4);
+        
+        if (progress_width > 0) {
+            D2D1_ROUNDED_RECT progress_rect = D2D1::RoundedRect(
+                D2D1::RectF(2, 2, 2 + progress_width, height - 2),
+                3.0f, 3.0f
+            );
+            
+            // 使用渐变色
+            ID2D1GradientStopCollection* gradient_stops = nullptr;
+            D2D1_GRADIENT_STOP stops[2];
+            stops[0].position = 0.0f;
+            stops[0].color = ColorFromUInt32(LightenColor(fg_color, 1.2f));
+            stops[1].position = 1.0f;
+            stops[1].color = ColorFromUInt32(fg_color);
+            
+            rt->CreateGradientStopCollection(stops, 2, &gradient_stops);
+            if (gradient_stops) {
+                ID2D1LinearGradientBrush* gradient_brush = nullptr;
+                rt->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(
+                        D2D1::Point2F(0, 0),
+                        D2D1::Point2F(0, height)
+                    ),
+                    gradient_stops,
+                    &gradient_brush
+                );
+                
+                if (gradient_brush) {
+                    rt->FillRoundedRectangle(progress_rect, gradient_brush);
+                    gradient_brush->Release();
+                }
+                gradient_stops->Release();
+            }
+        }
+    }
+    
+    // 绘制百分比文本
+    if (state->show_text && !state->indeterminate) {
+        wchar_t text[32];
+        swprintf_s(text, 32, L"%d%%", state->current_value);
+        
+        IDWriteTextFormat* text_format = nullptr;
+        factory->CreateTextFormat(
+            state->font.font_name.c_str(),
+            nullptr,
+            state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            (float)state->font.font_size,
+            L"zh-cn",
+            &text_format
+        );
+        
+        if (text_format) {
+            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            
+            brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+            rt->DrawText(
+                text,
+                (UINT32)wcslen(text),
+                text_format,
+                D2D1::RectF(0, 0, width, height),
+                brush
+            );
+            
+            text_format->Release();
+        }
+    }
+    
+    brush->Release();
+}
+
+// 进度条窗口过程
+LRESULT CALLBACK ProgressBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    ProgressBarState* state = (ProgressBarState*)dwRefData;
+    
+    switch (msg) {
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            
+            // 创建 D2D 渲染目标
+            ID2D1HwndRenderTarget* rt = nullptr;
+            D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+            D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_props = D2D1::HwndRenderTargetProperties(
+                hwnd,
+                D2D1::SizeU(state->width, state->height)
+            );
+            
+            if (g_d2d_factory) {
+                g_d2d_factory->CreateHwndRenderTarget(props, hwnd_props, &rt);
+            }
+            
+            if (rt && g_dwrite_factory) {
+                rt->BeginDraw();
+                rt->Clear(D2D1::ColorF(D2D1::ColorF::White, 0.0f));
+                
+                DrawProgressBar(rt, g_dwrite_factory, state);
+                
+                rt->EndDraw();
+                rt->Release();
+            }
+            
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        
+        case WM_TIMER: {
+            if (wparam == state->timer_id) {
+                bool need_redraw = false;
+                
+                if (state->indeterminate) {
+                    // 不确定模式动画
+                    state->indeterminate_pos += 0.02f;
+                    if (state->indeterminate_pos > 1.0f) {
+                        state->indeterminate_pos = 0.0f;
+                    }
+                    need_redraw = true;
+                } else {
+                    // 平滑过渡动画
+                    float diff = state->target_value - state->animation_value;
+                    if (fabs(diff) > 0.1f) {
+                        state->animation_value += diff * 0.15f;  // 平滑系数
+                        need_redraw = true;
+                    } else {
+                        state->animation_value = (float)state->target_value;
+                        if (state->current_value == state->target_value) {
+                            // 动画完成，停止定时器
+                            KillTimer(hwnd, state->timer_id);
+                            state->timer_id = 0;
+                        }
+                        need_redraw = true;
+                    }
+                }
+                
+                if (need_redraw) {
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
+            return 0;
+        }
+        
+        case WM_NCDESTROY: {
+            // 清理定时器
+            if (state->timer_id != 0) {
+                KillTimer(hwnd, state->timer_id);
+            }
+            
+            // 移除子类化
+            RemoveWindowSubclass(hwnd, ProgressBarProc, uIdSubclass);
+            
+            // 从全局map中移除
+            g_progressbars.erase(hwnd);
+            delete state;
+            return 0;
+        }
+    }
+    
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// 创建进度条
+__declspec(dllexport) HWND __stdcall CreateProgressBar(
+    HWND hParent,
+    int x, int y, int width, int height,
+    int initial_value,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    BOOL show_text
+) {
+    if (!hParent) return NULL;
+    
+    // 限制初始值范围
+    if (initial_value < 0) initial_value = 0;
+    if (initial_value > 100) initial_value = 100;
+    
+    // 生成唯一ID
+    int id = g_next_control_id++;
+    
+    // 创建静态控件作为容器
+    HWND hProgressBar = CreateWindowExW(
+        0,
+        L"STATIC",
+        L"",
+        WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
+        x, y, width, height,
+        hParent,
+        (HMENU)(INT_PTR)id,
+        GetModuleHandle(NULL),
+        NULL
+    );
+    
+    if (!hProgressBar) {
+        return NULL;
+    }
+    
+    // 创建状态对象
+    ProgressBarState* state = new ProgressBarState();
+    state->hwnd = hProgressBar;
+    state->parent = hParent;
+    state->id = id;
+    state->x = x;
+    state->y = y;
+    state->width = width;
+    state->height = height;
+    state->current_value = initial_value;
+    state->target_value = initial_value;
+    state->animation_value = (float)initial_value;
+    state->indeterminate = false;
+    state->indeterminate_pos = 0.0f;
+    state->enabled = true;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->border_color = 0xFFDCDFE6;  // Element UI 边框色
+    state->show_text = show_text != 0;
+    state->font.font_name = L"Microsoft YaHei UI";
+    state->font.font_size = 12;
+    state->font.bold = false;
+    state->font.italic = false;
+    state->font.underline = false;
+    state->callback = nullptr;
+    state->timer_id = 0;
+    
+    g_progressbars[hProgressBar] = state;
+    
+    // 子类化以自定义绘制
+    SetWindowSubclass(hProgressBar, ProgressBarProc, 0, (DWORD_PTR)state);
+    
+    return hProgressBar;
+}
+
+// 设置进度条值
+__declspec(dllexport) void __stdcall SetProgressValue(
+    HWND hProgressBar,
+    int value
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    ProgressBarState* state = it->second;
+    
+    // 限制值范围
+    if (value < 0) value = 0;
+    if (value > 100) value = 100;
+    
+    int old_value = state->current_value;
+    state->target_value = value;
+    state->current_value = value;
+    
+    // 启动动画定时器
+    if (state->timer_id == 0) {
+        state->timer_id = SetTimer(hProgressBar, PROGRESSBAR_TIMER_BASE + state->id, 16, NULL);  // 60fps
+    }
+    
+    // 触发回调
+    if (state->callback && old_value != value) {
+        state->callback(hProgressBar, value);
+    }
+    
+    InvalidateRect(hProgressBar, NULL, FALSE);
+}
+
+// 获取进度条值
+__declspec(dllexport) int __stdcall GetProgressValue(
+    HWND hProgressBar
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return 0;
+    
+    return it->second->current_value;
+}
+
+// 设置进度条不确定模式
+__declspec(dllexport) void __stdcall SetProgressIndeterminate(
+    HWND hProgressBar,
+    BOOL indeterminate
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    ProgressBarState* state = it->second;
+    state->indeterminate = indeterminate != 0;
+    state->indeterminate_pos = 0.0f;
+    
+    // 启动或停止动画定时器
+    if (state->indeterminate) {
+        if (state->timer_id == 0) {
+            state->timer_id = SetTimer(hProgressBar, PROGRESSBAR_TIMER_BASE + state->id, 16, NULL);
+        }
+    } else {
+        if (state->timer_id != 0 && state->current_value == state->target_value) {
+            KillTimer(hProgressBar, state->timer_id);
+            state->timer_id = 0;
+        }
+    }
+    
+    InvalidateRect(hProgressBar, NULL, FALSE);
+}
+
+// 设置进度条颜色
+__declspec(dllexport) void __stdcall SetProgressBarColor(
+    HWND hProgressBar,
+    UINT32 fg_color,
+    UINT32 bg_color
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    ProgressBarState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    
+    InvalidateRect(hProgressBar, NULL, FALSE);
+}
+
+// 设置进度条回调
+__declspec(dllexport) void __stdcall SetProgressBarCallback(
+    HWND hProgressBar,
+    ProgressBarCallback callback
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    it->second->callback = callback;
+}
+
+// 启用/禁用进度条
+__declspec(dllexport) void __stdcall EnableProgressBar(
+    HWND hProgressBar,
+    BOOL enable
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    ProgressBarState* state = it->second;
+    state->enabled = enable != 0;
+    
+    EnableWindow(hProgressBar, enable);
+    InvalidateRect(hProgressBar, NULL, FALSE);
+}
+
+// 显示/隐藏进度条
+__declspec(dllexport) void __stdcall ShowProgressBar(
+    HWND hProgressBar,
+    BOOL show
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    ShowWindow(hProgressBar, show ? SW_SHOW : SW_HIDE);
+}
+
+// 设置进度条位置和大小
+__declspec(dllexport) void __stdcall SetProgressBarBounds(
+    HWND hProgressBar,
+    int x, int y, int width, int height
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    ProgressBarState* state = it->second;
+    state->x = x;
+    state->y = y;
+    state->width = width;
+    state->height = height;
+    
+    SetWindowPos(hProgressBar, NULL, x, y, width, height, SWP_NOZORDER);
+    InvalidateRect(hProgressBar, NULL, FALSE);
+}
+
+// 设置是否显示百分比文本
+__declspec(dllexport) void __stdcall SetProgressBarShowText(
+    HWND hProgressBar,
+    BOOL show_text
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+    
+    ProgressBarState* state = it->second;
+    state->show_text = show_text != 0;
+    
+    InvalidateRect(hProgressBar, NULL, FALSE);
+}
+
+// ========== 图片框功能实现 ==========
+
+// 绘制图片框
+void DrawPictureBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PictureBoxState* state) {
+    if (!rt || !state) return;
+    
+    float width = (float)state->width;
+    float height = (float)state->height;
+    
+    // 绘制背景
+    ID2D1SolidColorBrush* brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(state->bg_color), &brush);
+    if (brush) {
+        rt->FillRectangle(D2D1::RectF(0, 0, width, height), brush);
+        brush->Release();
+    }
+    
+    // 如果有图片，绘制图片
+    if (state->bitmap) {
+        D2D1_SIZE_F bitmapSize = state->bitmap->GetSize();
+        D2D1_RECT_F destRect;
+        
+        switch (state->scale_mode) {
+            case SCALE_NONE: {
+                // 不缩放，左上角对齐
+                destRect = D2D1::RectF(0, 0, bitmapSize.width, bitmapSize.height);
+                break;
+            }
+            case SCALE_STRETCH: {
+                // 拉伸填充整个控件
+                destRect = D2D1::RectF(0, 0, width, height);
+                break;
+            }
+            case SCALE_FIT: {
+                // 等比缩放适应控件
+                float scaleX = width / bitmapSize.width;
+                float scaleY = height / bitmapSize.height;
+                float scale = min(scaleX, scaleY);
+                
+                float scaledWidth = bitmapSize.width * scale;
+                float scaledHeight = bitmapSize.height * scale;
+                float offsetX = (width - scaledWidth) / 2.0f;
+                float offsetY = (height - scaledHeight) / 2.0f;
+                
+                destRect = D2D1::RectF(offsetX, offsetY, offsetX + scaledWidth, offsetY + scaledHeight);
+                break;
+            }
+            case SCALE_CENTER: {
+                // 居中显示，不缩放
+                float offsetX = (width - bitmapSize.width) / 2.0f;
+                float offsetY = (height - bitmapSize.height) / 2.0f;
+                
+                destRect = D2D1::RectF(offsetX, offsetY, offsetX + bitmapSize.width, offsetY + bitmapSize.height);
+                break;
+            }
+            default:
+                destRect = D2D1::RectF(0, 0, width, height);
+                break;
+        }
+        
+        // 绘制图片，应用透明度
+        rt->DrawBitmap(
+            state->bitmap,
+            destRect,
+            state->opacity,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+            nullptr
+        );
+    }
+}
+
+// 图片框窗口过程
+LRESULT CALLBACK PictureBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    PictureBoxState* state = (PictureBoxState*)dwRefData;
+    
+    switch (msg) {
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            
+            // 创建D2D渲染目标
+            ID2D1HwndRenderTarget* rt = nullptr;
+            D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+            D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(
+                hwnd,
+                D2D1::SizeU(state->width, state->height)
+            );
+            
+            if (g_d2d_factory) {
+                g_d2d_factory->CreateHwndRenderTarget(props, hwndProps, &rt);
+            }
+            
+            if (rt) {
+                rt->BeginDraw();
+                rt->Clear(D2D1::ColorF(D2D1::ColorF::White, 0.0f));
+                
+                DrawPictureBox(rt, g_dwrite_factory, state);
+                
+                rt->EndDraw();
+                rt->Release();
+            }
+            
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        
+        case WM_LBUTTONDOWN: {
+            if (state->enabled && state->callback) {
+                state->callback(hwnd);
+            }
+            return 0;
+        }
+        
+        case WM_NCDESTROY: {
+            // 清理资源
+            if (state->bitmap) {
+                state->bitmap->Release();
+                state->bitmap = nullptr;
+            }
+            if (state->wic_source) {
+                state->wic_source->Release();
+                state->wic_source = nullptr;
+            }
+            
+            // 从全局map中移除
+            g_pictureboxes.erase(hwnd);
+            delete state;
+            
+            RemoveWindowSubclass(hwnd, PictureBoxProc, 0);
+            return 0;
+        }
+    }
+    
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// 创建图片框
+HWND __stdcall CreatePictureBox(
+    HWND hParent,
+    int x, int y, int width, int height,
+    int scale_mode,
+    UINT32 bg_color
+) {
+    if (!hParent) return nullptr;
+    
+    // 初始化D2D和DirectWrite（如果尚未初始化）
+    if (!g_d2d_factory) {
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_d2d_factory);
+    }
+    if (!g_dwrite_factory) {
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                           reinterpret_cast<IUnknown**>(&g_dwrite_factory));
+    }
+    // 初始化WIC工厂（如果尚未初始化）
+    if (!g_wic_factory) {
+        CoInitialize(nullptr);
+        CoCreateInstance(
+            CLSID_WICImagingFactory,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&g_wic_factory)
+        );
+    }
+    
+    // 创建静态控件作为图片框容器
+    HWND hwnd = CreateWindowExW(
+        0,
+        L"STATIC",
+        L"",
+        WS_CHILD | WS_VISIBLE | SS_NOTIFY,
+        x, y, width, height,
+        hParent,
+        (HMENU)(INT_PTR)g_next_control_id++,
+        GetModuleHandle(nullptr),
+        nullptr
+    );
+    
+    if (!hwnd) return nullptr;
+    
+    // 创建状态对象
+    PictureBoxState* state = new PictureBoxState();
+    state->hwnd = hwnd;
+    state->parent = hParent;
+    state->id = (int)(INT_PTR)GetMenu(hwnd);
+    state->x = 0;  // 相对于控件自身
+    state->y = 0;
+    state->width = width;
+    state->height = height;
+    state->bitmap = nullptr;
+    state->wic_source = nullptr;
+    state->scale_mode = (ImageScaleMode)scale_mode;
+    state->opacity = 1.0f;
+    state->bg_color = bg_color ? bg_color : 0xFFF5F7FA;  // Element UI 浅色背景
+    state->enabled = true;
+    state->callback = nullptr;
+    
+    // 保存到全局map
+    g_pictureboxes[hwnd] = state;
+    
+    // 子类化窗口
+    SetWindowSubclass(hwnd, PictureBoxProc, 0, (DWORD_PTR)state);
+    
+    return hwnd;
+}
+
+// 从文件加载图片
+BOOL __stdcall LoadImageFromFile(
+    HWND hPictureBox,
+    const unsigned char* file_path_bytes,
+    int path_len
+) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return FALSE;
+    
+    PictureBoxState* state = it->second;
+    
+    // 清除旧图片
+    if (state->bitmap) {
+        state->bitmap->Release();
+        state->bitmap = nullptr;
+    }
+    if (state->wic_source) {
+        state->wic_source->Release();
+        state->wic_source = nullptr;
+    }
+    
+    if (!g_wic_factory) return FALSE;
+    
+    // 转换文件路径
+    std::wstring file_path = Utf8ToWide(file_path_bytes, path_len);
+    
+    // 使用WIC加载图片
+    IWICBitmapDecoder* decoder = nullptr;
+    HRESULT hr = g_wic_factory->CreateDecoderFromFilename(
+        file_path.c_str(),
+        nullptr,
+        GENERIC_READ,
+        WICDecodeMetadataCacheOnLoad,
+        &decoder
+    );
+    
+    if (FAILED(hr)) return FALSE;
+    
+    // 获取第一帧
+    IWICBitmapFrameDecode* frame = nullptr;
+    hr = decoder->GetFrame(0, &frame);
+    decoder->Release();
+    
+    if (FAILED(hr)) return FALSE;
+    
+    // 转换为32bppPBGRA格式
+    IWICFormatConverter* converter = nullptr;
+    hr = g_wic_factory->CreateFormatConverter(&converter);
+    
+    if (SUCCEEDED(hr)) {
+        hr = converter->Initialize(
+            frame,
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0,
+            WICBitmapPaletteTypeMedianCut
+        );
+    }
+    
+    frame->Release();
+    
+    if (FAILED(hr)) {
+        if (converter) converter->Release();
+        return FALSE;
+    }
+    
+    // 保存WIC源
+    state->wic_source = converter;
+    
+    // 创建D2D渲染目标（临时）
+    ID2D1HwndRenderTarget* rt = nullptr;
+    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+    D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(
+        hPictureBox,
+        D2D1::SizeU(state->width, state->height)
+    );
+    
+    if (g_d2d_factory) {
+        g_d2d_factory->CreateHwndRenderTarget(props, hwndProps, &rt);
+    }
+    
+    if (rt) {
+        // 从WIC源创建D2D位图
+        hr = rt->CreateBitmapFromWicBitmap(converter, nullptr, &state->bitmap);
+        rt->Release();
+    }
+    
+    if (FAILED(hr)) {
+        return FALSE;
+    }
+    
+    // 刷新显示
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+    
+    return TRUE;
+}
+
+// 从内存加载图片
+BOOL __stdcall LoadImageFromMemory(
+    HWND hPictureBox,
+    const unsigned char* image_data,
+    int data_len
+) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return FALSE;
+    
+    PictureBoxState* state = it->second;
+    
+    // 清除旧图片
+    if (state->bitmap) {
+        state->bitmap->Release();
+        state->bitmap = nullptr;
+    }
+    if (state->wic_source) {
+        state->wic_source->Release();
+        state->wic_source = nullptr;
+    }
+    
+    if (!g_wic_factory) return FALSE;
+    
+    // 创建内存流
+    IWICStream* stream = nullptr;
+    HRESULT hr = g_wic_factory->CreateStream(&stream);
+    if (FAILED(hr)) return FALSE;
+    
+    hr = stream->InitializeFromMemory((BYTE*)image_data, data_len);
+    if (FAILED(hr)) {
+        stream->Release();
+        return FALSE;
+    }
+    
+    // 使用WIC解码图片
+    IWICBitmapDecoder* decoder = nullptr;
+    hr = g_wic_factory->CreateDecoderFromStream(
+        stream,
+        nullptr,
+        WICDecodeMetadataCacheOnLoad,
+        &decoder
+    );
+    
+    stream->Release();
+    
+    if (FAILED(hr)) return FALSE;
+    
+    // 获取第一帧
+    IWICBitmapFrameDecode* frame = nullptr;
+    hr = decoder->GetFrame(0, &frame);
+    decoder->Release();
+    
+    if (FAILED(hr)) return FALSE;
+    
+    // 转换为32bppPBGRA格式
+    IWICFormatConverter* converter = nullptr;
+    hr = g_wic_factory->CreateFormatConverter(&converter);
+    
+    if (SUCCEEDED(hr)) {
+        hr = converter->Initialize(
+            frame,
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0,
+            WICBitmapPaletteTypeMedianCut
+        );
+    }
+    
+    frame->Release();
+    
+    if (FAILED(hr)) {
+        if (converter) converter->Release();
+        return FALSE;
+    }
+    
+    // 保存WIC源
+    state->wic_source = converter;
+    
+    // 创建D2D渲染目标（临时）
+    ID2D1HwndRenderTarget* rt = nullptr;
+    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+    D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(
+        hPictureBox,
+        D2D1::SizeU(state->width, state->height)
+    );
+    
+    if (g_d2d_factory) {
+        g_d2d_factory->CreateHwndRenderTarget(props, hwndProps, &rt);
+    }
+    
+    if (rt) {
+        // 从WIC源创建D2D位图
+        hr = rt->CreateBitmapFromWicBitmap(converter, nullptr, &state->bitmap);
+        rt->Release();
+    }
+    
+    if (FAILED(hr)) {
+        return FALSE;
+    }
+    
+    // 刷新显示
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+    
+    return TRUE;
+}
+
+// 清除图片
+void __stdcall ClearImage(HWND hPictureBox) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return;
+    
+    PictureBoxState* state = it->second;
+    
+    // 释放图片资源
+    if (state->bitmap) {
+        state->bitmap->Release();
+        state->bitmap = nullptr;
+    }
+    if (state->wic_source) {
+        state->wic_source->Release();
+        state->wic_source = nullptr;
+    }
+    
+    // 刷新显示
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+}
+
+// 设置图片透明度
+void __stdcall SetImageOpacity(HWND hPictureBox, float opacity) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return;
+    
+    PictureBoxState* state = it->second;
+    
+    // 限制范围在0.0-1.0之间
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    
+    state->opacity = opacity;
+    
+    // 刷新显示
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+}
+
+// 设置图片框回调
+void __stdcall SetPictureBoxCallback(HWND hPictureBox, PictureBoxCallback callback) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return;
+    
+    it->second->callback = callback;
+}
+
+// 启用/禁用图片框
+void __stdcall EnablePictureBox(HWND hPictureBox, BOOL enable) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return;
+    
+    it->second->enabled = (enable != 0);
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+}
+
+// 显示/隐藏图片框
+void __stdcall ShowPictureBox(HWND hPictureBox, BOOL show) {
+    if (!hPictureBox) return;
+    ShowWindow(hPictureBox, show ? SW_SHOW : SW_HIDE);
+}
+
+// 设置图片框位置和大小
+void __stdcall SetPictureBoxBounds(HWND hPictureBox, int x, int y, int width, int height) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return;
+    
+    it->second->width = width;
+    it->second->height = height;
+    SetWindowPos(hPictureBox, nullptr, x, y, width, height, SWP_NOZORDER);
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+}
+
+// 设置图片框缩放模式
+void __stdcall SetPictureBoxScaleMode(HWND hPictureBox, int scale_mode) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return;
+    
+    it->second->scale_mode = (ImageScaleMode)scale_mode;
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+}
+
+// 设置图片框背景色
+void __stdcall SetPictureBoxBackgroundColor(HWND hPictureBox, UINT32 bg_color) {
+    auto it = g_pictureboxes.find(hPictureBox);
+    if (it == g_pictureboxes.end()) return;
+    
+    it->second->bg_color = bg_color;
+    InvalidateRect(hPictureBox, nullptr, FALSE);
+}

@@ -270,6 +270,7 @@
     .参数 斜体, 逻辑型
     .参数 下划线, 逻辑型
     .参数 对齐方式, 整数型, , 0=左 1=中 2=右
+    .参数 是否换行, 逻辑型, , 是否自动换行显示
 
 .DLL命令 设置标签文本, , "emoji_window.dll", "SetLabelText", , , 设置标签文本
     .参数 标签句柄, 整数型
@@ -304,3 +305,155 @@
 .DLL命令 显示标签, , "emoji_window.dll", "ShowLabel", , , 显示或隐藏标签
     .参数 标签句柄, 整数型
     .参数 显示, 逻辑型
+
+
+.DLL命令 创建复选框, 整数型, "emoji_window.dll", "CreateCheckBox", , , 创建复选框
+    .参数 父窗口句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+    .参数 文本字节集指针, 整数型
+    .参数 文本长度, 整数型
+    .参数 选中状态, 逻辑型
+    .参数 前景色, 整数型, , ARGB颜色
+    .参数 背景色, 整数型, , ARGB颜色
+
+.DLL命令 获取复选框状态, 逻辑型, "emoji_window.dll", "GetCheckBoxState", , , 获取复选框选中状态
+    .参数 复选框句柄, 整数型
+
+.DLL命令 设置复选框状态, , "emoji_window.dll", "SetCheckBoxState", , , 设置复选框选中状态
+    .参数 复选框句柄, 整数型
+    .参数 选中状态, 逻辑型
+
+.DLL命令 设置复选框回调, , "emoji_window.dll", "SetCheckBoxCallback", , , 设置复选框回调
+    .参数 复选框句柄, 整数型
+    .参数 回调子程序指针, 整数型, , 子程序需 stdcall，参数：hCheckBox(整数型), checked(逻辑型)
+
+.DLL命令 启用复选框, , "emoji_window.dll", "EnableCheckBox", , , 启用或禁用复选框
+    .参数 复选框句柄, 整数型
+    .参数 启用, 逻辑型
+
+.DLL命令 显示复选框, , "emoji_window.dll", "ShowCheckBox", , , 显示或隐藏复选框
+    .参数 复选框句柄, 整数型
+    .参数 显示, 逻辑型
+
+.DLL命令 设置复选框文本, , "emoji_window.dll", "SetCheckBoxText", , , 设置复选框文本
+    .参数 复选框句柄, 整数型
+    .参数 文本字节集指针, 整数型
+    .参数 文本长度, 整数型
+
+.DLL命令 设置复选框位置, , "emoji_window.dll", "SetCheckBoxBounds", , , 设置复选框位置和大小
+    .参数 复选框句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+
+' ========== 进度条功能 ==========
+
+.DLL命令 创建进度条, 整数型, "emoji_window.dll", "CreateProgressBar", , , 创建进度条
+    .参数 父窗口句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+    .参数 初始值, 整数型, , 0-100
+    .参数 前景色, 整数型, , ARGB颜色
+    .参数 背景色, 整数型, , ARGB颜色
+    .参数 显示文本, 逻辑型, , 是否显示百分比文本
+
+.DLL命令 设置进度条值, , "emoji_window.dll", "SetProgressValue", , , 设置进度条值(0-100)
+    .参数 进度条句柄, 整数型
+    .参数 值, 整数型, , 0-100
+
+.DLL命令 获取进度条值, 整数型, "emoji_window.dll", "GetProgressValue", , , 获取进度条值
+    .参数 进度条句柄, 整数型
+
+.DLL命令 设置进度条不确定模式, , "emoji_window.dll", "SetProgressIndeterminate", , , 设置进度条不确定模式
+    .参数 进度条句柄, 整数型
+    .参数 不确定模式, 逻辑型
+
+.DLL命令 设置进度条颜色, , "emoji_window.dll", "SetProgressBarColor", , , 设置进度条颜色
+    .参数 进度条句柄, 整数型
+    .参数 前景色, 整数型, , ARGB颜色
+    .参数 背景色, 整数型, , ARGB颜色
+
+.DLL命令 设置进度条回调, , "emoji_window.dll", "SetProgressBarCallback", , , 设置进度条回调
+    .参数 进度条句柄, 整数型
+    .参数 回调子程序指针, 整数型, , 子程序需 stdcall，参数：hProgressBar(整数型), value(整数型)
+
+.DLL命令 启用进度条, , "emoji_window.dll", "EnableProgressBar", , , 启用或禁用进度条
+    .参数 进度条句柄, 整数型
+    .参数 启用, 逻辑型
+
+.DLL命令 显示进度条, , "emoji_window.dll", "ShowProgressBar", , , 显示或隐藏进度条
+    .参数 进度条句柄, 整数型
+    .参数 显示, 逻辑型
+
+.DLL命令 设置进度条位置, , "emoji_window.dll", "SetProgressBarBounds", , , 设置进度条位置和大小
+    .参数 进度条句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+
+.DLL命令 设置进度条显示文本, , "emoji_window.dll", "SetProgressBarShowText", , , 设置是否显示百分比文本
+    .参数 进度条句柄, 整数型
+    .参数 显示文本, 逻辑型
+
+
+' ========== 图片框功能 ==========
+
+.DLL命令 创建图片框, 整数型, "emoji_window.dll", "CreatePictureBox", , , 创建图片框
+    .参数 父窗口句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+    .参数 缩放模式, 整数型, , 0=不缩放 1=拉伸 2=等比缩放 3=居中
+    .参数 背景色, 整数型, , ARGB颜色
+
+.DLL命令 从文件加载图片, 逻辑型, "emoji_window.dll", "LoadImageFromFile", , , 从文件加载图片(支持PNG、JPG、BMP、GIF)
+    .参数 图片框句柄, 整数型
+    .参数 文件路径字节集指针, 整数型
+    .参数 路径长度, 整数型
+
+.DLL命令 从内存加载图片, 逻辑型, "emoji_window.dll", "LoadImageFromMemory", , , 从内存加载图片
+    .参数 图片框句柄, 整数型
+    .参数 图片数据指针, 整数型
+    .参数 数据长度, 整数型
+
+.DLL命令 清除图片, , "emoji_window.dll", "ClearImage", , , 清除图片框中的图片
+    .参数 图片框句柄, 整数型
+
+.DLL命令 设置图片透明度, , "emoji_window.dll", "SetImageOpacity", , , 设置图片透明度(0.0-1.0)
+    .参数 图片框句柄, 整数型
+    .参数 透明度, 小数型, , 0.0-1.0
+
+.DLL命令 设置图片框回调, , "emoji_window.dll", "SetPictureBoxCallback", , , 设置图片框回调
+    .参数 图片框句柄, 整数型
+    .参数 回调子程序指针, 整数型, , 子程序需 stdcall，参数：hPictureBox(整数型)
+
+.DLL命令 启用图片框, , "emoji_window.dll", "EnablePictureBox", , , 启用或禁用图片框
+    .参数 图片框句柄, 整数型
+    .参数 启用, 逻辑型
+
+.DLL命令 显示图片框, , "emoji_window.dll", "ShowPictureBox", , , 显示或隐藏图片框
+    .参数 图片框句柄, 整数型
+    .参数 显示, 逻辑型
+
+.DLL命令 设置图片框位置, , "emoji_window.dll", "SetPictureBoxBounds", , , 设置图片框位置和大小
+    .参数 图片框句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+
+.DLL命令 设置图片框缩放模式, , "emoji_window.dll", "SetPictureBoxScaleMode", , , 设置图片框缩放模式
+    .参数 图片框句柄, 整数型
+    .参数 缩放模式, 整数型, , 0=不缩放 1=拉伸 2=等比缩放 3=居中
+
+.DLL命令 设置图片框背景色, , "emoji_window.dll", "SetPictureBoxBackgroundColor", , , 设置图片框背景色
+    .参数 图片框句柄, 整数型
+    .参数 背景色, 整数型, , ARGB颜色
