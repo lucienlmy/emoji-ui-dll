@@ -324,6 +324,73 @@ enum TitleBarButtonType {
     TITLEBAR_BUTTON_CLOSE
 };
 
+static HICON ResolveWindowIcon(HWND hwnd) {
+    if (!hwnd) return nullptr;
+
+    HICON hicon = reinterpret_cast<HICON>(SendMessage(hwnd, WM_GETICON, ICON_SMALL, 0));
+    if (hicon) return hicon;
+
+    hicon = reinterpret_cast<HICON>(SendMessage(hwnd, WM_GETICON, ICON_BIG, 0));
+    if (hicon) return hicon;
+
+    hicon = reinterpret_cast<HICON>(GetClassLongPtr(hwnd, GCLP_HICONSM));
+    if (hicon) return hicon;
+
+    hicon = reinterpret_cast<HICON>(GetClassLongPtr(hwnd, GCLP_HICON));
+    if (hicon) return hicon;
+
+    return nullptr;
+}
+
+static bool EnsureWicFactoryInitialized() {
+    if (g_wic_factory) return true;
+
+    CoInitialize(nullptr);
+    HRESULT hr = CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&g_wic_factory)
+    );
+    return SUCCEEDED(hr) && g_wic_factory != nullptr;
+}
+
+static ID2D1Bitmap* CreateBitmapFromHICONForD2D(ID2D1HwndRenderTarget* rt, HICON hicon) {
+    if (!rt || !hicon || !EnsureWicFactoryInitialized()) return nullptr;
+
+    IWICBitmap* wic_bitmap = nullptr;
+    HRESULT hr = g_wic_factory->CreateBitmapFromHICON(hicon, &wic_bitmap);
+    if (FAILED(hr) || !wic_bitmap) return nullptr;
+
+    IWICFormatConverter* converter = nullptr;
+    hr = g_wic_factory->CreateFormatConverter(&converter);
+    if (SUCCEEDED(hr) && converter) {
+        hr = converter->Initialize(
+            wic_bitmap,
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0,
+            WICBitmapPaletteTypeMedianCut
+        );
+    }
+
+    ID2D1Bitmap* bitmap = nullptr;
+    if (SUCCEEDED(hr) && converter) {
+        hr = rt->CreateBitmapFromWicBitmap(converter, nullptr, &bitmap);
+    }
+
+    if (converter) converter->Release();
+    wic_bitmap->Release();
+
+    if (FAILED(hr)) {
+        if (bitmap) bitmap->Release();
+        return nullptr;
+    }
+
+    return bitmap;
+}
+
 static void GetTitleBarButtonRects(WindowState* state, RECT* min_rect, RECT* max_rect, RECT* close_rect) {
     RECT rc = {};
     GetClientRect(state->hwnd, &rc);
@@ -475,6 +542,30 @@ void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Wind
     close_brush->Release();
     icon_brush->Release();
 
+    HICON htitle_icon = ResolveWindowIcon(state->hwnd);
+    float text_left = 10.0f;
+    if (htitle_icon) {
+        int icon_w = GetSystemMetrics(SM_CXSMICON);
+        int icon_h = GetSystemMetrics(SM_CYSMICON);
+        if (icon_w <= 0) icon_w = 16;
+        if (icon_h <= 0) icon_h = 16;
+
+        ID2D1Bitmap* title_icon_bitmap = CreateBitmapFromHICONForD2D(rt, htitle_icon);
+        if (title_icon_bitmap) {
+            float icon_left = 10.0f;
+            float icon_top = (tb_h - (float)icon_h) * 0.5f;
+            D2D1_RECT_F icon_rect = D2D1::RectF(
+                icon_left,
+                icon_top,
+                icon_left + (float)icon_w,
+                icon_top + (float)icon_h
+            );
+            rt->DrawBitmap(title_icon_bitmap, icon_rect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            title_icon_bitmap->Release();
+            text_left = icon_left + (float)icon_w + 8.0f;
+        }
+    }
+
     // 2. 标题文本（彩色emoji）
     if (!state->title.empty()) {
         IDWriteTextFormat* fmt = nullptr;
@@ -499,8 +590,8 @@ void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Wind
                 (fg & 0xFF) / 255.0f,
                 1.0f), &text_brush);
 
-            // 左侧留10px边距，右侧留136px给标题栏按钮
-            D2D1_RECT_F text_rect = D2D1::RectF(10.0f, 0, width - 136.0f, tb_h);
+            // 左侧保留图标和间距，右侧留136px给标题栏按钮
+            D2D1_RECT_F text_rect = D2D1::RectF(text_left, 0, width - 136.0f, tb_h);
             rt->DrawText(
                 state->title.c_str(),
                 (UINT32)state->title.length(),
