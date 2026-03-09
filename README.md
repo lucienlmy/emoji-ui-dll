@@ -1,23 +1,29 @@
 # Emoji Window DLL - C++ 版本
 
-使用 C++ 和 Direct2D 实现彩色 Emoji 显示的 DLL。
+使用 C++ 和 Direct2D/DirectWrite 实现的 Windows UI 控件库，完美支持彩色 Emoji 显示。提供 16 种控件、布局管理器、主题系统和扩展事件系统，专为易语言应用设计。
 
 ## 项目结构
 
 ```
 emoji_window_cpp/
-├── emoji_window.sln          # Visual Studio 解决方案
+├── emoji_window.sln              # Visual Studio 解决方案
 ├── emoji_window/
-│   ├── emoji_window.vcxproj  # 项目文件
-│   ├── dllmain.cpp           # DLL 入口
-│   ├── emoji_window.h        # 头文件
-│   ├── emoji_window.cpp      # 主实现
-│   ├── renderer.h            # 渲染器头文件
-│   ├── renderer.cpp          # 渲染器实现
-│   └── exports.def           # 导出定义
-└── output/
-    └── emoji_window.dll      # 编译输出
-
+│   ├── emoji_window.vcxproj      # 项目文件
+│   ├── dllmain.cpp               # DLL 入口（初始化 COM、D2D、DWrite）
+│   ├── emoji_window.h            # 头文件（所有控件状态结构和 API 声明）
+│   ├── emoji_window.cpp          # 主实现（所有控件逻辑和渲染）
+│   └── emoji_window.def          # DLL 导出定义（210+ 导出函数）
+├── themes/
+│   ├── light.json                # 亮色主题（Element UI 标准配色）
+│   └── dark.json                 # 暗色主题
+├── 易语言代码/
+│   ├── DLL命令.e                 # DLL API 声明
+│   ├── 常量表.e                  # 颜色、布局、键码等常量
+│   ├── 辅助程序集.e              # UTF-8 转换辅助函数
+│   ├── 编码转换.e                # 编码转换工具
+│   └── 窗口程序集_*.e            # 各控件示例程序（20+个）
+└── x64/Release/
+    └── emoji_window.dll          # 编译输出
 ```
 
 ## 编译步骤
@@ -2535,4 +2541,826 @@ void __stdcall SetHotKeyBounds(HWND hHotKey, int x, int y, int width, int height
 3. **单选按钮分组**：添加单选按钮到分组框会自动设置分组ID，实现同组互斥
 4. **同步操作**：启用/禁用、显示/隐藏、移动分组框会自动同步所有子控件
 5. **资源释放**：销毁分组框时会自动清理资源，但不会销毁子控件
+
+
+---
+
+## DataGridView 表格控件
+
+高性能数据表格控件，支持多种列类型、虚拟模式、排序、冻结行列等功能。
+
+### 创建表格
+
+```c++
+HWND __stdcall CreateDataGridView(
+    HWND hParent,           // 父窗口句柄
+    int x, int y,           // 位置
+    int width, int height,  // 尺寸
+    BOOL virtual_mode,      // 是否启用虚拟模式
+    BOOL zebra_stripes,     // 是否启用隔行变色
+    UINT32 bg_color         // 背景色
+);
+```
+
+**易语言声明：**
+```
+.DLL命令 创建表格, 整数型, "emoji_window.dll", "CreateDataGridView"
+    .参数 父窗口句柄, 整数型
+    .参数 x, 整数型
+    .参数 y, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+    .参数 虚拟模式, 逻辑型
+    .参数 隔行变色, 逻辑型
+    .参数 背景色, 整数型
+```
+
+### 列管理
+
+#### 添加文本列
+
+```c++
+int __stdcall DataGrid_AddTextColumn(
+    HWND hDataGrid,
+    const unsigned char* header_bytes, int header_len,
+    int width
+);
+```
+
+#### 添加复选框列
+
+```c++
+int __stdcall DataGrid_AddCheckBoxColumn(
+    HWND hDataGrid,
+    const unsigned char* header_bytes, int header_len,
+    int width
+);
+```
+
+#### 添加按钮列
+
+```c++
+int __stdcall DataGrid_AddButtonColumn(
+    HWND hDataGrid,
+    const unsigned char* header_bytes, int header_len,
+    int width
+);
+```
+
+#### 添加链接列
+
+```c++
+int __stdcall DataGrid_AddLinkColumn(
+    HWND hDataGrid,
+    const unsigned char* header_bytes, int header_len,
+    int width
+);
+```
+
+#### 添加图片列
+
+```c++
+int __stdcall DataGrid_AddImageColumn(
+    HWND hDataGrid,
+    const unsigned char* header_bytes, int header_len,
+    int width
+);
+```
+
+#### 其他列操作
+
+```c++
+void __stdcall DataGrid_RemoveColumn(HWND hDataGrid, int column_index);
+void __stdcall DataGrid_ClearColumns(HWND hDataGrid);
+int  __stdcall DataGrid_GetColumnCount(HWND hDataGrid);
+void __stdcall DataGrid_SetColumnWidth(HWND hDataGrid, int column_index, int width);
+```
+
+### 行管理
+
+```c++
+int  __stdcall DataGrid_AddRow(HWND hDataGrid);
+void __stdcall DataGrid_RemoveRow(HWND hDataGrid, int row_index);
+void __stdcall DataGrid_ClearRows(HWND hDataGrid);
+int  __stdcall DataGrid_GetRowCount(HWND hDataGrid);
+```
+
+### 单元格操作
+
+```c++
+// 文本
+void __stdcall DataGrid_SetCellText(HWND hDataGrid, int row, int col,
+    const unsigned char* text_bytes, int text_len);
+int  __stdcall DataGrid_GetCellText(HWND hDataGrid, int row, int col,
+    unsigned char* buffer, int buffer_size);
+
+// 复选框
+void __stdcall DataGrid_SetCellChecked(HWND hDataGrid, int row, int col, BOOL checked);
+BOOL __stdcall DataGrid_GetCellChecked(HWND hDataGrid, int row, int col);
+
+// 样式
+void __stdcall DataGrid_SetCellStyle(HWND hDataGrid, int row, int col,
+    UINT32 fg_color, UINT32 bg_color);
+```
+
+### 选择和排序
+
+```c++
+int  __stdcall DataGrid_GetSelectedRow(HWND hDataGrid);
+int  __stdcall DataGrid_GetSelectedCol(HWND hDataGrid);
+void __stdcall DataGrid_SetSelectedCell(HWND hDataGrid, int row, int col);
+void __stdcall DataGrid_SetSelectionMode(HWND hDataGrid, int mode);  // 0=单元格 1=整行
+void __stdcall DataGrid_SortByColumn(HWND hDataGrid, int col, BOOL ascending);
+```
+
+### 冻结行列
+
+```c++
+void __stdcall DataGrid_SetFreezeHeader(HWND hDataGrid, BOOL freeze);
+void __stdcall DataGrid_SetFreezeFirstColumn(HWND hDataGrid, BOOL freeze);
+```
+
+### 虚拟模式
+
+虚拟模式适用于大数据量场景（10000+行），仅加载可见行数据：
+
+```c++
+void __stdcall DataGrid_SetVirtualRowCount(HWND hDataGrid, int count);
+
+typedef void (__stdcall *VirtualDataNeededCallback)(HWND hDataGrid, int start_row, int row_count);
+void __stdcall DataGrid_SetVirtualDataCallback(HWND hDataGrid, VirtualDataNeededCallback callback);
+```
+
+**易语言使用示例：**
+```
+' 设置虚拟模式总行数
+表格_设置虚拟行数 (表格句柄, 100000)
+
+' 设置数据请求回调
+表格_设置虚拟数据回调 (表格句柄, &虚拟数据回调)
+
+.子程序 虚拟数据回调, , , stdcall
+.参数 表格句柄, 整数型
+.参数 起始行, 整数型
+.参数 行数, 整数型
+
+' 在此填充可见行的数据
+.变量循环首 (起始行, 起始行 + 行数 - 1, 1, i)
+    表格_设置单元格文本_辅助 (表格句柄, i, 0, "行" + 到文本(i))
+.变量循环尾 ()
+```
+
+### 事件回调
+
+```c++
+typedef void (__stdcall *CellClickCallback)(HWND hDataGrid, int row, int col);
+typedef void (__stdcall *CellDoubleClickCallback)(HWND hDataGrid, int row, int col);
+typedef void (__stdcall *CellValueChangedCallback)(HWND hDataGrid, int row, int col);
+typedef void (__stdcall *ColumnHeaderClickCallback)(HWND hDataGrid, int col);
+
+void __stdcall DataGrid_SetCellClickCallback(HWND hDataGrid, CellClickCallback callback);
+void __stdcall DataGrid_SetCellDoubleClickCallback(HWND hDataGrid, CellDoubleClickCallback callback);
+void __stdcall DataGrid_SetCellValueChangedCallback(HWND hDataGrid, CellValueChangedCallback callback);
+void __stdcall DataGrid_SetColumnHeaderClickCallback(HWND hDataGrid, ColumnHeaderClickCallback callback);
+void __stdcall DataGrid_SetSelectionChangedCallback(HWND hDataGrid, void* callback);
+```
+
+### 其他操作
+
+```c++
+void __stdcall DataGrid_SetShowGridLines(HWND hDataGrid, BOOL show);
+void __stdcall DataGrid_SetDefaultRowHeight(HWND hDataGrid, int height);
+void __stdcall DataGrid_SetHeaderHeight(HWND hDataGrid, int height);
+void __stdcall DataGrid_Enable(HWND hDataGrid, BOOL enable);
+void __stdcall DataGrid_Show(HWND hDataGrid, BOOL show);
+void __stdcall DataGrid_SetBounds(HWND hDataGrid, int x, int y, int w, int h);
+void __stdcall DataGrid_Refresh(HWND hDataGrid);
+BOOL __stdcall DataGrid_ExportCSV(HWND hDataGrid,
+    const unsigned char* file_path_bytes, int path_len);
+```
+
+### 表格特性
+
+- **多种列类型**：文本、复选框、按钮、链接、图片
+- **虚拟模式**：支持 100000+ 行数据，仅加载可见行
+- **隔行变色**：Zebra Stripes 提升可读性
+- **冻结行列**：冻结列头和首列，方便浏览大表格
+- **排序**：点击列头排序，支持升序/降序
+- **键盘导航**：方向键、Tab、PageUp/Down、Home/End
+- **单元格编辑**：双击进入编辑模式
+- **CSV 导出**：一键导出表格数据
+- **Element UI 风格**：统一的视觉设计
+
+### 列类型常量
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `DGCOL_TEXT` | 0 | 文本列 |
+| `DGCOL_CHECKBOX` | 1 | 复选框列 |
+| `DGCOL_BUTTON` | 2 | 按钮列 |
+| `DGCOL_LINK` | 3 | 链接列 |
+| `DGCOL_IMAGE` | 4 | 图片列 |
+
+
+---
+
+## 扩展事件系统
+
+为所有控件提供统一的事件回调机制，包括鼠标、键盘、焦点和值改变事件。
+
+### 鼠标事件
+
+```c++
+// 鼠标进入控件区域
+typedef void (__stdcall *MouseEnterCallback)(HWND hwnd);
+void __stdcall SetMouseEnterCallback(HWND hwnd, MouseEnterCallback callback);
+
+// 鼠标离开控件区域
+typedef void (__stdcall *MouseLeaveCallback)(HWND hwnd);
+void __stdcall SetMouseLeaveCallback(HWND hwnd, MouseLeaveCallback callback);
+
+// 双击控件
+typedef void (__stdcall *DoubleClickCallback)(HWND hwnd, int x, int y);
+void __stdcall SetDoubleClickCallback(HWND hwnd, DoubleClickCallback callback);
+
+// 右键点击控件
+typedef void (__stdcall *RightClickCallback)(HWND hwnd, int x, int y);
+void __stdcall SetRightClickCallback(HWND hwnd, RightClickCallback callback);
+```
+
+**易语言声明：**
+```
+.DLL命令 设置鼠标进入回调, , "emoji_window.dll", "SetMouseEnterCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+
+.DLL命令 设置鼠标离开回调, , "emoji_window.dll", "SetMouseLeaveCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+
+.DLL命令 设置双击回调, , "emoji_window.dll", "SetDoubleClickCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+
+.DLL命令 设置右键点击回调, , "emoji_window.dll", "SetRightClickCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+```
+
+### 焦点事件
+
+```c++
+// 控件获得焦点
+typedef void (__stdcall *FocusCallback)(HWND hwnd);
+void __stdcall SetFocusCallback(HWND hwnd, FocusCallback callback);
+
+// 控件失去焦点
+typedef void (__stdcall *BlurCallback)(HWND hwnd);
+void __stdcall SetBlurCallback(HWND hwnd, BlurCallback callback);
+```
+
+**易语言声明：**
+```
+.DLL命令 设置获得焦点回调, , "emoji_window.dll", "SetFocusCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+
+.DLL命令 设置失去焦点回调, , "emoji_window.dll", "SetBlurCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+```
+
+### 键盘事件
+
+```c++
+// 按键按下
+typedef void (__stdcall *KeyDownCallback)(HWND hwnd, int vk_code, int shift, int ctrl, int alt);
+void __stdcall SetKeyDownCallback(HWND hwnd, KeyDownCallback callback);
+
+// 按键松开
+typedef void (__stdcall *KeyUpCallback)(HWND hwnd, int vk_code, int shift, int ctrl, int alt);
+void __stdcall SetKeyUpCallback(HWND hwnd, KeyUpCallback callback);
+
+// 字符输入
+typedef void (__stdcall *CharCallback)(HWND hwnd, int char_code);
+void __stdcall SetCharCallback(HWND hwnd, CharCallback callback);
+```
+
+**易语言声明：**
+```
+.DLL命令 设置按键按下回调, , "emoji_window.dll", "SetKeyDownCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+
+.DLL命令 设置按键松开回调, , "emoji_window.dll", "SetKeyUpCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+
+.DLL命令 设置字符输入回调, , "emoji_window.dll", "SetCharCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+```
+
+### 值改变事件
+
+```c++
+// 控件值发生变化（编辑框文本改变、复选框状态改变等）
+typedef void (__stdcall *ValueChangedCallback)(HWND hwnd);
+void __stdcall SetValueChangedCallback(HWND hwnd, ValueChangedCallback callback);
+```
+
+**易语言声明：**
+```
+.DLL命令 设置值改变回调, , "emoji_window.dll", "SetValueChangedCallback"
+    .参数 控件句柄, 整数型
+    .参数 回调函数指针, 整数型
+```
+
+### 事件系统使用示例
+
+```
+' 为按钮设置鼠标事件
+设置鼠标进入回调 (按钮句柄, 到整数 (&鼠标进入处理))
+设置鼠标离开回调 (按钮句柄, 到整数 (&鼠标离开处理))
+设置双击回调 (按钮句柄, 到整数 (&双击处理))
+
+' 为编辑框设置焦点和键盘事件
+设置获得焦点回调 (编辑框句柄, 到整数 (&获得焦点处理))
+设置失去焦点回调 (编辑框句柄, 到整数 (&失去焦点处理))
+设置按键按下回调 (编辑框句柄, 到整数 (&按键按下处理))
+设置值改变回调 (编辑框句柄, 到整数 (&值改变处理))
+
+.子程序 鼠标进入处理, , , stdcall
+.参数 控件句柄, 整数型
+调试输出 ("鼠标进入控件: " + 到文本 (控件句柄))
+
+.子程序 按键按下处理, , , stdcall
+.参数 控件句柄, 整数型
+.参数 虚拟键码, 整数型
+.参数 Shift, 整数型
+.参数 Ctrl, 整数型
+.参数 Alt, 整数型
+调试输出 ("按键: " + 到文本 (虚拟键码))
+```
+
+### 事件系统特性
+
+- **统一接口**：所有控件使用相同的事件注册方式
+- **多事件支持**：同一控件可注册多种事件
+- **修饰键检测**：键盘事件自动检测 Ctrl/Shift/Alt 状态
+- **鼠标追踪**：自动处理 WM_MOUSELEAVE 消息
+- **线程安全**：所有回调在主线程中调用
+
+
+---
+
+## 布局管理器
+
+自动管理子控件的位置和大小，支持流式布局、网格布局和停靠布局。窗口大小改变时自动重新排列控件。
+
+### 设置布局管理器
+
+```c++
+void __stdcall SetLayoutManager(
+    HWND hParent,       // 父窗口句柄
+    int layout_type,    // 布局类型（见常量表）
+    int rows,           // 网格行数（仅网格布局有效）
+    int columns,        // 网格列数（仅网格布局有效）
+    int spacing         // 控件间距（像素）
+);
+```
+
+**易语言声明：**
+```
+.DLL命令 设置布局管理器, , "emoji_window.dll", "SetLayoutManager"
+    .参数 父窗口句柄, 整数型
+    .参数 布局类型, 整数型, , 0=无 1=水平流式 2=垂直流式 3=网格 4=停靠
+    .参数 行数, 整数型, , 仅网格布局有效
+    .参数 列数, 整数型, , 仅网格布局有效
+    .参数 间距, 整数型, , 控件之间的间距（像素）
+```
+
+### 设置布局内边距
+
+```c++
+void __stdcall SetLayoutPadding(
+    HWND hParent,
+    int left, int top, int right, int bottom
+);
+```
+
+### 设置控件布局属性
+
+```c++
+void __stdcall SetControlLayoutProps(
+    HWND hControl,
+    int margin_left, int margin_top, int margin_right, int margin_bottom,
+    int dock_position,          // 停靠位置（仅停靠布局有效）
+    BOOL stretch_horizontal,    // 水平拉伸
+    BOOL stretch_vertical       // 垂直拉伸
+);
+```
+
+### 添加/移除控件
+
+```c++
+void __stdcall AddControlToLayout(HWND hParent, HWND hControl);
+void __stdcall RemoveControlFromLayout(HWND hParent, HWND hControl);
+```
+
+### 更新布局
+
+```c++
+void __stdcall UpdateLayout(HWND hParent);
+```
+
+### 移除布局管理器
+
+```c++
+void __stdcall RemoveLayoutManager(HWND hParent);
+```
+
+### 布局类型
+
+#### 1. 水平流式布局 (LAYOUT_FLOW_H = 1)
+
+控件从左到右排列，超出宽度自动换行。
+
+```
+设置布局管理器 (窗口句柄, #LAYOUT_FLOW_H, 0, 0, 10)
+设置布局内边距 (窗口句柄, 20, 20, 20, 20)
+添加控件到布局 (窗口句柄, 按钮1)
+添加控件到布局 (窗口句柄, 按钮2)
+更新布局 (窗口句柄)
+```
+
+#### 2. 垂直流式布局 (LAYOUT_FLOW_V = 2)
+
+控件从上到下排列。
+
+```
+设置布局管理器 (窗口句柄, #LAYOUT_FLOW_V, 0, 0, 10)
+```
+
+#### 3. 网格布局 (LAYOUT_GRID = 3)
+
+控件按行列网格排列，自动计算单元格大小。
+
+```
+' 3行4列网格，间距8像素
+设置布局管理器 (窗口句柄, #LAYOUT_GRID, 3, 4, 8)
+```
+
+#### 4. 停靠布局 (LAYOUT_DOCK = 4)
+
+控件停靠到父窗口的边缘或填充剩余空间。
+
+```
+设置布局管理器 (窗口句柄, #LAYOUT_DOCK, 0, 0, 0)
+
+' 顶部工具栏
+设置控件布局属性 (工具栏, 0, 0, 0, 0, #DOCK_TOP, 假, 假)
+
+' 左侧面板
+设置控件布局属性 (侧边栏, 0, 0, 0, 0, #DOCK_LEFT, 假, 假)
+
+' 填充剩余空间
+设置控件布局属性 (内容区, 0, 0, 0, 0, #DOCK_FILL, 假, 假)
+```
+
+### 布局常量
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `LAYOUT_NONE` | 0 | 无布局 |
+| `LAYOUT_FLOW_H` | 1 | 水平流式布局 |
+| `LAYOUT_FLOW_V` | 2 | 垂直流式布局 |
+| `LAYOUT_GRID` | 3 | 网格布局 |
+| `LAYOUT_DOCK` | 4 | 停靠布局 |
+
+### 停靠位置常量
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `DOCK_NONE` | 0 | 不停靠 |
+| `DOCK_TOP` | 1 | 停靠到顶部 |
+| `DOCK_BOTTOM` | 2 | 停靠到底部 |
+| `DOCK_LEFT` | 3 | 停靠到左侧 |
+| `DOCK_RIGHT` | 4 | 停靠到右侧 |
+| `DOCK_FILL` | 5 | 填充剩余空间 |
+
+### 布局管理器特性
+
+- **自动排列**：窗口大小改变时自动重新计算控件位置
+- **多种布局**：流式、网格、停靠三种布局模式
+- **内边距**：支持设置布局区域的内边距
+- **控件间距**：统一的控件间距设置
+- **拉伸模式**：控件可设置水平/垂直拉伸
+- **动态增减**：运行时可添加/移除布局中的控件
+
+
+---
+
+## 主题系统
+
+支持亮色/暗色主题切换，可从 JSON 文件加载自定义主题。切换主题时所有控件自动刷新。
+
+### 从 JSON 加载主题
+
+```c++
+BOOL __stdcall LoadThemeFromJSON(
+    const unsigned char* json_bytes,    // UTF-8 编码的 JSON 字符串
+    int json_len                        // 字节长度
+);
+```
+
+### 从文件加载主题
+
+```c++
+BOOL __stdcall LoadThemeFromFile(
+    const unsigned char* file_path_bytes,   // UTF-8 编码的文件路径
+    int path_len                            // 字节长度
+);
+```
+
+### 设置主题
+
+```c++
+void __stdcall SetTheme(
+    const unsigned char* theme_name_bytes,  // 主题名称 ("light" 或 "dark")
+    int name_len
+);
+```
+
+### 设置暗色模式
+
+```c++
+void __stdcall SetDarkMode(BOOL dark_mode);
+```
+
+### 获取主题颜色
+
+```c++
+UINT32 __stdcall EW_GetThemeColor(
+    const unsigned char* color_name_bytes,  // 颜色名称
+    int name_len
+);
+```
+
+### 获取主题字体
+
+```c++
+int __stdcall EW_GetThemeFont(
+    int font_type,                  // 0=标题 1=正文 2=等宽
+    unsigned char* buffer,          // 输出缓冲区
+    int buffer_size                 // 缓冲区大小
+);
+
+int __stdcall GetThemeFontSize(int font_type);
+```
+
+### 获取主题尺寸
+
+```c++
+int __stdcall GetThemeSize(int size_type);
+// size_type: 0=圆角半径 1=边框宽度 2=控件高度 3=小间距 4=中间距 5=大间距
+```
+
+### 查询当前主题
+
+```c++
+BOOL __stdcall IsDarkMode();
+int  __stdcall EW_GetCurrentThemeName(unsigned char* buffer, int buffer_size);
+```
+
+### 主题切换回调
+
+```c++
+typedef void (__stdcall *ThemeChangedCallback)();
+void __stdcall SetThemeChangedCallback(ThemeChangedCallback callback);
+```
+
+**易语言声明：**
+```
+.DLL命令 从JSON加载主题, 逻辑型, "emoji_window.dll", "LoadThemeFromJSON"
+    .参数 JSON字节集指针, 整数型
+    .参数 JSON长度, 整数型
+
+.DLL命令 从文件加载主题, 逻辑型, "emoji_window.dll", "LoadThemeFromFile"
+    .参数 文件路径字节集指针, 整数型
+    .参数 路径长度, 整数型
+
+.DLL命令 设置主题, , "emoji_window.dll", "SetTheme"
+    .参数 主题名称字节集指针, 整数型
+    .参数 名称长度, 整数型
+
+.DLL命令 设置暗色模式, , "emoji_window.dll", "SetDarkMode"
+    .参数 启用, 逻辑型
+
+.DLL命令 是否暗色模式, 逻辑型, "emoji_window.dll", "IsDarkMode"
+
+.DLL命令 设置主题切换回调, , "emoji_window.dll", "SetThemeChangedCallback"
+    .参数 回调函数指针, 子程序指针
+```
+
+### 主题 JSON 格式
+
+```json
+{
+  "name": "my_theme",
+  "dark_mode": false,
+  "primary": "#409EFF",
+  "success": "#67C23A",
+  "warning": "#E6A23C",
+  "danger": "#F56C6C",
+  "info": "#909399",
+  "text_primary": "#303133",
+  "text_regular": "#606266",
+  "text_secondary": "#909399",
+  "text_placeholder": "#C0C4CC",
+  "border_base": "#DCDFE6",
+  "border_light": "#E4E7ED",
+  "border_lighter": "#EBEEF5",
+  "background": "#FFFFFF",
+  "background_light": "#F5F7FA",
+  "border_radius": 4,
+  "title_size": 16,
+  "body_size": 14
+}
+```
+
+### 内置主题
+
+项目提供两个内置主题文件：
+
+- `themes/light.json` - 亮色主题（Element UI 标准配色）
+- `themes/dark.json` - 暗色主题
+
+### 主题颜色名称常量
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `THEME_COLOR_PRIMARY` | "primary" | 主色 |
+| `THEME_COLOR_SUCCESS` | "success" | 成功色 |
+| `THEME_COLOR_WARNING` | "warning" | 警告色 |
+| `THEME_COLOR_DANGER` | "danger" | 危险色 |
+| `THEME_COLOR_INFO` | "info" | 信息色 |
+| `THEME_COLOR_TEXT_PRIMARY` | "text_primary" | 主要文本色 |
+| `THEME_COLOR_TEXT_REGULAR` | "text_regular" | 常规文本色 |
+| `THEME_COLOR_BACKGROUND` | "background" | 背景色 |
+
+### 主题系统使用示例
+
+```
+' 切换到暗色主题
+设置暗色模式 (真)
+
+' 切换到亮色主题
+设置暗色模式 (假)
+
+' 从JSON加载自定义主题
+json字节集 = 编码_Ansi到Utf8 (`{"name":"purple","primary":"#7C3AED",...}`)
+从JSON加载主题 (取变量数据地址 (json字节集), 取字节集长度 (json字节集))
+
+' 从文件加载主题
+路径字节集 = 编码_Ansi到Utf8 ("themes/dark.json")
+从文件加载主题 (取变量数据地址 (路径字节集), 取字节集长度 (路径字节集))
+```
+
+### 主题系统特性
+
+- **即时切换**：切换主题后所有控件立即刷新
+- **JSON 配置**：使用 JSON 格式定义主题，易于编辑
+- **文件加载**：支持从外部文件加载主题
+- **完整覆盖**：主题影响所有控件类型（按钮、编辑框、列表框、表格等）
+- **状态保持**：切换主题不会丢失控件的状态数据
+- **回调通知**：主题切换时可触发回调函数
+
+
+---
+
+## 完整控件列表
+
+| 控件 | 创建函数 | 关键特性 |
+|------|----------|----------|
+| 窗口 | `create_window()` | D2D 渲染，自定义回调 |
+| 按钮 | `create_emoji_button_bytes()` | Emoji 支持，自定义颜色 |
+| 标签 | `CreateLabel()` | 自动换行，对齐方式 |
+| 编辑框 | `CreateEditBox()` / `CreateColorEmojiEditBox()` | RichEdit 彩色 Emoji |
+| D2D 编辑框 | `CreateD2DColorEmojiEditBox()` | D2D 自绘，完美 Emoji |
+| 选项卡 | `CreateTabControl()` | 多标签页容器 |
+| 消息框 | `show_message_box_bytes()` | Emoji 图标支持 |
+| 复选框 | `CreateCheckBox()` | Element UI 风格 |
+| 单选按钮 | `CreateRadioButton()` | 分组互斥 |
+| 进度条 | `CreateProgressBar()` | 动画，不确定模式 |
+| 列表框 | `CreateListBox()` | 多选，自定义渲染 |
+| 组合框 | `CreateComboBox()` / `CreateD2DComboBox()` | 下拉列表，Emoji 支持 |
+| 热键控件 | `CreateHotKeyControl()` | 键盘捕获 |
+| 图片框 | `CreatePictureBox()` | 文件/内存加载，缩放模式 |
+| 分组框 | `CreateGroupBox()` | 子控件容器 |
+| 表格 | `CreateDataGridView()` | 虚拟模式，多列类型 |
+
+## 常见问题 (FAQ)
+
+### Q: 为什么 Emoji 在易语言 IDE 中显示为乱码？
+
+易语言 IDE 使用 ANSI 编码，不支持 Unicode Emoji 的直接显示。解决方案是将 Emoji 文本转换为 UTF-8 字节集传递给 DLL：
+
+```
+' ⚠️ 重要提示：在易语言IDE中，Unicode特殊符号（如emoji）不支持直接输入
+' 因为易语言使用ANSI编码，直接写"😀"会显示为问号
+' 必须使用以下两种方法之一：
+
+' 方法1：使用预先转换好的UTF-8字节集（推荐）
+' 先在外部工具（如"获取特殊符号字节集.e"）中将emoji转换为UTF-8字节集
+.局部变量 emoji字节集, 字节集
+emoji字节集 = { 240, 159, 152, 128 }  ' 这是"😀"的UTF-8编码
+按钮ID = 创建Emoji按钮_字节集辅助 (窗口句柄, emoji字节集, "按钮文本", 10, 10, 100, 40, #COLOR_PRIMARY)
+
+' 方法2：从外部文件读取emoji文本
+.局部变量 emoji文本, 文本型
+emoji文本 = 读入文件 ("emoji.txt")  ' 文件内容为UTF-8编码的emoji
+按钮ID = 创建Emoji按钮_辅助 (窗口句柄, emoji文本, "按钮文本", 10, 10, 100, 40, #COLOR_PRIMARY)
+
+' 方法2：手动转换
+utf8字节集 = 编码_Ansi到Utf8 ("文本内容")
+创建标签 (窗口句柄, 10, 10, 200, 30, 取变量数据地址 (utf8字节集), 取字节集长度 (utf8字节集), ...)
+```
+
+### Q: 如何在窗口大小改变时自动调整控件位置？
+
+使用布局管理器：
+
+```
+' 设置流式布局
+设置布局管理器 (窗口句柄, #LAYOUT_FLOW_H, 0, 0, 10)
+添加控件到布局 (窗口句柄, 控件句柄)
+更新布局 (窗口句柄)
+' 窗口大小改变时会自动重新排列
+```
+
+或使用窗口大小改变回调手动调整：
+
+```
+设置窗口大小改变回调 (&窗口大小改变处理)
+
+.子程序 窗口大小改变处理, , , stdcall
+.参数 窗口句柄, 整数型
+.参数 新宽度, 整数型
+.参数 新高度, 整数型
+' 手动调整控件位置和大小
+```
+
+### Q: 表格控件如何处理大数据量？
+
+使用虚拟模式，仅加载可见行数据：
+
+```
+' 创建时启用虚拟模式
+表格句柄 = 创建表格 (窗口句柄, 0, 0, 800, 600, 真, 真, #COLOR_BG_WHITE)
+
+' 设置总行数
+表格_设置虚拟行数 (表格句柄, 100000)
+
+' 设置数据请求回调
+表格_设置虚拟数据回调 (表格句柄, &虚拟数据回调)
+```
+
+### Q: 如何实现暗色模式切换？
+
+```
+' 一键切换暗色模式
+设置暗色模式 (真)   ' 切换到暗色
+设置暗色模式 (假)   ' 切换到亮色
+
+' 或从文件加载自定义主题
+路径字节集 = 编码_Ansi到Utf8 ("themes/dark.json")
+从文件加载主题 (取变量数据地址 (路径字节集), 取字节集长度 (路径字节集))
+```
+
+### Q: 控件的颜色参数格式是什么？
+
+所有颜色使用 ARGB 格式的 `UINT32`（`0xAARRGGBB`）。推荐使用常量表中预定义的 Element UI 颜色常量：
+
+| 常量 | 颜色值 | 说明 |
+|------|--------|------|
+| `COLOR_PRIMARY` | `#409EFF` | 主色（蓝色） |
+| `COLOR_SUCCESS` | `#67C23A` | 成功（绿色） |
+| `COLOR_WARNING` | `#E6A23C` | 警告（橙色） |
+| `COLOR_DANGER` | `#F56C6C` | 危险（红色） |
+| `COLOR_INFO` | `#909399` | 信息（灰色） |
+
+### Q: 如何正确释放资源？
+
+调用 `destroy_window()` 销毁窗口时，所有子控件的 D2D、WIC、GDI 资源会自动释放。无需手动清理。
+
+## 性能优化建议
+
+1. **大数据表格**：使用 DataGridView 的虚拟模式，避免一次性加载所有数据
+2. **减少重绘**：批量修改控件属性后再调用 `UpdateLayout()`，避免频繁触发重绘
+3. **图片加载**：大图片建议使用 `SCALE_FIT` 缩放模式，减少内存占用
+4. **进度条动画**：不确定模式的进度条使用定时器驱动，不会阻塞主线程
+5. **事件回调**：回调函数中避免执行耗时操作，必要时使用线程
+6. **布局管理器**：控件数量较多时，优先使用网格布局或停靠布局
+7. **主题切换**：主题切换会刷新所有控件，频繁切换可能影响性能
 

@@ -624,6 +624,67 @@ struct TabControlState {
     TAB_CALLBACK callback;          // 切换回调函数
 };
 
+// ========== 主题系统 (需求 11.1-11.10) ==========
+
+// 主题颜色
+struct ThemeColors {
+    UINT32 primary;             // 主色 (默认 #409EFF)
+    UINT32 success;             // 成功色 (默认 #67C23A)
+    UINT32 warning;             // 警告色 (默认 #E6A23C)
+    UINT32 danger;              // 危险色 (默认 #F56C6C)
+    UINT32 info;                // 信息色 (默认 #909399)
+    UINT32 text_primary;        // 主要文本色 (默认 #303133)
+    UINT32 text_regular;        // 常规文本色 (默认 #606266)
+    UINT32 text_secondary;      // 次要文本色 (默认 #909399)
+    UINT32 text_placeholder;    // 占位文本色 (默认 #C0C4CC)
+    UINT32 border_base;         // 基础边框色 (默认 #DCDFE6)
+    UINT32 border_light;        // 浅色边框色 (默认 #E4E7ED)
+    UINT32 border_lighter;      // 更浅边框色 (默认 #EBEEF5)
+    UINT32 border_extra_light;  // 极浅边框色 (默认 #F2F6FC)
+    UINT32 background;          // 背景色 (默认 #FFFFFF)
+    UINT32 background_light;    // 浅色背景 (默认 #F5F7FA)
+};
+
+// 主题字体
+struct ThemeFonts {
+    std::wstring title_font;    // 标题字体 (默认 "Microsoft YaHei UI")
+    std::wstring body_font;     // 正文字体 (默认 "Microsoft YaHei UI")
+    std::wstring mono_font;     // 等宽字体 (默认 "Consolas")
+    int title_size;             // 标题字号 (默认 16)
+    int body_size;              // 正文字号 (默认 14)
+    int small_size;             // 小号字号 (默认 12)
+};
+
+// 主题尺寸
+struct ThemeSizes {
+    float border_radius;        // 圆角半径 (默认 4.0f)
+    float border_width;         // 边框宽度 (默认 1.0f)
+    int control_height;         // 控件高度 (默认 32)
+    int spacing_small;          // 小间距 (默认 8)
+    int spacing_medium;         // 中间距 (默认 16)
+    int spacing_large;          // 大间距 (默认 24)
+};
+
+// 主题结构
+struct Theme {
+    std::wstring name;          // 主题名称
+    bool dark_mode;             // 是否暗色模式
+    ThemeColors colors;         // 颜色
+    ThemeFonts fonts;           // 字体
+    ThemeSizes sizes;           // 尺寸
+};
+
+// 主题回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *ThemeChangedCallback)(const char* theme_name);
+
+extern Theme* g_current_theme;
+extern Theme g_light_theme;
+extern Theme g_dark_theme;
+extern ThemeChangedCallback g_theme_changed_callback;
+
+// 主题辅助函数（C++内部使用，不导出）
+// 注意：这些函数不在 extern "C" 块中声明，在 cpp 中直接定义
+
 // ========== 布局管理器 ==========
 
 enum LayoutType {
@@ -1975,6 +2036,65 @@ extern "C" {
 
     // 移除窗口的布局管理器
     __declspec(dllexport) void __stdcall RemoveLayoutManager(HWND hParent);
+
+    // ========== 主题系统 API ==========
+
+    // 从JSON字符串加载主题
+    __declspec(dllexport) BOOL __stdcall LoadThemeFromJSON(
+        const unsigned char* json_bytes,
+        int json_len
+    );
+
+    // 从文件加载主题
+    __declspec(dllexport) BOOL __stdcall LoadThemeFromFile(
+        const unsigned char* file_path_bytes,
+        int path_len
+    );
+
+    // 设置当前主题 (theme_name: "light" 或 "dark" 或自定义名称)
+    __declspec(dllexport) void __stdcall SetTheme(
+        const unsigned char* theme_name_bytes,
+        int name_len
+    );
+
+    // 设置暗色模式 (切换亮色/暗色主题)
+    __declspec(dllexport) void __stdcall SetDarkMode(BOOL dark_mode);
+
+    // 获取主题颜色 (color_name: "primary", "success", "warning", "danger", "info",
+    //   "text_primary", "text_regular", "text_secondary", "text_placeholder",
+    //   "border_base", "border_light", "border_lighter", "border_extra_light",
+    //   "background", "background_light")
+    __declspec(dllexport) UINT32 __stdcall EW_GetThemeColor(
+        const unsigned char* color_name_bytes,
+        int name_len
+    );
+
+    // 获取主题字体名称 (font_type: 0=标题, 1=正文, 2=等宽)
+    // 返回UTF-8字节数，写入buffer
+    __declspec(dllexport) int __stdcall EW_GetThemeFont(
+        int font_type,
+        unsigned char* buffer,
+        int buffer_size
+    );
+
+    // 获取主题字号 (font_type: 0=标题, 1=正文, 2=小号)
+    __declspec(dllexport) int __stdcall GetThemeFontSize(int font_type);
+
+    // 获取主题尺寸 (size_type: 0=圆角半径, 1=边框宽度, 2=控件高度,
+    //   3=小间距, 4=中间距, 5=大间距)
+    __declspec(dllexport) int __stdcall GetThemeSize(int size_type);
+
+    // 获取当前是否暗色模式
+    __declspec(dllexport) BOOL __stdcall IsDarkMode();
+
+    // 获取当前主题名称 (返回UTF-8字节数，写入buffer)
+    __declspec(dllexport) int __stdcall EW_GetCurrentThemeName(
+        unsigned char* buffer,
+        int buffer_size
+    );
+
+    // 设置主题切换回调
+    __declspec(dllexport) void __stdcall SetThemeChangedCallback(ThemeChangedCallback callback);
 }
 
 // Internal functions

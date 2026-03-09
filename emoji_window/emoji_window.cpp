@@ -24,6 +24,13 @@ std::map<HWND, LayoutManager*> g_layout_managers;
 ButtonClickCallback g_button_callback = nullptr;
 WindowResizeCallback g_window_resize_callback = nullptr;
 WindowCloseCallback g_window_close_callback = nullptr;
+
+// ========== 主题系统全局变量 ==========
+Theme g_light_theme;
+Theme g_dark_theme;
+Theme* g_current_theme = nullptr;
+ThemeChangedCallback g_theme_changed_callback = nullptr;
+static bool g_themes_initialized = false;
 ID2D1Factory* g_d2d_factory = nullptr;
 IDWriteFactory* g_dwrite_factory = nullptr;
 IWICImagingFactory* g_wic_factory = nullptr;  // WIC工厂
@@ -36,6 +43,102 @@ static bool g_own_message_loop_running = false;
 
 // Forward declarations
 LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+
+// ========== 主题辅助函数 ==========
+// 获取主题颜色，如果主题未初始化则返回默认值
+static inline UINT32 ThemeColor_Primary() {
+    if (g_current_theme) return g_current_theme->colors.primary;
+    return 0xFF409EFF;
+}
+static inline UINT32 ThemeColor_TextPrimary() {
+    if (g_current_theme) return g_current_theme->colors.text_primary;
+    return 0xFF303133;
+}
+static inline UINT32 ThemeColor_TextRegular() {
+    if (g_current_theme) return g_current_theme->colors.text_regular;
+    return 0xFF606266;
+}
+static inline UINT32 ThemeColor_TextPlaceholder() {
+    if (g_current_theme) return g_current_theme->colors.text_placeholder;
+    return 0xFFC0C4CC;
+}
+static inline UINT32 ThemeColor_BorderBase() {
+    if (g_current_theme) return g_current_theme->colors.border_base;
+    return 0xFFDCDFE6;
+}
+static inline UINT32 ThemeColor_BorderLight() {
+    if (g_current_theme) return g_current_theme->colors.border_light;
+    return 0xFFE4E7ED;
+}
+static inline UINT32 ThemeColor_BorderLighter() {
+    if (g_current_theme) return g_current_theme->colors.border_lighter;
+    return 0xFFEBEEF5;
+}
+static inline UINT32 ThemeColor_Background() {
+    if (g_current_theme) return g_current_theme->colors.background;
+    return 0xFFFFFFFF;
+}
+static inline UINT32 ThemeColor_BackgroundLight() {
+    if (g_current_theme) return g_current_theme->colors.background_light;
+    return 0xFFF5F7FA;
+}
+static inline UINT32 ThemeColor_Success() {
+    if (g_current_theme) return g_current_theme->colors.success;
+    return 0xFF67C23A;
+}
+static inline UINT32 ThemeColor_Warning() {
+    if (g_current_theme) return g_current_theme->colors.warning;
+    return 0xFFE6A23C;
+}
+static inline UINT32 ThemeColor_Danger() {
+    if (g_current_theme) return g_current_theme->colors.danger;
+    return 0xFFF56C6C;
+}
+static inline UINT32 ThemeColor_Info() {
+    if (g_current_theme) return g_current_theme->colors.info;
+    return 0xFF909399;
+}
+// 根据基色生成悬停色（变亮20%）
+static inline UINT32 ThemeColor_Hover(UINT32 base) {
+    int a = (base >> 24) & 0xFF;
+    int r = (base >> 16) & 0xFF;
+    int g = (base >> 8) & 0xFF;
+    int b = base & 0xFF;
+    r = min(255, r + (255 - r) * 20 / 100);
+    g = min(255, g + (255 - g) * 20 / 100);
+    b = min(255, b + (255 - b) * 20 / 100);
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+// 根据基色生成按下色（变暗10%）
+static inline UINT32 ThemeColor_Pressed(UINT32 base) {
+    int a = (base >> 24) & 0xFF;
+    int r = (base >> 16) & 0xFF;
+    int g = (base >> 8) & 0xFF;
+    int b = base & 0xFF;
+    r = max(0, r * 90 / 100);
+    g = max(0, g * 90 / 100);
+    b = max(0, b * 90 / 100);
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+// 根据基色生成浅色背景（混合白色90%）
+static inline UINT32 ThemeColor_LightBg(UINT32 base) {
+    int a = (base >> 24) & 0xFF;
+    int r = (base >> 16) & 0xFF;
+    int g = (base >> 8) & 0xFF;
+    int b = base & 0xFF;
+    r = r + (255 - r) * 90 / 100;
+    g = g + (255 - g) * 90 / 100;
+    b = b + (255 - b) * 90 / 100;
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+static inline float ThemeSize_BorderRadius() {
+    if (g_current_theme) return g_current_theme->sizes.border_radius;
+    return 4.0f;
+}
+static inline float ThemeSize_BorderWidth() {
+    if (g_current_theme) return g_current_theme->sizes.border_width;
+    return 1.0f;
+}
 
 // 鼠标进入跟踪集合
 static std::set<HWND> g_mouse_tracking_set;
@@ -224,8 +327,9 @@ void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiB
     // ========== Draw border for default button ==========
     if (is_default) {
         ID2D1SolidColorBrush* border_brush = nullptr;
-        rt->CreateSolidColorBrush(D2D1::ColorF(0xDCDFE6, 1.0f), &border_brush);  // Element UI border color
-        rt->DrawRoundedRectangle(rect, border_brush, 1.0f);
+        UINT32 bdr = ThemeColor_BorderBase();
+        rt->CreateSolidColorBrush(ColorFromUInt32(bdr), &border_brush);
+        rt->DrawRoundedRectangle(rect, border_brush, ThemeSize_BorderWidth());
         border_brush->Release();
     }
 
@@ -1238,7 +1342,7 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     state->ok_button.id = 1;
     state->ok_button.emoji = L"\u2713";  // ✓ checkmark emoji
     state->ok_button.text = L"\u786E\u5B9A";  // "确定"
-    state->ok_button.bg_color = 0xFF409EFF;  // Element UI primary blue
+    state->ok_button.bg_color = ThemeColor_Primary();  // Element UI primary (theme)
     state->ok_button.is_hovered = false;
     state->ok_button.is_pressed = false;
 
@@ -2828,11 +2932,11 @@ __declspec(dllexport) void __stdcall ShowLabel(
 void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxState* state) {
     if (!rt || !factory || !state) return;
 
-    // Element UI 配色
-    UINT32 primary_color = 0xFF409EFF;  // 主色
-    UINT32 border_color = 0xFFDCDFE6;   // 边框色
-    UINT32 disabled_color = 0xFFC0C4CC; // 禁用色
-    UINT32 hover_border = 0xFF409EFF;   // 悬停边框色
+    // Element UI 配色（使用主题颜色）
+    UINT32 primary_color = ThemeColor_Primary();
+    UINT32 border_color = ThemeColor_BorderBase();
+    UINT32 disabled_color = ThemeColor_TextPlaceholder();
+    UINT32 hover_border = ThemeColor_Primary();
 
     // 复选框尺寸（Element UI标准）
     int box_size = 14;
@@ -2842,9 +2946,9 @@ void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxSt
     // 确定复选框颜色
     UINT32 current_bg = state->bg_color;
     UINT32 current_border = border_color;
-    
+
     if (!state->enabled) {
-        current_bg = 0xFFF5F7FA;
+        current_bg = ThemeColor_BackgroundLight();
         current_border = disabled_color;
     } else if (state->checked) {
         current_bg = primary_color;
@@ -3111,7 +3215,7 @@ HWND __stdcall CreateCheckBox(
     state->pressed = false;
     state->fg_color = fg_color ? fg_color : 0xFF303133;  // Element UI 主要文本色
     state->bg_color = bg_color ? bg_color : 0xFFFFFFFF;  // 白色背景
-    state->check_color = 0xFF409EFF;  // Element UI 主色
+    state->check_color = ThemeColor_Primary();  // 主题主色
     state->font.font_name = L"Microsoft YaHei UI";
     state->font.font_size = 14;
     state->font.bold = false;
@@ -3211,8 +3315,8 @@ void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Progres
     
     // 如果禁用，使用灰色
     if (!state->enabled) {
-        fg_color = 0xFFC0C4CC;  // Element UI 禁用色
-        bg_color = 0xFFF5F7FA;
+        fg_color = ThemeColor_TextPlaceholder();  // 主题禁用色
+        bg_color = ThemeColor_BackgroundLight();
     }
     
     // 绘制背景（圆角矩形）
@@ -3888,7 +3992,7 @@ HWND __stdcall CreatePictureBox(
     state->wic_source = nullptr;
     state->scale_mode = (ImageScaleMode)scale_mode;
     state->opacity = 1.0f;
-    state->bg_color = bg_color ? bg_color : 0xFFF5F7FA;  // Element UI 浅色背景
+    state->bg_color = bg_color ? bg_color : ThemeColor_BackgroundLight();  // 主题浅色背景
     state->enabled = true;
     state->callback = nullptr;
     
@@ -4188,11 +4292,11 @@ void __stdcall SetPictureBoxBackgroundColor(HWND hPictureBox, UINT32 bg_color) {
 void DrawRadioButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, RadioButtonState* state) {
     if (!rt || !factory || !state) return;
 
-    // Element UI 配色
-    UINT32 primary_color = 0xFF409EFF;  // 主色
-    UINT32 border_color = 0xFFDCDFE6;   // 边框色
-    UINT32 disabled_color = 0xFFC0C4CC; // 禁用色
-    UINT32 hover_border = 0xFF409EFF;   // 悬停边框色
+    // Element UI 配色（使用主题颜色）
+    UINT32 primary_color = ThemeColor_Primary();
+    UINT32 border_color = ThemeColor_BorderBase();
+    UINT32 disabled_color = ThemeColor_TextPlaceholder();
+    UINT32 hover_border = ThemeColor_Primary();
 
     // 单选按钮尺寸（Element UI标准）
     int circle_size = 14;
@@ -4202,9 +4306,9 @@ void DrawRadioButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, RadioBu
     // 确定单选按钮颜色
     UINT32 current_bg = state->bg_color;
     UINT32 current_border = border_color;
-    
+
     if (!state->enabled) {
-        current_bg = 0xFFF5F7FA;
+        current_bg = ThemeColor_BackgroundLight();
         current_border = disabled_color;
     } else if (state->checked) {
         current_border = primary_color;
@@ -4480,7 +4584,7 @@ HWND __stdcall CreateRadioButton(
     state->pressed = false;
     state->fg_color = fg_color ? fg_color : 0xFF303133;  // Element UI 主要文本色
     state->bg_color = bg_color ? bg_color : 0xFFFFFFFF;  // 白色背景
-    state->dot_color = 0xFF409EFF;  // Element UI 主色
+    state->dot_color = ThemeColor_Primary();  // 主题主色
     state->font.font_name = L"Microsoft YaHei UI";
     state->font.font_size = 14;
     state->font.bold = false;
@@ -4916,8 +5020,8 @@ HWND __stdcall CreateListBox(
     state->enabled = true;
     state->fg_color = fg_color;
     state->bg_color = bg_color;
-    state->select_color = 0xFFECF5FF;  // Element UI选中背景色
-    state->hover_color = 0xFFF5F7FA;   // Element UI悬停背景色
+    state->select_color = ThemeColor_LightBg(ThemeColor_Primary());  // 主题选中背景色
+    state->hover_color = ThemeColor_BackgroundLight();   // 主题悬停背景色
     state->callback = nullptr;
     
     // 默认字体
@@ -5155,11 +5259,11 @@ void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxSt
     // 按钮背景�?
     UINT32 button_color = state->bg_color;
     if (!state->enabled) {
-        button_color = 0xFFF5F7FA;  // 禁用状�?
+        button_color = ThemeColor_BackgroundLight();  // 禁用状态
     } else if (state->button_pressed) {
-        button_color = 0xFFECF5FF;  // 按下状�?
+        button_color = ThemeColor_LightBg(ThemeColor_Primary());  // 按下状态
     } else if (state->button_hovered) {
-        button_color = 0xFFF5F7FA;  // 悬停状�?
+        button_color = ThemeColor_BackgroundLight();  // 悬停状态
     }
     
     ID2D1SolidColorBrush* brush = nullptr;
@@ -5732,10 +5836,10 @@ HWND __stdcall CreateComboBox(
     state->enabled = true;
     state->button_hovered = false;
     state->button_pressed = false;
-    state->fg_color = fg_color ? fg_color : 0xFF303133;
-    state->bg_color = bg_color ? bg_color : 0xFFFFFFFF;
-    state->select_color = 0xFFF5F7FA;
-    state->hover_color = 0xFFF5F7FA;
+    state->fg_color = fg_color ? fg_color : ThemeColor_TextPrimary();
+    state->bg_color = bg_color ? bg_color : ThemeColor_Background();
+    state->select_color = ThemeColor_BackgroundLight();
+    state->hover_color = ThemeColor_BackgroundLight();
     
     // 设置表项高度（默认35）
     state->item_height = (item_height > 0) ? item_height : 35;
@@ -6231,9 +6335,9 @@ void DrawHotKey(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, HotKeyState*
     rt->Clear(D2D1::ColorF(D2D1::ColorF::White, 0.0f));
     
     // Element UI 配色
-    UINT32 border_color = state->has_focus ? 0xFF409EFF : 0xFFDCDFE6;  // 焦点时蓝色边框
-    UINT32 bg_color = state->enabled ? state->bg_color : 0xFFF5F7FA;
-    UINT32 text_color = state->enabled ? state->fg_color : 0xFFC0C4CC;
+    UINT32 border_color = state->has_focus ? ThemeColor_Primary() : ThemeColor_BorderBase();  // 焦点时主题主色边框
+    UINT32 bg_color = state->enabled ? state->bg_color : ThemeColor_BackgroundLight();
+    UINT32 text_color = state->enabled ? state->fg_color : ThemeColor_TextPlaceholder();
     
     if (!state->enabled) {
         border_color = 0xFFE4E7ED;
@@ -7111,7 +7215,7 @@ void DrawD2DEditBox(D2DEditBoxState* state) {
     // 2. 绘制边框
     if (state->has_border) {
         ID2D1SolidColorBrush* border_brush = nullptr;
-        UINT32 border_color = state->has_focus ? 0xFF409EFF : state->border_color;
+        UINT32 border_color = state->has_focus ? ThemeColor_Primary() : state->border_color;
         rt->CreateSolidColorBrush(ColorFromUInt32(border_color), &border_brush);
         rt->DrawRectangle(
             D2D1::RectF(0, 0, (float)state->width, (float)state->height),
@@ -9756,11 +9860,11 @@ __declspec(dllexport) HWND __stdcall CreateDataGridView(
     state->enabled = true;
     state->fg_color = fg_color;
     state->bg_color = bg_color;
-    state->header_bg_color = 0xFFF5F7FA;
-    state->header_fg_color = 0xFF606266;
-    state->grid_line_color = 0xFFEBEEF5;
-    state->select_color = 0xFFECF5FF;
-    state->hover_color = 0xFFF5F7FA;
+    state->header_bg_color = ThemeColor_BackgroundLight();
+    state->header_fg_color = ThemeColor_TextRegular();
+    state->grid_line_color = ThemeColor_BorderLighter();
+    state->select_color = ThemeColor_LightBg(ThemeColor_Primary());
+    state->hover_color = ThemeColor_BackgroundLight();
     state->zebra_color = 0xFFFAFAFA;
     state->font.font_name = L"Microsoft YaHei UI";
     state->font.font_size = 14;
@@ -10588,6 +10692,489 @@ __declspec(dllexport) void __stdcall RemoveLayoutManager(HWND hParent) {
         delete it->second;
         g_layout_managers.erase(it);
     }
+}
+
+} // extern "C" (layout manager block end)
+
+// ========== 主题系统实现 ==========
+
+// 创建默认亮色主题
+Theme CreateDefaultLightTheme() {
+    Theme theme;
+    theme.name = L"light";
+    theme.dark_mode = false;
+
+    // Element UI 标准亮色配色
+    theme.colors.primary = 0xFF409EFF;
+    theme.colors.success = 0xFF67C23A;
+    theme.colors.warning = 0xFFE6A23C;
+    theme.colors.danger = 0xFFF56C6C;
+    theme.colors.info = 0xFF909399;
+    theme.colors.text_primary = 0xFF303133;
+    theme.colors.text_regular = 0xFF606266;
+    theme.colors.text_secondary = 0xFF909399;
+    theme.colors.text_placeholder = 0xFFC0C4CC;
+    theme.colors.border_base = 0xFFDCDFE6;
+    theme.colors.border_light = 0xFFE4E7ED;
+    theme.colors.border_lighter = 0xFFEBEEF5;
+    theme.colors.border_extra_light = 0xFFF2F6FC;
+    theme.colors.background = 0xFFFFFFFF;
+    theme.colors.background_light = 0xFFF5F7FA;
+
+    theme.fonts.title_font = L"Microsoft YaHei UI";
+    theme.fonts.body_font = L"Microsoft YaHei UI";
+    theme.fonts.mono_font = L"Consolas";
+    theme.fonts.title_size = 16;
+    theme.fonts.body_size = 14;
+    theme.fonts.small_size = 12;
+
+    theme.sizes.border_radius = 4.0f;
+    theme.sizes.border_width = 1.0f;
+    theme.sizes.control_height = 32;
+    theme.sizes.spacing_small = 8;
+    theme.sizes.spacing_medium = 16;
+    theme.sizes.spacing_large = 24;
+
+    return theme;
+}
+
+// 创建默认暗色主题
+Theme CreateDefaultDarkTheme() {
+    Theme theme;
+    theme.name = L"dark";
+    theme.dark_mode = true;
+
+    // 暗色主题配色
+    theme.colors.primary = 0xFF409EFF;
+    theme.colors.success = 0xFF67C23A;
+    theme.colors.warning = 0xFFE6A23C;
+    theme.colors.danger = 0xFFF56C6C;
+    theme.colors.info = 0xFF909399;
+    theme.colors.text_primary = 0xFFE5EAF3;
+    theme.colors.text_regular = 0xFFCFD3DC;
+    theme.colors.text_secondary = 0xFFA3A6AD;
+    theme.colors.text_placeholder = 0xFF8D9095;
+    theme.colors.border_base = 0xFF4C4D4F;
+    theme.colors.border_light = 0xFF414243;
+    theme.colors.border_lighter = 0xFF363637;
+    theme.colors.border_extra_light = 0xFF2B2B2C;
+    theme.colors.background = 0xFF1D1E1F;
+    theme.colors.background_light = 0xFF262727;
+
+    theme.fonts.title_font = L"Microsoft YaHei UI";
+    theme.fonts.body_font = L"Microsoft YaHei UI";
+    theme.fonts.mono_font = L"Consolas";
+    theme.fonts.title_size = 16;
+    theme.fonts.body_size = 14;
+    theme.fonts.small_size = 12;
+
+    theme.sizes.border_radius = 4.0f;
+    theme.sizes.border_width = 1.0f;
+    theme.sizes.control_height = 32;
+    theme.sizes.spacing_small = 8;
+    theme.sizes.spacing_medium = 16;
+    theme.sizes.spacing_large = 24;
+
+    return theme;
+}
+
+// 初始化主题系统
+static void EnsureThemesInitialized() {
+    if (!g_themes_initialized) {
+        g_light_theme = CreateDefaultLightTheme();
+        g_dark_theme = CreateDefaultDarkTheme();
+        g_current_theme = &g_light_theme;
+        g_themes_initialized = true;
+    }
+}
+
+// 获取当前主题颜色（带自动初始化）
+static UINT32 GetCurrentThemeColorValue(const std::string& name) {
+    EnsureThemesInitialized();
+    const ThemeColors& c = g_current_theme->colors;
+    if (name == "primary") return c.primary;
+    if (name == "success") return c.success;
+    if (name == "warning") return c.warning;
+    if (name == "danger") return c.danger;
+    if (name == "info") return c.info;
+    if (name == "text_primary") return c.text_primary;
+    if (name == "text_regular") return c.text_regular;
+    if (name == "text_secondary") return c.text_secondary;
+    if (name == "text_placeholder") return c.text_placeholder;
+    if (name == "border_base") return c.border_base;
+    if (name == "border_light") return c.border_light;
+    if (name == "border_lighter") return c.border_lighter;
+    if (name == "border_extra_light") return c.border_extra_light;
+    if (name == "background") return c.background;
+    if (name == "background_light") return c.background_light;
+    return 0;
+}
+
+// 简易JSON解析器 - 解析主题JSON
+static bool ParseThemeJSON(const std::string& json, Theme& theme) {
+    // 简易JSON解析：查找 "key": value 模式
+    auto findString = [&](const std::string& key) -> std::string {
+        std::string search = "\"" + key + "\"";
+        size_t pos = json.find(search);
+        if (pos == std::string::npos) return "";
+        pos = json.find(':', pos);
+        if (pos == std::string::npos) return "";
+        pos = json.find('"', pos + 1);
+        if (pos == std::string::npos) return "";
+        size_t end = json.find('"', pos + 1);
+        if (end == std::string::npos) return "";
+        return json.substr(pos + 1, end - pos - 1);
+    };
+
+    auto findInt = [&](const std::string& key, int default_val) -> int {
+        std::string search = "\"" + key + "\"";
+        size_t pos = json.find(search);
+        if (pos == std::string::npos) return default_val;
+        pos = json.find(':', pos);
+        if (pos == std::string::npos) return default_val;
+        pos++;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+        try { return std::stoi(json.substr(pos)); }
+        catch (...) { return default_val; }
+    };
+
+    auto findFloat = [&](const std::string& key, float default_val) -> float {
+        std::string search = "\"" + key + "\"";
+        size_t pos = json.find(search);
+        if (pos == std::string::npos) return default_val;
+        pos = json.find(':', pos);
+        if (pos == std::string::npos) return default_val;
+        pos++;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+        try { return std::stof(json.substr(pos)); }
+        catch (...) { return default_val; }
+    };
+
+    auto findBool = [&](const std::string& key, bool default_val) -> bool {
+        std::string search = "\"" + key + "\"";
+        size_t pos = json.find(search);
+        if (pos == std::string::npos) return default_val;
+        pos = json.find(':', pos);
+        if (pos == std::string::npos) return default_val;
+        pos++;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+        if (json.substr(pos, 4) == "true") return true;
+        if (json.substr(pos, 5) == "false") return false;
+        return default_val;
+    };
+
+    // 解析颜色字符串 "#RRGGBB" -> 0xAARRGGBB
+    auto parseColor = [&](const std::string& key, UINT32 default_val) -> UINT32 {
+        std::string val = findString(key);
+        if (val.empty() || val[0] != '#' || val.size() < 7) return default_val;
+        try {
+            unsigned long rgb = std::stoul(val.substr(1), nullptr, 16);
+            return 0xFF000000 | (UINT32)rgb;
+        }
+        catch (...) { return default_val; }
+    };
+
+    // 先用默认亮色主题作为基础
+    Theme base = CreateDefaultLightTheme();
+
+    // 解析名称和模式
+    std::string name = findString("name");
+    if (!name.empty()) {
+        theme.name = std::wstring(name.begin(), name.end());
+    } else {
+        theme.name = base.name;
+    }
+    theme.dark_mode = findBool("dark_mode", base.dark_mode);
+
+    // 解析颜色
+    theme.colors.primary = parseColor("primary", base.colors.primary);
+    theme.colors.success = parseColor("success", base.colors.success);
+    theme.colors.warning = parseColor("warning", base.colors.warning);
+    theme.colors.danger = parseColor("danger", base.colors.danger);
+    theme.colors.info = parseColor("info", base.colors.info);
+    theme.colors.text_primary = parseColor("text_primary", base.colors.text_primary);
+    theme.colors.text_regular = parseColor("text_regular", base.colors.text_regular);
+    theme.colors.text_secondary = parseColor("text_secondary", base.colors.text_secondary);
+    theme.colors.text_placeholder = parseColor("text_placeholder", base.colors.text_placeholder);
+    theme.colors.border_base = parseColor("border_base", base.colors.border_base);
+    theme.colors.border_light = parseColor("border_light", base.colors.border_light);
+    theme.colors.border_lighter = parseColor("border_lighter", base.colors.border_lighter);
+    theme.colors.border_extra_light = parseColor("border_extra_light", base.colors.border_extra_light);
+    theme.colors.background = parseColor("background", base.colors.background);
+    theme.colors.background_light = parseColor("background_light", base.colors.background_light);
+
+    // 解析字体
+    std::string title_font = findString("title_font");
+    std::string body_font = findString("body_font");
+    std::string mono_font = findString("mono_font");
+    theme.fonts.title_font = title_font.empty() ? base.fonts.title_font : std::wstring(title_font.begin(), title_font.end());
+    theme.fonts.body_font = body_font.empty() ? base.fonts.body_font : std::wstring(body_font.begin(), body_font.end());
+    theme.fonts.mono_font = mono_font.empty() ? base.fonts.mono_font : std::wstring(mono_font.begin(), mono_font.end());
+    theme.fonts.title_size = findInt("title_size", base.fonts.title_size);
+    theme.fonts.body_size = findInt("body_size", base.fonts.body_size);
+    theme.fonts.small_size = findInt("small_size", base.fonts.small_size);
+
+    // 解析尺寸
+    theme.sizes.border_radius = findFloat("border_radius", base.sizes.border_radius);
+    theme.sizes.border_width = findFloat("border_width", base.sizes.border_width);
+    theme.sizes.control_height = findInt("control_height", base.sizes.control_height);
+    theme.sizes.spacing_small = findInt("spacing_small", base.sizes.spacing_small);
+    theme.sizes.spacing_medium = findInt("spacing_medium", base.sizes.spacing_medium);
+    theme.sizes.spacing_large = findInt("spacing_large", base.sizes.spacing_large);
+
+    return true;
+}
+
+// 刷新所有控件（主题切换后调用）
+void ApplyThemeToAllControls() {
+    // 刷新所有窗口
+    for (auto& pair : g_windows) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有复选框
+    for (auto& pair : g_checkboxes) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有进度条
+    for (auto& pair : g_progressbars) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有图片框
+    for (auto& pair : g_pictureboxes) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有单选按钮
+    for (auto& pair : g_radiobuttons) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有列表框
+    for (auto& pair : g_listboxes) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有组合框
+    for (auto& pair : g_comboboxes) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有D2D组合框
+    for (auto& pair : g_d2d_comboboxes) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有热键控件
+    for (auto& pair : g_hotkeys) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有分组框
+    for (auto& pair : g_groupboxes) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+    // 刷新所有DataGridView
+    for (auto& pair : g_datagrids) {
+        InvalidateRect(pair.first, NULL, TRUE);
+    }
+}
+
+// ========== 主题系统 API 实现 ==========
+extern "C" {
+
+// 从JSON字符串加载主题
+__declspec(dllexport) BOOL __stdcall LoadThemeFromJSON(
+    const unsigned char* json_bytes,
+    int json_len
+) {
+    EnsureThemesInitialized();
+    if (!json_bytes || json_len <= 0) return FALSE;
+
+    std::string json((const char*)json_bytes, json_len);
+    Theme new_theme;
+    if (!ParseThemeJSON(json, new_theme)) return FALSE;
+
+    // 根据名称决定存储位置
+    if (new_theme.name == L"light") {
+        g_light_theme = new_theme;
+        if (g_current_theme == &g_light_theme || (!g_current_theme->dark_mode)) {
+            g_current_theme = &g_light_theme;
+            ApplyThemeToAllControls();
+        }
+    } else if (new_theme.name == L"dark") {
+        g_dark_theme = new_theme;
+        if (g_current_theme == &g_dark_theme || g_current_theme->dark_mode) {
+            g_current_theme = &g_dark_theme;
+            ApplyThemeToAllControls();
+        }
+    } else {
+        // 自定义主题 - 存储到当前主题
+        if (new_theme.dark_mode) {
+            g_dark_theme = new_theme;
+            g_current_theme = &g_dark_theme;
+        } else {
+            g_light_theme = new_theme;
+            g_current_theme = &g_light_theme;
+        }
+        ApplyThemeToAllControls();
+    }
+
+    return TRUE;
+}
+
+// 从文件加载主题
+__declspec(dllexport) BOOL __stdcall LoadThemeFromFile(
+    const unsigned char* file_path_bytes,
+    int path_len
+) {
+    EnsureThemesInitialized();
+    if (!file_path_bytes || path_len <= 0) return FALSE;
+
+    // 转换路径
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, (const char*)file_path_bytes, path_len, NULL, 0);
+    if (wlen <= 0) return FALSE;
+    std::wstring wpath(wlen, 0);
+    MultiByteToWideChar(CP_UTF8, 0, (const char*)file_path_bytes, path_len, &wpath[0], wlen);
+
+    // 读取文件
+    HANDLE hFile = CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return FALSE;
+
+    DWORD fileSize = GetFileSize(hFile, NULL);
+    if (fileSize == INVALID_FILE_SIZE || fileSize == 0) {
+        CloseHandle(hFile);
+        return FALSE;
+    }
+
+    std::vector<unsigned char> buffer(fileSize);
+    DWORD bytesRead = 0;
+    BOOL readOk = ReadFile(hFile, buffer.data(), fileSize, &bytesRead, NULL);
+    CloseHandle(hFile);
+
+    if (!readOk || bytesRead == 0) return FALSE;
+
+    return LoadThemeFromJSON(buffer.data(), (int)bytesRead);
+}
+
+// 设置当前主题
+__declspec(dllexport) void __stdcall SetTheme(
+    const unsigned char* theme_name_bytes,
+    int name_len
+) {
+    EnsureThemesInitialized();
+    if (!theme_name_bytes || name_len <= 0) return;
+
+    std::string name((const char*)theme_name_bytes, name_len);
+
+    Theme* old_theme = g_current_theme;
+    if (name == "light") {
+        g_current_theme = &g_light_theme;
+    } else if (name == "dark") {
+        g_current_theme = &g_dark_theme;
+    } else {
+        return; // 未知主题名称
+    }
+
+    if (g_current_theme != old_theme) {
+        ApplyThemeToAllControls();
+        if (g_theme_changed_callback) {
+            g_theme_changed_callback(name.c_str());
+        }
+    }
+}
+
+// 设置暗色模式
+__declspec(dllexport) void __stdcall SetDarkMode(BOOL dark_mode) {
+    EnsureThemesInitialized();
+    Theme* old_theme = g_current_theme;
+    g_current_theme = dark_mode ? &g_dark_theme : &g_light_theme;
+
+    if (g_current_theme != old_theme) {
+        ApplyThemeToAllControls();
+        if (g_theme_changed_callback) {
+            std::string name = dark_mode ? "dark" : "light";
+            g_theme_changed_callback(name.c_str());
+        }
+    }
+}
+
+// 获取主题颜色
+__declspec(dllexport) UINT32 __stdcall EW_GetThemeColor(
+    const unsigned char* color_name_bytes,
+    int name_len
+) {
+    EnsureThemesInitialized();
+    if (!color_name_bytes || name_len <= 0) return 0;
+    std::string name((const char*)color_name_bytes, name_len);
+    return GetCurrentThemeColorValue(name);
+}
+
+// 获取主题字体名称
+__declspec(dllexport) int __stdcall EW_GetThemeFont(
+    int font_type,
+    unsigned char* buffer,
+    int buffer_size
+) {
+    EnsureThemesInitialized();
+    if (!buffer || buffer_size <= 0) return 0;
+
+    const std::wstring* font = nullptr;
+    switch (font_type) {
+    case 0: font = &g_current_theme->fonts.title_font; break;
+    case 1: font = &g_current_theme->fonts.body_font; break;
+    case 2: font = &g_current_theme->fonts.mono_font; break;
+    default: return 0;
+    }
+
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, font->c_str(), (int)font->size(), NULL, 0, NULL, NULL);
+    if (utf8_len <= 0 || utf8_len > buffer_size) return 0;
+    WideCharToMultiByte(CP_UTF8, 0, font->c_str(), (int)font->size(), (char*)buffer, buffer_size, NULL, NULL);
+    return utf8_len;
+}
+
+// 获取主题字号
+__declspec(dllexport) int __stdcall GetThemeFontSize(int font_type) {
+    EnsureThemesInitialized();
+    switch (font_type) {
+    case 0: return g_current_theme->fonts.title_size;
+    case 1: return g_current_theme->fonts.body_size;
+    case 2: return g_current_theme->fonts.small_size;
+    default: return 14;
+    }
+}
+
+// 获取主题尺寸
+__declspec(dllexport) int __stdcall GetThemeSize(int size_type) {
+    EnsureThemesInitialized();
+    switch (size_type) {
+    case 0: return (int)g_current_theme->sizes.border_radius;
+    case 1: return (int)g_current_theme->sizes.border_width;
+    case 2: return g_current_theme->sizes.control_height;
+    case 3: return g_current_theme->sizes.spacing_small;
+    case 4: return g_current_theme->sizes.spacing_medium;
+    case 5: return g_current_theme->sizes.spacing_large;
+    default: return 0;
+    }
+}
+
+// 获取当前是否暗色模式
+__declspec(dllexport) BOOL __stdcall IsDarkMode() {
+    EnsureThemesInitialized();
+    return g_current_theme->dark_mode ? TRUE : FALSE;
+}
+
+// 获取当前主题名称
+__declspec(dllexport) int __stdcall EW_GetCurrentThemeName(
+    unsigned char* buffer,
+    int buffer_size
+) {
+    EnsureThemesInitialized();
+    if (!buffer || buffer_size <= 0) return 0;
+
+    const std::wstring& name = g_current_theme->name;
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), NULL, 0, NULL, NULL);
+    if (utf8_len <= 0 || utf8_len > buffer_size) return 0;
+    WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), (char*)buffer, buffer_size, NULL, NULL);
+    return utf8_len;
+}
+
+// 设置主题切换回调
+__declspec(dllexport) void __stdcall SetThemeChangedCallback(ThemeChangedCallback callback) {
+    g_theme_changed_callback = callback;
 }
 
 } // extern "C"

@@ -198,3 +198,14 @@ EXPORTS
     RemoveControlFromLayout
     UpdateLayout
     RemoveLayoutManager
+    LoadThemeFromJSON
+    LoadThemeFromFile
+    SetTheme
+    SetDarkMode
+    EW_GetThemeColor
+    EW_GetThemeFont
+    GetThemeFontSize
+    GetThemeSize
+    IsDarkMode
+    EW_GetCurrentThemeName
+    SetThemeChangedCallback
