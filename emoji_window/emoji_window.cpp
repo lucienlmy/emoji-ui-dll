@@ -10420,68 +10420,103 @@ __declspec(dllexport) void __stdcall SetValueChangedCallback(HWND hControl, Valu
 
 } // extern "C" (event callbacks block end)
 
+// 辅助函数：在WindowState中查找Emoji按钮
+static EmojiButton* FindEmojiButton(HWND hParent, int button_id) {
+    auto win_it = g_windows.find(hParent);
+    if (win_it == g_windows.end()) return nullptr;
+    for (auto& btn : win_it->second->buttons) {
+        if (btn.id == button_id) return &btn;
+    }
+    return nullptr;
+}
+
 // 流式布局计算（水平/垂直）
 void CalculateFlowLayout(LayoutManager* lm, int client_width, int client_height) {
     int x = lm->padding_left;
     int y = lm->padding_top;
     int available_width = client_width - lm->padding_left - lm->padding_right;
     int available_height = client_height - lm->padding_top - lm->padding_bottom;
-    int line_max_size = 0;  // 当前行/列中最大的控件尺寸（用于换行/换列）
+    int line_max_size = 0;
 
-    for (HWND hChild : lm->control_order) {
-        if (!IsWindow(hChild) || !IsWindowVisible(hChild)) continue;
-
-        auto prop_it = lm->control_props.find(hChild);
+    for (auto& item : lm->item_order) {
         LayoutProperties props = {};
-        if (prop_it != lm->control_props.end()) {
-            props = prop_it->second;
-        }
+        int cw = 0, ch = 0;
 
-        RECT rc;
-        GetWindowRect(hChild, &rc);
-        HWND hParent = GetParent(hChild);
-        MapWindowPoints(HWND_DESKTOP, hParent, (LPPOINT)&rc, 2);
-        int cw = rc.right - rc.left;
-        int ch = rc.bottom - rc.top;
+        if (item.is_button) {
+            EmojiButton* btn = FindEmojiButton(lm->parent_hwnd, item.button_id);
+            if (!btn) continue;
+            auto prop_it = lm->button_props.find(item.button_id);
+            if (prop_it != lm->button_props.end()) props = prop_it->second;
+            cw = btn->width;
+            ch = btn->height;
 
-        if (lm->type == LAYOUT_FLOW_HORIZONTAL) {
-            // 水平流式：检查是否需要换行
-            int needed_width = props.margin_left + cw + props.margin_right;
-            if (x + needed_width > lm->padding_left + available_width && x > lm->padding_left) {
-                // 换行
-                x = lm->padding_left;
-                y += line_max_size + lm->spacing;
-                line_max_size = 0;
+            if (lm->type == LAYOUT_FLOW_HORIZONTAL) {
+                int needed_width = props.margin_left + cw + props.margin_right;
+                if (x + needed_width > lm->padding_left + available_width && x > lm->padding_left) {
+                    x = lm->padding_left;
+                    y += line_max_size + lm->spacing;
+                    line_max_size = 0;
+                }
+                int ctrl_h = props.stretch_vertical ? (available_height - props.margin_top - props.margin_bottom) : ch;
+                btn->x = x + props.margin_left;
+                btn->y = y + props.margin_top;
+                btn->height = ctrl_h;
+                int total_h = props.margin_top + ctrl_h + props.margin_bottom;
+                if (total_h > line_max_size) line_max_size = total_h;
+                x += needed_width + lm->spacing;
+            } else {
+                int needed_height = props.margin_top + ch + props.margin_bottom;
+                if (y + needed_height > lm->padding_top + available_height && y > lm->padding_top) {
+                    y = lm->padding_top;
+                    x += line_max_size + lm->spacing;
+                    line_max_size = 0;
+                }
+                int ctrl_w = props.stretch_horizontal ? (available_width - props.margin_left - props.margin_right) : cw;
+                btn->x = x + props.margin_left;
+                btn->y = y + props.margin_top;
+                btn->width = ctrl_w;
+                int total_w = props.margin_left + ctrl_w + props.margin_right;
+                if (total_w > line_max_size) line_max_size = total_w;
+                y += needed_height + lm->spacing;
             }
-
-            int ctrl_x = x + props.margin_left;
-            int ctrl_y = y + props.margin_top;
-            int ctrl_h = props.stretch_vertical ? (available_height - props.margin_top - props.margin_bottom) : ch;
-
-            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, cw, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
-
-            int total_h = props.margin_top + ctrl_h + props.margin_bottom;
-            if (total_h > line_max_size) line_max_size = total_h;
-            x += needed_width + lm->spacing;
         } else {
-            // 垂直流式：检查是否需要换列
-            int needed_height = props.margin_top + ch + props.margin_bottom;
-            if (y + needed_height > lm->padding_top + available_height && y > lm->padding_top) {
-                // 换列
-                y = lm->padding_top;
-                x += line_max_size + lm->spacing;
-                line_max_size = 0;
+            HWND hChild = item.hwnd;
+            if (!IsWindow(hChild) || !IsWindowVisible(hChild)) continue;
+            auto prop_it = lm->control_props.find(hChild);
+            if (prop_it != lm->control_props.end()) props = prop_it->second;
+
+            RECT rc;
+            GetWindowRect(hChild, &rc);
+            HWND hParent = GetParent(hChild);
+            MapWindowPoints(HWND_DESKTOP, hParent, (LPPOINT)&rc, 2);
+            cw = rc.right - rc.left;
+            ch = rc.bottom - rc.top;
+
+            if (lm->type == LAYOUT_FLOW_HORIZONTAL) {
+                int needed_width = props.margin_left + cw + props.margin_right;
+                if (x + needed_width > lm->padding_left + available_width && x > lm->padding_left) {
+                    x = lm->padding_left;
+                    y += line_max_size + lm->spacing;
+                    line_max_size = 0;
+                }
+                int ctrl_h = props.stretch_vertical ? (available_height - props.margin_top - props.margin_bottom) : ch;
+                SetWindowPos(hChild, nullptr, x + props.margin_left, y + props.margin_top, cw, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
+                int total_h = props.margin_top + ctrl_h + props.margin_bottom;
+                if (total_h > line_max_size) line_max_size = total_h;
+                x += needed_width + lm->spacing;
+            } else {
+                int needed_height = props.margin_top + ch + props.margin_bottom;
+                if (y + needed_height > lm->padding_top + available_height && y > lm->padding_top) {
+                    y = lm->padding_top;
+                    x += line_max_size + lm->spacing;
+                    line_max_size = 0;
+                }
+                int ctrl_w = props.stretch_horizontal ? (available_width - props.margin_left - props.margin_right) : cw;
+                SetWindowPos(hChild, nullptr, x + props.margin_left, y + props.margin_top, ctrl_w, ch, SWP_NOZORDER | SWP_NOACTIVATE);
+                int total_w = props.margin_left + ctrl_w + props.margin_right;
+                if (total_w > line_max_size) line_max_size = total_w;
+                y += needed_height + lm->spacing;
             }
-
-            int ctrl_x = x + props.margin_left;
-            int ctrl_y = y + props.margin_top;
-            int ctrl_w = props.stretch_horizontal ? (available_width - props.margin_left - props.margin_right) : cw;
-
-            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ch, SWP_NOZORDER | SWP_NOACTIVATE);
-
-            int total_w = props.margin_left + ctrl_w + props.margin_right;
-            if (total_w > line_max_size) line_max_size = total_w;
-            y += needed_height + lm->spacing;
         }
     }
 }
@@ -10503,47 +10538,71 @@ void CalculateGridLayout(LayoutManager* lm, int client_width, int client_height)
     if (cell_height < 0) cell_height = 0;
 
     int index = 0;
-    for (HWND hChild : lm->control_order) {
-        if (!IsWindow(hChild) || !IsWindowVisible(hChild)) continue;
-
+    for (auto& item : lm->item_order) {
         int row = index / lm->columns;
         int col = index % lm->columns;
-        if (row >= lm->rows) break;  // 超出网格范围
+        if (row >= lm->rows) break;
 
-        auto prop_it = lm->control_props.find(hChild);
         LayoutProperties props = {};
-        if (prop_it != lm->control_props.end()) {
-            props = prop_it->second;
-        }
 
-        int cell_x = lm->padding_left + col * (cell_width + lm->spacing);
-        int cell_y = lm->padding_top + row * (cell_height + lm->spacing);
+        if (item.is_button) {
+            // Emoji按钮
+            EmojiButton* btn = FindEmojiButton(lm->parent_hwnd, item.button_id);
+            if (!btn) continue;
 
-        // 在单元格内应用边距
-        int ctrl_x = cell_x + props.margin_left;
-        int ctrl_y = cell_y + props.margin_top;
-        int ctrl_w, ctrl_h;
+            auto prop_it = lm->button_props.find(item.button_id);
+            if (prop_it != lm->button_props.end()) props = prop_it->second;
 
-        if (props.stretch_horizontal) {
-            ctrl_w = cell_width - props.margin_left - props.margin_right;
+            int cell_x = lm->padding_left + col * (cell_width + lm->spacing);
+            int cell_y = lm->padding_top + row * (cell_height + lm->spacing);
+
+            int ctrl_x = cell_x + props.margin_left;
+            int ctrl_y = cell_y + props.margin_top;
+            int ctrl_w = props.stretch_horizontal ? (cell_width - props.margin_left - props.margin_right) : btn->width;
+            int ctrl_h = props.stretch_vertical ? (cell_height - props.margin_top - props.margin_bottom) : btn->height;
+            if (ctrl_w < 0) ctrl_w = 0;
+            if (ctrl_h < 0) ctrl_h = 0;
+
+            btn->x = ctrl_x;
+            btn->y = ctrl_y;
+            btn->width = ctrl_w;
+            btn->height = ctrl_h;
         } else {
-            RECT rc;
-            GetWindowRect(hChild, &rc);
-            ctrl_w = rc.right - rc.left;
+            // HWND控件
+            HWND hChild = item.hwnd;
+            if (!IsWindow(hChild) || !IsWindowVisible(hChild)) continue;
+
+            auto prop_it = lm->control_props.find(hChild);
+            if (prop_it != lm->control_props.end()) props = prop_it->second;
+
+            int cell_x = lm->padding_left + col * (cell_width + lm->spacing);
+            int cell_y = lm->padding_top + row * (cell_height + lm->spacing);
+
+            int ctrl_x = cell_x + props.margin_left;
+            int ctrl_y = cell_y + props.margin_top;
+            int ctrl_w, ctrl_h;
+
+            if (props.stretch_horizontal) {
+                ctrl_w = cell_width - props.margin_left - props.margin_right;
+            } else {
+                RECT rc;
+                GetWindowRect(hChild, &rc);
+                ctrl_w = rc.right - rc.left;
+            }
+
+            if (props.stretch_vertical) {
+                ctrl_h = cell_height - props.margin_top - props.margin_bottom;
+            } else {
+                RECT rc;
+                GetWindowRect(hChild, &rc);
+                ctrl_h = rc.bottom - rc.top;
+            }
+
+            if (ctrl_w < 0) ctrl_w = 0;
+            if (ctrl_h < 0) ctrl_h = 0;
+
+            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
         }
-
-        if (props.stretch_vertical) {
-            ctrl_h = cell_height - props.margin_top - props.margin_bottom;
-        } else {
-            RECT rc;
-            GetWindowRect(hChild, &rc);
-            ctrl_h = rc.bottom - rc.top;
-        }
-
-        if (ctrl_w < 0) ctrl_w = 0;
-        if (ctrl_h < 0) ctrl_h = 0;
-
-        SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
         index++;
     }
 }
@@ -10556,27 +10615,39 @@ void CalculateDockLayout(LayoutManager* lm, int client_width, int client_height)
     int right = client_width - lm->padding_right;
     int bottom = client_height - lm->padding_bottom;
 
-    // 收集FILL控件（最后处理）
-    std::vector<HWND> fill_controls;
+    // 收集FILL项（最后处理）
+    std::vector<LayoutItem> fill_items;
 
-    for (HWND hChild : lm->control_order) {
-        if (!IsWindow(hChild) || !IsWindowVisible(hChild)) continue;
-
-        auto prop_it = lm->control_props.find(hChild);
+    for (auto& item : lm->item_order) {
         LayoutProperties props = {};
-        if (prop_it != lm->control_props.end()) {
-            props = prop_it->second;
+        int cw = 0, ch = 0;
+        bool is_btn = item.is_button;
+
+        EmojiButton* btn = nullptr;
+        HWND hChild = nullptr;
+
+        if (is_btn) {
+            btn = FindEmojiButton(lm->parent_hwnd, item.button_id);
+            if (!btn) continue;
+            auto prop_it = lm->button_props.find(item.button_id);
+            if (prop_it != lm->button_props.end()) props = prop_it->second;
+            cw = btn->width;
+            ch = btn->height;
+        } else {
+            hChild = item.hwnd;
+            if (!IsWindow(hChild) || !IsWindowVisible(hChild)) continue;
+            auto prop_it = lm->control_props.find(hChild);
+            if (prop_it != lm->control_props.end()) props = prop_it->second;
+            RECT rc;
+            GetWindowRect(hChild, &rc);
+            cw = rc.right - rc.left;
+            ch = rc.bottom - rc.top;
         }
 
         if (props.dock == DOCK_FILL) {
-            fill_controls.push_back(hChild);
+            fill_items.push_back(item);
             continue;
         }
-
-        RECT rc;
-        GetWindowRect(hChild, &rc);
-        int cw = rc.right - rc.left;
-        int ch = rc.bottom - rc.top;
 
         int ctrl_x, ctrl_y, ctrl_w, ctrl_h;
 
@@ -10587,62 +10658,72 @@ void CalculateDockLayout(LayoutManager* lm, int client_width, int client_height)
             ctrl_w = (right - left) - props.margin_left - props.margin_right;
             ctrl_h = ch;
             if (ctrl_w < 0) ctrl_w = 0;
-            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
+            if (is_btn) { btn->x = ctrl_x; btn->y = ctrl_y; btn->width = ctrl_w; btn->height = ctrl_h; }
+            else { SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE); }
             top += props.margin_top + ctrl_h + props.margin_bottom + lm->spacing;
             break;
-
         case DOCK_BOTTOM:
             ctrl_w = (right - left) - props.margin_left - props.margin_right;
             ctrl_h = ch;
             ctrl_x = left + props.margin_left;
             ctrl_y = bottom - props.margin_bottom - ctrl_h;
             if (ctrl_w < 0) ctrl_w = 0;
-            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
+            if (is_btn) { btn->x = ctrl_x; btn->y = ctrl_y; btn->width = ctrl_w; btn->height = ctrl_h; }
+            else { SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE); }
             bottom -= props.margin_bottom + ctrl_h + props.margin_top + lm->spacing;
             break;
-
         case DOCK_LEFT:
             ctrl_x = left + props.margin_left;
             ctrl_y = top + props.margin_top;
             ctrl_w = cw;
             ctrl_h = (bottom - top) - props.margin_top - props.margin_bottom;
             if (ctrl_h < 0) ctrl_h = 0;
-            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
+            if (is_btn) { btn->x = ctrl_x; btn->y = ctrl_y; btn->width = ctrl_w; btn->height = ctrl_h; }
+            else { SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE); }
             left += props.margin_left + ctrl_w + props.margin_right + lm->spacing;
             break;
-
         case DOCK_RIGHT:
             ctrl_w = cw;
             ctrl_h = (bottom - top) - props.margin_top - props.margin_bottom;
             ctrl_x = right - props.margin_right - ctrl_w;
             ctrl_y = top + props.margin_top;
             if (ctrl_h < 0) ctrl_h = 0;
-            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
+            if (is_btn) { btn->x = ctrl_x; btn->y = ctrl_y; btn->width = ctrl_w; btn->height = ctrl_h; }
+            else { SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE); }
             right -= props.margin_right + ctrl_w + props.margin_left + lm->spacing;
             break;
-
         default:
-            // DOCK_NONE - 不处理
             break;
         }
     }
 
-    // 处理FILL控件 - 填充剩余空间
-    for (HWND hChild : fill_controls) {
-        auto prop_it = lm->control_props.find(hChild);
+    // 处理FILL项 - 填充剩余空间
+    for (auto& item : fill_items) {
         LayoutProperties props = {};
-        if (prop_it != lm->control_props.end()) {
-            props = prop_it->second;
+        if (item.is_button) {
+            EmojiButton* btn = FindEmojiButton(lm->parent_hwnd, item.button_id);
+            if (!btn) continue;
+            auto prop_it = lm->button_props.find(item.button_id);
+            if (prop_it != lm->button_props.end()) props = prop_it->second;
+            btn->x = left + props.margin_left;
+            btn->y = top + props.margin_top;
+            btn->width = (right - left) - props.margin_left - props.margin_right;
+            btn->height = (bottom - top) - props.margin_top - props.margin_bottom;
+            if (btn->width < 0) btn->width = 0;
+            if (btn->height < 0) btn->height = 0;
+        } else {
+            HWND hChild = item.hwnd;
+            if (!IsWindow(hChild)) continue;
+            auto prop_it = lm->control_props.find(hChild);
+            if (prop_it != lm->control_props.end()) props = prop_it->second;
+            int ctrl_x = left + props.margin_left;
+            int ctrl_y = top + props.margin_top;
+            int ctrl_w = (right - left) - props.margin_left - props.margin_right;
+            int ctrl_h = (bottom - top) - props.margin_top - props.margin_bottom;
+            if (ctrl_w < 0) ctrl_w = 0;
+            if (ctrl_h < 0) ctrl_h = 0;
+            SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
         }
-
-        int ctrl_x = left + props.margin_left;
-        int ctrl_y = top + props.margin_top;
-        int ctrl_w = (right - left) - props.margin_left - props.margin_right;
-        int ctrl_h = (bottom - top) - props.margin_top - props.margin_bottom;
-        if (ctrl_w < 0) ctrl_w = 0;
-        if (ctrl_h < 0) ctrl_h = 0;
-
-        SetWindowPos(hChild, nullptr, ctrl_x, ctrl_y, ctrl_w, ctrl_h, SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
 
@@ -10691,44 +10772,92 @@ __declspec(dllexport) void __stdcall SetControlLayoutProps(
     HWND hControl, int margin_left, int margin_top, int margin_right, int margin_bottom,
     int dock_position, BOOL stretch_horizontal, BOOL stretch_vertical)
 {
-    if (!IsWindow(hControl)) return;
+    // 先检查是否是Emoji按钮ID（优先级高于IsWindow，因为按钮ID可能恰好是有效HWND值）
+    int button_id = (int)(intptr_t)hControl;
+    for (auto& pair : g_layout_managers) {
+        LayoutManager* lm = pair.second;
+        for (auto& item : lm->item_order) {
+            if (item.is_button && item.button_id == button_id) {
+                LayoutProperties& props = lm->button_props[button_id];
+                props.margin_left = margin_left;
+                props.margin_top = margin_top;
+                props.margin_right = margin_right;
+                props.margin_bottom = margin_bottom;
+                props.dock = (DockPosition)dock_position;
+                props.stretch_horizontal = stretch_horizontal ? true : false;
+                props.stretch_vertical = stretch_vertical ? true : false;
+                return;
+            }
+        }
+    }
 
-    HWND hParent = GetParent(hControl);
-    if (!hParent) return;
+    // 不是Emoji按钮，尝试作为HWND控件处理
+    if (IsWindow(hControl)) {
+        HWND hParent = GetParent(hControl);
+        if (!hParent) return;
 
-    auto it = g_layout_managers.find(hParent);
-    if (it == g_layout_managers.end()) return;
+        auto it = g_layout_managers.find(hParent);
+        if (it == g_layout_managers.end()) return;
 
-    LayoutManager* lm = it->second;
-    LayoutProperties& props = lm->control_props[hControl];
-    props.margin_left = margin_left;
-    props.margin_top = margin_top;
-    props.margin_right = margin_right;
-    props.margin_bottom = margin_bottom;
-    props.dock = (DockPosition)dock_position;
-    props.stretch_horizontal = stretch_horizontal ? true : false;
-    props.stretch_vertical = stretch_vertical ? true : false;
+        LayoutManager* lm = it->second;
+        LayoutProperties& props = lm->control_props[hControl];
+        props.margin_left = margin_left;
+        props.margin_top = margin_top;
+        props.margin_right = margin_right;
+        props.margin_bottom = margin_bottom;
+        props.dock = (DockPosition)dock_position;
+        props.stretch_horizontal = stretch_horizontal ? true : false;
+        props.stretch_vertical = stretch_vertical ? true : false;
+    }
 }
 
 // 将控件添加到布局管理器
 __declspec(dllexport) void __stdcall AddControlToLayout(HWND hParent, HWND hControl) {
-    if (!IsWindow(hParent) || !IsWindow(hControl)) return;
+    if (!IsWindow(hParent)) return;
 
     auto it = g_layout_managers.find(hParent);
     if (it == g_layout_managers.end()) return;
 
     LayoutManager* lm = it->second;
 
-    // 检查是否已添加
-    for (HWND h : lm->control_order) {
-        if (h == hControl) return;
+    // 先检查是否是Emoji按钮ID（优先级高于IsWindow，因为按钮ID可能恰好是有效HWND值）
+    int button_id = (int)(intptr_t)hControl;
+    auto win_it = g_windows.find(hParent);
+    bool is_emoji_button = false;
+    if (win_it != g_windows.end()) {
+        WindowState* ws = win_it->second;
+        for (auto& btn : ws->buttons) {
+            if (btn.id == button_id) { is_emoji_button = true; break; }
+        }
     }
 
-    lm->control_order.push_back(hControl);
-
-    // 如果没有布局属性，添加默认属性
-    if (lm->control_props.find(hControl) == lm->control_props.end()) {
-        lm->control_props[hControl] = LayoutProperties();
+    if (is_emoji_button) {
+        // Emoji按钮
+        // 检查是否已添加
+        for (auto& item : lm->item_order) {
+            if (item.is_button && item.button_id == button_id) return;
+        }
+        LayoutItem item;
+        item.button_id = button_id;
+        item.is_button = true;
+        lm->item_order.push_back(item);
+        if (lm->button_props.find(button_id) == lm->button_props.end()) {
+            lm->button_props[button_id] = LayoutProperties();
+        }
+    } else if (IsWindow(hControl)) {
+        // HWND控件
+        for (HWND h : lm->control_order) {
+            if (h == hControl) return;
+        }
+        lm->control_order.push_back(hControl);
+        if (lm->control_props.find(hControl) == lm->control_props.end()) {
+            lm->control_props[hControl] = LayoutProperties();
+        }
+        // 同步到统一顺序列表
+        LayoutItem item;
+        item.hwnd = hControl;
+        item.is_button = false;
+        lm->item_order.push_back(item);
     }
 }
 
@@ -10739,14 +10868,31 @@ __declspec(dllexport) void __stdcall RemoveControlFromLayout(HWND hParent, HWND 
 
     LayoutManager* lm = it->second;
 
-    // 从顺序列表中移除
-    auto order_it = std::find(lm->control_order.begin(), lm->control_order.end(), hControl);
-    if (order_it != lm->control_order.end()) {
-        lm->control_order.erase(order_it);
+    // 先检查是否是Emoji按钮ID（优先级高于IsWindow）
+    int button_id = (int)(intptr_t)hControl;
+    LayoutItem btn_target;
+    btn_target.button_id = button_id;
+    btn_target.is_button = true;
+    auto btn_it = std::find(lm->item_order.begin(), lm->item_order.end(), btn_target);
+    if (btn_it != lm->item_order.end()) {
+        lm->item_order.erase(btn_it);
+        lm->button_props.erase(button_id);
+        return;
     }
 
-    // 从属性map中移除
-    lm->control_props.erase(hControl);
+    // 不是Emoji按钮，尝试作为HWND控件处理
+    if (IsWindow(hControl)) {
+        auto order_it = std::find(lm->control_order.begin(), lm->control_order.end(), hControl);
+        if (order_it != lm->control_order.end()) {
+            lm->control_order.erase(order_it);
+        }
+        lm->control_props.erase(hControl);
+        LayoutItem target;
+        target.hwnd = hControl;
+        target.is_button = false;
+        auto item_it = std::find(lm->item_order.begin(), lm->item_order.end(), target);
+        if (item_it != lm->item_order.end()) lm->item_order.erase(item_it);
+    }
 }
 
 // 立即重新计算布局
@@ -10774,6 +10920,15 @@ __declspec(dllexport) void __stdcall UpdateLayout(HWND hParent) {
         break;
     default:
         break;
+    }
+
+    // 布局更新后，如果有Emoji按钮，需要触发重绘
+    bool has_buttons = false;
+    for (auto& item : lm->item_order) {
+        if (item.is_button) { has_buttons = true; break; }
+    }
+    if (has_buttons) {
+        InvalidateRect(hParent, nullptr, FALSE);
     }
 }
 

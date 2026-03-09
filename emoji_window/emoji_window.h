@@ -720,6 +720,18 @@ struct LayoutProperties {
     int order = 0;  // 控件在布局中的顺序
 };
 
+// 布局控件项：可以是HWND控件或Emoji按钮ID
+struct LayoutItem {
+    HWND hwnd = nullptr;       // HWND控件句柄（如果是HWND控件）
+    int button_id = 0;         // Emoji按钮ID（如果是Emoji按钮）
+    bool is_button = false;    // true=Emoji按钮, false=HWND控件
+
+    bool operator==(const LayoutItem& other) const {
+        if (is_button != other.is_button) return false;
+        return is_button ? (button_id == other.button_id) : (hwnd == other.hwnd);
+    }
+};
+
 struct LayoutManager {
     HWND parent_hwnd = nullptr;
     LayoutType type = LAYOUT_NONE;
@@ -731,7 +743,10 @@ struct LayoutManager {
     int padding_right = 0;
     int padding_bottom = 0;
     std::map<HWND, LayoutProperties> control_props;
-    std::vector<HWND> control_order;  // 按添加顺序排列的控件列表
+    std::vector<HWND> control_order;  // 按添加顺序排列的HWND控件列表
+    // Emoji按钮布局支持
+    std::vector<LayoutItem> item_order;  // 统一顺序列表（HWND + Emoji按钮）
+    std::map<int, LayoutProperties> button_props;  // Emoji按钮ID -> 布局属性
 };
 
 extern std::map<HWND, LayoutManager*> g_layout_managers;
