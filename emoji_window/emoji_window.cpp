@@ -9561,6 +9561,62 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             int px = GET_X_LPARAM(lparam);
             int py = GET_Y_LPARAM(lparam);
 
+            // --- Vertical scrollbar hit-test ---
+            {
+                int total_rows_h = DataGrid_GetTotalRowsHeight(state);
+                int visible_h = state->height - state->header_height;
+                if (total_rows_h > visible_h && visible_h > 0 && px >= state->width - 12) {
+                    float track_h = (float)visible_h;
+                    float thumb_h = max(20.0f, track_h * visible_h / total_rows_h);
+                    float hdr_h = (float)state->header_height;
+                    int max_scroll = total_rows_h - visible_h;
+                    float thumb_y = hdr_h + (track_h - thumb_h) * state->scroll_y / max_scroll;
+                    if ((float)py >= thumb_y && (float)py <= thumb_y + thumb_h) {
+                        // Click on thumb - start dragging
+                        state->scrollbar_v_dragging = true;
+                        state->scrollbar_drag_offset = (float)py - thumb_y;
+                    } else if ((float)py >= hdr_h) {
+                        // Click on track - jump to position
+                        float ratio = ((float)py - hdr_h - thumb_h * 0.5f) / (track_h - thumb_h);
+                        ratio = max(0.0f, min(1.0f, ratio));
+                        state->scroll_y = (int)(ratio * max_scroll);
+                        state->scrollbar_v_dragging = true;
+                        state->scrollbar_drag_offset = thumb_h * 0.5f;
+                    }
+                    if (state->scrollbar_v_dragging) {
+                        SetCapture(hwnd);
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                        return 0;
+                    }
+                }
+            }
+
+            // --- Horizontal scrollbar hit-test ---
+            {
+                int total_cols_w = DataGrid_GetTotalColumnsWidth(state);
+                if (total_cols_w > state->width && state->width > 0 && py >= state->height - 12) {
+                    float track_w = (float)state->width;
+                    float thumb_w = max(20.0f, track_w * state->width / total_cols_w);
+                    int max_scroll = total_cols_w - state->width;
+                    float thumb_x = (track_w - thumb_w) * state->scroll_x / max_scroll;
+                    if ((float)px >= thumb_x && (float)px <= thumb_x + thumb_w) {
+                        state->scrollbar_h_dragging = true;
+                        state->scrollbar_drag_offset = (float)px - thumb_x;
+                    } else {
+                        float ratio = ((float)px - thumb_w * 0.5f) / (track_w - thumb_w);
+                        ratio = max(0.0f, min(1.0f, ratio));
+                        state->scroll_x = (int)(ratio * max_scroll);
+                        state->scrollbar_h_dragging = true;
+                        state->scrollbar_drag_offset = thumb_w * 0.5f;
+                    }
+                    if (state->scrollbar_h_dragging) {
+                        SetCapture(hwnd);
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                        return 0;
+                    }
+                }
+            }
+
             // Check column resize
             int resize_col = DataGrid_HitTestColumnBorder(state, px, py);
             if (resize_col >= 0) {
@@ -9637,6 +9693,13 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
         }
 
         case WM_LBUTTONUP: {
+            if (state->scrollbar_v_dragging || state->scrollbar_h_dragging) {
+                state->scrollbar_v_dragging = false;
+                state->scrollbar_h_dragging = false;
+                ReleaseCapture();
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
             if (state->resizing_col) {
                 state->resizing_col = false;
                 ReleaseCapture();
@@ -9649,6 +9712,34 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             if (!state->enabled) break;
             int px = GET_X_LPARAM(lparam);
             int py = GET_Y_LPARAM(lparam);
+
+            // Scrollbar dragging
+            if (state->scrollbar_v_dragging) {
+                int total_rows_h = DataGrid_GetTotalRowsHeight(state);
+                int visible_h = state->height - state->header_height;
+                int max_scroll = max(0, total_rows_h - visible_h);
+                float track_h = (float)visible_h;
+                float thumb_h = max(20.0f, track_h * visible_h / total_rows_h);
+                float hdr_h = (float)state->header_height;
+                float new_thumb_y = (float)py - state->scrollbar_drag_offset - hdr_h;
+                float ratio = new_thumb_y / (track_h - thumb_h);
+                ratio = max(0.0f, min(1.0f, ratio));
+                state->scroll_y = (int)(ratio * max_scroll);
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
+            if (state->scrollbar_h_dragging) {
+                int total_cols_w = DataGrid_GetTotalColumnsWidth(state);
+                int max_scroll = max(0, total_cols_w - state->width);
+                float track_w = (float)state->width;
+                float thumb_w = max(20.0f, track_w * state->width / total_cols_w);
+                float new_thumb_x = (float)px - state->scrollbar_drag_offset;
+                float ratio = new_thumb_x / (track_w - thumb_w);
+                ratio = max(0.0f, min(1.0f, ratio));
+                state->scroll_x = (int)(ratio * max_scroll);
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
 
             if (state->resizing_col) {
                 int delta = px - state->resize_start_x;
@@ -9851,6 +9942,7 @@ __declspec(dllexport) HWND __stdcall CreateDataGridView(
     state->hovered_row = -1; state->hovered_col = -1;
     state->scroll_x = 0; state->scroll_y = 0;
     state->resizing_col = false; state->resize_col_index = -1;
+    state->scrollbar_v_dragging = false; state->scrollbar_h_dragging = false; state->scrollbar_drag_offset = 0;
     state->sort_col = -1; state->sort_order = DGSORT_NONE;
     state->freeze_header = true; state->freeze_first_col = false;
     state->header_height = 36;

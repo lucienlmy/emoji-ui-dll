@@ -510,6 +510,11 @@ struct DataGridViewState {
     int resize_start_x;         // 调整起始X坐标
     int resize_start_width;     // 调整起始列宽
 
+    // 滚动条拖拽
+    bool scrollbar_v_dragging;  // 是否正在拖拽纵向滚动条
+    bool scrollbar_h_dragging;  // 是否正在拖拽横向滚动条
+    float scrollbar_drag_offset; // 拖拽起始偏移（鼠标相对thumb顶部）
+
     // 排序
     int sort_col;               // 排序列 (-1=无)
     DataGridSortOrder sort_order; // 排序方向
