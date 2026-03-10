@@ -1,7 +1,7 @@
-# Build outputs (root directory only)
-/x64/
-/Release/
+# Build outputs (all directories)
+x64/
 x86/
+Release/
 Debug/
 *.obj
 *.pdb
