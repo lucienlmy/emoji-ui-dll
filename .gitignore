@@ -1,7 +1,7 @@
-# Build outputs
-x64/
+# Build outputs (root directory only)
+/x64/
+/Release/
 x86/
-Release/
 Debug/
 *.obj
 *.pdb
@@ -24,6 +24,9 @@ ipch/
 *.txt
 *.bat
 
+# Backup files
+*.bak
+
 # Temporary and log files
 *.log
 *.tmp
@@ -42,7 +45,7 @@ Desktop.ini
 
 # 易语言代码
 易语言代码/
-易语言浏览器示例.bak
-易语言完整示例.bak
 
-docs/
+# Documentation and project files (root directory only)
+/docs/
+/CLAUDE.md
