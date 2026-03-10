@@ -40,6 +40,7 @@ int g_next_control_id = 10000;  // 控件ID起始值
 // 从易语言 _窗口1_将被销毁 调用 destroy_window 时不能 PostQuitMessage，
 // 否则易语言自己的消息循环会被误杀。
 static bool g_own_message_loop_running = false;
+static HWND g_message_loop_main_window = nullptr;
 
 // Forward declarations
 LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
@@ -1289,7 +1290,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             // 仅在 run_message_loop 运行时才 PostQuitMessage，
             // 避免从易语言 _窗口1_将被销毁 调用时误杀易语言消息循环
             if (g_own_message_loop_running) {
-                PostQuitMessage(0);
+                if (g_message_loop_main_window) {
+                    if (hwnd == g_message_loop_main_window) {
+                        PostQuitMessage(0);
+                    }
+                } else {
+                    PostQuitMessage(0);
+                }
             }
         }
         return 0;
@@ -1541,6 +1548,10 @@ int __stdcall create_emoji_button_bytes(
 // Set button click callback
 void __stdcall set_button_click_callback(ButtonClickCallback callback) {
     g_button_callback = callback;
+}
+
+void __stdcall set_message_loop_main_window(HWND hwnd) {
+    g_message_loop_main_window = hwnd;
 }
 
 // Set window resize callback

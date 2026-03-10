@@ -802,6 +802,7 @@ extern "C" {
     );
 
     __declspec(dllexport) void __stdcall set_button_click_callback(ButtonClickCallback callback);
+    __declspec(dllexport) void __stdcall set_message_loop_main_window(HWND hwnd);
     __declspec(dllexport) int __stdcall run_message_loop();
     __declspec(dllexport) void __stdcall destroy_window(HWND hwnd);
     __declspec(dllexport) void __stdcall set_window_icon(HWND hwnd, const char* icon_path);
