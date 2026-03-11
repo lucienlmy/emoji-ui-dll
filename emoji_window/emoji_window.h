@@ -35,6 +35,14 @@ typedef void (__stdcall *WindowResizeCallback)(HWND hwnd, int width, int height)
 // hwnd: 被关闭的窗口句柄（此时 HWND 已失效，仅用于识别是哪个窗口）
 typedef void (__stdcall *WindowCloseCallback)(HWND hwnd);
 
+// 菜单项点击回调函数类型 (stdcall 调用约定)
+// menu_id: 顶级菜单ID（如 #菜单_主题设置 / #菜单_测试菜单）
+// item_id: 被点击的菜单项ID（子项ID或顶级ID）
+typedef void (__stdcall *MenuItemClickCallback)(int menu_id, int item_id);
+
+// 前向声明子菜单窗口类
+class SubMenuWindow;
+
 // 编辑框按键回调 (stdcall)：hEdit 句柄, key_code 虚拟键码, key_down 1=按下 0=松开, shift/ctrl/alt 修饰键是否按下(0/1)
 typedef void (__stdcall *EditBoxKeyCallback)(HWND hEdit, int key_code, int key_down, int shift, int ctrl, int alt);
 
@@ -602,6 +610,54 @@ struct WindowState {
     bool titlebar_mouse_tracking = false;
 };
 
+// 菜单项状态
+struct MenuItem {
+    int id;                     // 菜单项ID
+    std::wstring text;          // 显示文本
+    std::wstring shortcut;      // 快捷键文本
+    bool enabled = true;        // 是否启用
+    bool checked = false;       // 是否勾选
+    bool separator = false;     // 是否分隔线
+    std::vector<MenuItem> sub_items; // 子菜单项
+    D2D1_RECT_F bounds = {};    // 菜单项边界（用于命中测试）
+};
+
+// 菜单栏状态
+struct MenuBarState {
+    HWND hwnd;                      // 所属窗口句柄
+    std::vector<MenuItem> items;    // 菜单项列表
+    int hovered_index = -1;         // 当前悬停的菜单索引
+    int opened_index = -1;          // 当前展开的菜单索引
+    int opened_menu_id = 0;         // 当前展开的顶级菜单ID（用于回调传参）
+    bool visible = true;            // 是否可见
+    UINT32 bg_color = 0;            // 背景色（0=默认）
+    UINT32 fg_color = 0;            // 前景色（0=默认）
+    FontStyle font;                 // 字体样式
+    MenuItemClickCallback callback; // 菜单项点击回调
+    SubMenuWindow* submenu = nullptr; // 子菜单窗口
+};
+
+// 弹出菜单状态
+struct PopupMenuState {
+    HWND hwnd = nullptr;            // 弹出菜单窗口句柄
+    HWND owner_hwnd;                // 关联窗口句柄
+    ID2D1HwndRenderTarget* render_target = nullptr; // D2D渲染目标
+    IDWriteFactory* dwrite_factory = nullptr;       // DirectWrite工厂
+    std::vector<MenuItem> items;    // 菜单项列表
+    int hovered_index = -1;         // 当前悬停的菜单索引
+    bool visible = false;           // 是否可见
+    int x = 0;                      // 显示位置X
+    int y = 0;                      // 显示位置Y
+    int width = 0;                  // 菜单宽度
+    int height = 0;                 // 菜单高度
+    int item_height = 0;            // 菜单项高度
+    UINT32 bg_color = 0;            // 背景色（0=默认）
+    UINT32 fg_color = 0;            // 前景色（0=默认）
+    UINT32 hover_color = 0;         // 悬停背景色
+    FontStyle font;                 // 字体样式
+    MenuItemClickCallback callback; // 菜单项点击回调
+};
+
 // Message box button type
 enum MsgBoxButtonType {
     MSGBOX_OK = 0,
@@ -780,6 +836,9 @@ extern std::map<HWND, D2DComboBoxState*> g_d2d_comboboxes;
 extern std::map<HWND, HotKeyState*> g_hotkeys;
 extern std::map<HWND, GroupBoxState*> g_groupboxes;
 extern std::map<HWND, DataGridViewState*> g_datagrids;
+extern std::map<HWND, MenuBarState*> g_menu_bars;
+extern std::map<HWND, PopupMenuState*> g_popup_menus;
+extern std::map<HWND, HWND> g_control_menu_bindings;
 extern ButtonClickCallback g_button_callback;
 extern WindowResizeCallback g_window_resize_callback;
 extern WindowCloseCallback g_window_close_callback;
@@ -905,6 +964,102 @@ extern "C" {
     // 当自绘窗口被关闭（用户点 X 或代码调用 destroy_window）时触发
     __declspec(dllexport) void __stdcall SetWindowCloseCallback(
         WindowCloseCallback callback
+    );
+
+    // ========== 菜单栏 / 右键菜单 ==========
+
+    // 创建菜单栏（绑定到窗口）
+    __declspec(dllexport) HWND __stdcall CreateMenuBar(
+        HWND hWindow
+    );
+
+    // 销毁菜单栏
+    __declspec(dllexport) void __stdcall DestroyMenuBar(
+        HWND hMenuBar
+    );
+
+    // 添加菜单栏项
+    __declspec(dllexport) int __stdcall MenuBarAddItem(
+        HWND hMenuBar,
+        const unsigned char* text_bytes,
+        int text_len,
+        int item_id
+    );
+
+    // 添加菜单栏子项
+    __declspec(dllexport) int __stdcall MenuBarAddSubItem(
+        HWND hMenuBar,
+        int parent_item_id,
+        const unsigned char* text_bytes,
+        int text_len,
+        int item_id
+    );
+
+    // 设置菜单栏位置和大小
+    __declspec(dllexport) void __stdcall SetMenuBarPlacement(
+        HWND hMenuBar,
+        int x, int y, int width, int height
+    );
+
+    // 设置菜单栏回调
+    __declspec(dllexport) void __stdcall SetMenuBarCallback(
+        HWND hMenuBar,
+        MenuItemClickCallback callback
+    );
+
+    // 更新菜单栏子项文本
+    __declspec(dllexport) BOOL __stdcall MenuBarUpdateSubItemText(
+        HWND hMenuBar,
+        int parent_item_id,
+        int item_id,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+
+    // 创建弹出菜单（右键菜单）
+    __declspec(dllexport) HWND __stdcall CreateEmojiPopupMenu(
+        HWND hOwner
+    );
+
+    // 销毁弹出菜单
+    __declspec(dllexport) void __stdcall DestroyEmojiPopupMenu(
+        HWND hPopupMenu
+    );
+
+    // 添加弹出菜单项
+    __declspec(dllexport) int __stdcall PopupMenuAddItem(
+        HWND hPopupMenu,
+        const unsigned char* text_bytes,
+        int text_len,
+        int item_id
+    );
+
+    // 添加弹出菜单子项
+    __declspec(dllexport) int __stdcall PopupMenuAddSubItem(
+        HWND hPopupMenu,
+        int parent_item_id,
+        const unsigned char* text_bytes,
+        int text_len,
+        int item_id
+    );
+
+    // 绑定控件与弹出菜单
+    __declspec(dllexport) void __stdcall BindControlMenu(
+        HWND hControl,
+        HWND hPopupMenu
+    );
+
+    // 显示右键菜单
+    __declspec(dllexport) void __stdcall ShowContextMenu(
+        HWND hPopupMenu,
+        int x,
+        int y
+    );
+
+    // 设置弹出菜单回调
+    __declspec(dllexport) void __stdcall SetPopupMenuCallback(
+        HWND hPopupMenu,
+        MenuItemClickCallback callback
     );
 
     // ========== 编辑框功能 ==========
@@ -2158,7 +2313,9 @@ LRESULT CALLBACK ComboDropDownProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 LRESULT CALLBACK HotKeyProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiButton& button);
+void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenuState* popup);
 void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state);
 void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxState* state);
 void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ProgressBarState* state);

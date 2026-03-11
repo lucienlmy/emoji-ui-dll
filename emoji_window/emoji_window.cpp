@@ -1,4 +1,6 @@
+#include "log.h"
 #include "emoji_window.h"
+#include "submenu_window.h"
 #include <algorithm>
 #include <windowsx.h>  // For GET_X_LPARAM and GET_Y_LPARAM
 #include <set>
@@ -21,6 +23,9 @@ std::map<HWND, HotKeyState*> g_hotkeys;
 std::map<HWND, GroupBoxState*> g_groupboxes;
 std::map<HWND, DataGridViewState*> g_datagrids;
 std::map<HWND, LayoutManager*> g_layout_managers;
+std::map<HWND, MenuBarState*> g_menubars;
+std::map<HWND, PopupMenuState*> g_popup_menus;
+std::map<HWND, HWND> g_control_popup_menu_bindings;  // 控件 → 弹出菜单绑定
 ButtonClickCallback g_button_callback = nullptr;
 WindowResizeCallback g_window_resize_callback = nullptr;
 WindowCloseCallback g_window_close_callback = nullptr;
@@ -442,6 +447,27 @@ static int GetTitleBarOffset(HWND hParent) {
     return 0;
 }
 
+// 获取窗口标题栏图标（用于自绘标题栏）
+static HICON GetWindowTitleBarIcon(HWND hwnd) {
+    // 1. 尝试获取小图标
+    HICON icon = (HICON)SendMessage(hwnd, WM_GETICON, ICON_SMALL, 0);
+    if (icon) return icon;
+
+    // 2. 尝试获取大图标
+    icon = (HICON)SendMessage(hwnd, WM_GETICON, ICON_BIG, 0);
+    if (icon) return icon;
+
+    // 3. 尝试获取窗口类小图标
+    icon = (HICON)GetClassLongPtr(hwnd, GCLP_HICONSM);
+    if (icon) return icon;
+
+    // 4. 尝试获取窗口类大图标
+    icon = (HICON)GetClassLongPtr(hwnd, GCLP_HICON);
+    if (icon) return icon;
+
+    return nullptr;
+}
+
 // 绘制自定义标题栏（D2D彩色emoji支持）
 void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, WindowState* state) {
     if (!state->custom_titlebar) return;
@@ -543,7 +569,8 @@ void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Wind
     close_brush->Release();
     icon_brush->Release();
 
-    HICON htitle_icon = ResolveWindowIcon(state->hwnd);
+    // 1.6 绘制窗口图标（如果存在）
+    HICON htitle_icon = GetWindowTitleBarIcon(state->hwnd);
     float text_left = 10.0f;
     if (htitle_icon) {
         int icon_w = GetSystemMetrics(SM_CXSMICON);
@@ -605,6 +632,243 @@ void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Wind
             fmt->Release();
         }
     }
+}
+
+// 绘制菜单栏
+void DrawMenuBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MenuBarState* menubar) {
+    if (!menubar || !menubar->visible || menubar->items.empty()) return;
+    
+    RECT rc;
+    GetClientRect(menubar->hwnd, &rc);
+    float width = (float)(rc.right - rc.left);
+    
+    // 菜单栏在标题栏下方
+    float menu_y = 0.0f;
+    auto win_it = g_windows.find(menubar->hwnd);
+    if (win_it != g_windows.end() && win_it->second->custom_titlebar) {
+        menu_y = (float)win_it->second->titlebar_height;
+    }
+    
+    float menu_h = 30.0f; // 固定高度
+    
+    // 绘制菜单栏背景
+    UINT32 bg = menubar->bg_color ? menubar->bg_color : ThemeColor_Background();
+    ID2D1SolidColorBrush* bg_brush = nullptr;
+    rt->CreateSolidColorBrush(D2D1::ColorF(
+        ((bg >> 16) & 0xFF) / 255.0f,
+        ((bg >> 8) & 0xFF) / 255.0f,
+        (bg & 0xFF) / 255.0f,
+        1.0f), &bg_brush);
+    rt->FillRectangle(D2D1::RectF(0, menu_y, width, menu_y + menu_h), bg_brush);
+    bg_brush->Release();
+    
+    // 创建文本格式
+    IDWriteTextFormat* fmt = nullptr;
+    factory->CreateTextFormat(
+        menubar->font.font_name.empty() ? L"Segoe UI Emoji" : menubar->font.font_name.c_str(),
+        nullptr,
+        menubar->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        menubar->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        menubar->font.font_size > 0 ? (float)menubar->font.font_size : 14.0f,
+        L"zh-CN",
+        &fmt);
+    
+    if (!fmt) return;
+    
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    
+    // 绘制菜单项
+    float x = 10.0f;
+    for (size_t i = 0; i < menubar->items.size(); i++) {
+        MenuItem& item = menubar->items[i];
+        
+        // 计算文本宽度
+        IDWriteTextLayout* layout = nullptr;
+        factory->CreateTextLayout(
+            item.text.c_str(),
+            (UINT32)item.text.length(),
+            fmt,
+            1000.0f,
+            menu_h,
+            &layout);
+        
+        if (!layout) continue;
+        
+        DWRITE_TEXT_METRICS metrics;
+        layout->GetMetrics(&metrics);
+        float item_width = metrics.width + 20.0f; // 左右各10px padding
+        
+        // 保存边界用于命中测试
+        item.bounds = D2D1::RectF(x, menu_y, x + item_width, menu_y + menu_h);
+        
+        // 绘制悬停/激活背景
+        if ((int)i == menubar->hovered_index || (int)i == menubar->opened_index) {
+            UINT32 hover_bg = ThemeColor_BackgroundLight();
+            ID2D1SolidColorBrush* hover_brush = nullptr;
+            rt->CreateSolidColorBrush(D2D1::ColorF(
+                ((hover_bg >> 16) & 0xFF) / 255.0f,
+                ((hover_bg >> 8) & 0xFF) / 255.0f,
+                (hover_bg & 0xFF) / 255.0f,
+                1.0f), &hover_brush);
+            rt->FillRectangle(item.bounds, hover_brush);
+            hover_brush->Release();
+        }
+        
+        // 绘制文本
+        UINT32 fg = item.enabled ? (menubar->fg_color ? menubar->fg_color : ThemeColor_TextPrimary()) : ThemeColor_TextPlaceholder();
+        ID2D1SolidColorBrush* text_brush = nullptr;
+        rt->CreateSolidColorBrush(D2D1::ColorF(
+            ((fg >> 16) & 0xFF) / 255.0f,
+            ((fg >> 8) & 0xFF) / 255.0f,
+            (fg & 0xFF) / 255.0f,
+            1.0f), &text_brush);
+        
+        D2D1_RECT_F text_rect = D2D1::RectF(x + 10.0f, menu_y, x + item_width - 10.0f, menu_y + menu_h);
+        rt->DrawText(
+            item.text.c_str(),
+            (UINT32)item.text.length(),
+            fmt,
+            text_rect,
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        
+        text_brush->Release();
+        layout->Release();
+        
+        x += item_width;
+    }
+    
+    fmt->Release();
+}
+
+// 绘制弹出菜单
+void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenuState* popup) {
+    if (!popup || popup->items.empty()) {
+        char debug_msg[256];
+        sprintf_s(debug_msg, "DrawPopupMenu: popup=%p, items.size()=%zu\n", 
+            popup, popup ? popup->items.size() : 0);
+        OutputDebugStringA(debug_msg);
+        return;
+    }
+    
+    OutputDebugStringA("DrawPopupMenu: Starting to draw menu items\n");
+    
+    // 创建文本格式
+    IDWriteTextFormat* fmt = nullptr;
+    factory->CreateTextFormat(
+        L"Segoe UI Emoji",
+        nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        14.0f,
+        L"zh-CN",
+        &fmt);
+    
+    if (!fmt) return;
+    
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    
+    // 垂直布局菜单项
+    float y = 0.0f;
+    float item_height = 32.0f;
+    float separator_height = 8.0f;
+    
+    for (size_t i = 0; i < popup->items.size(); i++) {
+        MenuItem& item = popup->items[i];
+        
+        if (item.separator) {
+            // 绘制分隔符
+            float sep_y = y + separator_height / 2.0f;
+            UINT32 border_color = ThemeColor_BorderLight();
+            ID2D1SolidColorBrush* sep_brush = nullptr;
+            rt->CreateSolidColorBrush(D2D1::ColorF(
+                ((border_color >> 16) & 0xFF) / 255.0f,
+                ((border_color >> 8) & 0xFF) / 255.0f,
+                (border_color & 0xFF) / 255.0f,
+                1.0f), &sep_brush);
+            rt->DrawLine(
+                D2D1::Point2F(10.0f, sep_y),
+                D2D1::Point2F((float)popup->width - 10.0f, sep_y),
+                sep_brush,
+                1.0f);
+            sep_brush->Release();
+            
+            item.bounds = D2D1::RectF(0, y, (float)popup->width, y + separator_height);
+            y += separator_height;
+        } else {
+            // 保存边界
+            item.bounds = D2D1::RectF(0, y, (float)popup->width, y + item_height);
+            
+            // 绘制悬停背景
+            if ((int)i == popup->hovered_index) {
+                UINT32 hover_bg = ThemeColor_BackgroundLight();
+                ID2D1SolidColorBrush* hover_brush = nullptr;
+                rt->CreateSolidColorBrush(D2D1::ColorF(
+                    ((hover_bg >> 16) & 0xFF) / 255.0f,
+                    ((hover_bg >> 8) & 0xFF) / 255.0f,
+                    (hover_bg & 0xFF) / 255.0f,
+                    1.0f), &hover_brush);
+                rt->FillRectangle(item.bounds, hover_brush);
+                hover_brush->Release();
+            }
+            
+            // 绘制文本
+            UINT32 fg = item.enabled ? ThemeColor_TextPrimary() : ThemeColor_TextPlaceholder();
+            ID2D1SolidColorBrush* text_brush = nullptr;
+            rt->CreateSolidColorBrush(D2D1::ColorF(
+                ((fg >> 16) & 0xFF) / 255.0f,
+                ((fg >> 8) & 0xFF) / 255.0f,
+                (fg & 0xFF) / 255.0f,
+                1.0f), &text_brush);
+            
+            D2D1_RECT_F text_rect = D2D1::RectF(20.0f, y, (float)popup->width - 20.0f, y + item_height);
+            rt->DrawText(
+                item.text.c_str(),
+                (UINT32)item.text.length(),
+                fmt,
+                text_rect,
+                text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            
+            text_brush->Release();
+            
+            // 如果有子菜单,绘制箭头
+            if (!item.sub_items.empty()) {
+                // 绘制右箭头 ">"
+                D2D1_RECT_F arrow_rect = D2D1::RectF((float)popup->width - 30.0f, y, (float)popup->width - 10.0f, y + item_height);
+                ID2D1SolidColorBrush* arrow_brush = nullptr;
+                rt->CreateSolidColorBrush(D2D1::ColorF(
+                    ((fg >> 16) & 0xFF) / 255.0f,
+                    ((fg >> 8) & 0xFF) / 255.0f,
+                    (fg & 0xFF) / 255.0f,
+                    1.0f), &arrow_brush);
+                rt->DrawText(L">", 1, fmt, arrow_rect, arrow_brush);
+                arrow_brush->Release();
+            }
+            
+            y += item_height;
+        }
+    }
+    
+    // 绘制边框
+    UINT32 border_color = ThemeColor_BorderBase();
+    ID2D1SolidColorBrush* border_brush = nullptr;
+    rt->CreateSolidColorBrush(D2D1::ColorF(
+        ((border_color >> 16) & 0xFF) / 255.0f,
+        ((border_color >> 8) & 0xFF) / 255.0f,
+        (border_color & 0xFF) / 255.0f,
+        1.0f), &border_brush);
+    rt->DrawRectangle(
+        D2D1::RectF(0, 0, (float)popup->width, y),
+        border_brush,
+        1.0f);
+    border_brush->Release();
+    
+    fmt->Release();
 }
 
 // Draw button (Element UI style - supports both main window buttons and message box buttons)
@@ -1081,6 +1345,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             // 绘制自定义标题栏（彩色emoji）
             DrawWindowTitleBar(state->render_target, state->dwrite_factory, state);
 
+            // 绘制菜单栏
+            auto menu_it = g_menubars.find(hwnd);
+            if (menu_it != g_menubars.end()) {
+                DrawMenuBar(state->render_target, state->dwrite_factory, menu_it->second);
+            }
+
             for (const auto& button : state->buttons) {
                 DrawButton(state->render_target, state->dwrite_factory, button);
             }
@@ -1099,9 +1369,90 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     }
 
     case WM_LBUTTONDOWN: {
+        WriteLog("WM_LBUTTONDOWN: hwnd=%p, state=%p", hwnd, state);
         if (state) {
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
+            WriteLog("WM_LBUTTONDOWN: x=%d, y=%d", x, y);
+
+            // 顶栏菜单 bounds 为 DIP（D2D 绘制），鼠标为像素，需换算为 DIP 再命中
+            UINT dpi = GetDpiForWindow(hwnd);
+            if (dpi == 0) dpi = 96;
+            float scale = 96.0f / (float)dpi;
+            float fx = (float)x * scale;
+            float fy = (float)y * scale;
+
+            // 检查菜单栏点击
+            auto menu_it = g_menubars.find(hwnd);
+            WriteLog("WM_LBUTTONDOWN: g_menubars.size()=%zu", g_menubars.size());
+            if (menu_it != g_menubars.end()) {
+                MenuBarState* menubar = menu_it->second;
+                WriteLog("WM_LBUTTONDOWN: menubar found, items.size()=%zu", menubar->items.size());
+                
+                for (size_t i = 0; i < menubar->items.size(); i++) {
+                    const D2D1_RECT_F& bounds = menubar->items[i].bounds;
+                    WriteLog("WM_LBUTTONDOWN: item[%zu] bounds=(%.1f,%.1f)-(%.1f,%.1f)", 
+                            i, bounds.left, bounds.top, bounds.right, bounds.bottom);
+                    if (fx >= bounds.left && fx <= bounds.right && 
+                        fy >= bounds.top && fy <= bounds.bottom) {
+                        MenuItem& item = menubar->items[i];
+                        WriteLog("WM_LBUTTONDOWN: item clicked, id=%d, enabled=%d, sub_items.size()=%zu", 
+                                item.id, item.enabled, item.sub_items.size());
+                        if (item.enabled) {
+                            // ✅ 实现子菜单弹出功能
+                            if (!item.sub_items.empty()) {
+                                // 有子菜单，弹出子菜单
+                                if (!menubar->submenu) {
+                                    menubar->submenu = new SubMenuWindow();
+                                    menubar->submenu->Create(hwnd, 0);
+                                }
+                                
+                                // 计算子菜单显示位置：bounds 为 DIP，ClientToScreen 需要客户区像素
+                                float scaleToPx = (float)dpi / 96.0f;
+                                POINT pt = {
+                                    (LONG)(bounds.left * scaleToPx),
+                                    (LONG)(bounds.bottom * scaleToPx)
+                                };
+                                ClientToScreen(hwnd, &pt);
+                                
+                                // 显示子菜单
+                                menubar->opened_menu_id = item.id;
+                                menubar->submenu->Show(
+                                    item.sub_items,
+                                    pt.x,
+                                    pt.y,
+                                    [](int /*menu_id*/, int item_id) {
+                                        // 查找对应的菜单栏（当前有可见子菜单的那个）
+                                        for (auto& pair : g_menubars) {
+                                            MenuBarState* mb = pair.second;
+                                            if (mb->submenu && mb->submenu->IsVisible()) {
+                                                if (mb->callback) {
+                                                    // 回调参数：menu_id=顶级菜单ID，item_id=子菜单项ID
+                                                    mb->callback(mb->opened_menu_id, item_id);
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    });
+                                
+                                menubar->opened_index = (int)i;
+                            } else {
+                                // 没有子菜单，直接触发回调（顶级菜单本身被点击）
+                                WriteLog("WM_LBUTTONDOWN: calling callback, menubar->callback=%p, item.id=%d", menubar->callback, item.id);
+                                if (menubar->callback) {
+                                    // 回调参数：menu_id=顶级菜单ID，item_id=顶级菜单ID
+                                    menubar->callback(item.id, item.id);
+                                    WriteLog("WM_LBUTTONDOWN: callback called successfully");
+                                } else {
+                                    WriteLog("WM_LBUTTONDOWN: callback is NULL!");
+                                }
+                            }
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        }
+                        return 0;
+                    }
+                }
+            }
 
             for (auto& button : state->buttons) {
                 if (button.ContainsPoint(x, y)) {
@@ -1141,6 +1492,34 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
             bool needs_redraw = false;
+
+            // 顶栏菜单 bounds 为 DIP，鼠标为像素，换算为 DIP 再悬停命中
+            UINT dpi = GetDpiForWindow(hwnd);
+            if (dpi == 0) dpi = 96;
+            float scale = 96.0f / (float)dpi;
+            float fx = (float)x * scale;
+            float fy = (float)y * scale;
+
+            // 检查菜单栏悬停
+            auto menu_it = g_menubars.find(hwnd);
+            if (menu_it != g_menubars.end()) {
+                MenuBarState* menubar = menu_it->second;
+                int old_hovered = menubar->hovered_index;
+                menubar->hovered_index = -1;
+                
+                for (size_t i = 0; i < menubar->items.size(); i++) {
+                    const D2D1_RECT_F& bounds = menubar->items[i].bounds;
+                    if (fx >= bounds.left && fx <= bounds.right && 
+                        fy >= bounds.top && fy <= bounds.bottom) {
+                        menubar->hovered_index = (int)i;
+                        break;
+                    }
+                }
+                
+                if (old_hovered != menubar->hovered_index) {
+                    needs_redraw = true;
+                }
+            }
 
             for (auto& button : state->buttons) {
                 bool hovered = button.ContainsPoint(x, y);
@@ -1182,6 +1561,79 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
         }
         return 0;
+    }
+
+    case WM_SYSKEYDOWN: {
+        // 处理Alt键激活菜单栏
+        if (wparam == VK_MENU) {
+            auto menu_it = g_menubars.find(hwnd);
+            if (menu_it != g_menubars.end()) {
+                MenuBarState* menubar = menu_it->second;
+                if (!menubar->items.empty()) {
+                    // 激活第一个菜单项
+                    menubar->hovered_index = 0;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+            }
+        }
+        break;
+    }
+
+    case WM_KEYDOWN: {
+        auto menu_it = g_menubars.find(hwnd);
+        if (menu_it != g_menubars.end()) {
+            MenuBarState* menubar = menu_it->second;
+            
+            // 如果菜单栏有激活项,处理方向键
+            if (menubar->hovered_index >= 0) {
+                if (wparam == VK_LEFT) {
+                    // 向左切换
+                    menubar->hovered_index--;
+                    if (menubar->hovered_index < 0) {
+                        menubar->hovered_index = (int)menubar->items.size() - 1;
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+                else if (wparam == VK_RIGHT) {
+                    // 向右切换
+                    menubar->hovered_index++;
+                    if (menubar->hovered_index >= (int)menubar->items.size()) {
+                        menubar->hovered_index = 0;
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+                else if (wparam == VK_RETURN || wparam == VK_SPACE) {
+                    // 触发当前选中项
+                    if (menubar->hovered_index >= 0 && menubar->hovered_index < (int)menubar->items.size()) {
+                        MenuItem& item = menubar->items[menubar->hovered_index];
+                        if (item.enabled && menubar->callback) {
+                            menubar->callback(0, item.id);
+                        }
+                    }
+                    return 0;
+                }
+                else if (wparam == VK_ESCAPE) {
+                    // 取消菜单激活
+                    menubar->hovered_index = -1;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+            }
+            
+            // Shift+F10 或 VK_APPS 触发右键菜单
+            if (wparam == VK_F10 && (GetKeyState(VK_SHIFT) & 0x8000)) {
+                // TODO: 显示右键菜单
+                return 0;
+            }
+            if (wparam == VK_APPS) {
+                // TODO: 显示右键菜单
+                return 0;
+            }
+        }
+        break;
     }
 
     case WM_SIZE: {
@@ -1374,14 +1826,22 @@ HWND __stdcall create_window(const char* title, int width, int height) {
     GetClientRect(hwnd, &rc);
 
     ID2D1HwndRenderTarget* render_target = nullptr;
-    g_d2d_factory->CreateHwndRenderTarget(
-        D2D1::RenderTargetProperties(),
-        D2D1::HwndRenderTargetProperties(
-            hwnd,
-            D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top)
-        ),
-        &render_target
-    );
+    if (g_d2d_factory) {
+        HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(),
+            D2D1::HwndRenderTargetProperties(
+                hwnd,
+                D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top)
+            ),
+            &render_target
+        );
+        if (SUCCEEDED(hr) && render_target) {
+            // 使用窗口当前 DPI 作为渲染 DPI，保证坐标与客户区像素一致
+            UINT dpi = GetDpiForWindow(hwnd);
+            float fdpi = dpi > 0 ? (float)dpi : 96.0f;
+            render_target->SetDpi(fdpi, fdpi);
+        }
+    }
 
     auto state_it = g_windows.find(hwnd);
     if (state_it == g_windows.end()) return nullptr;
@@ -1959,6 +2419,242 @@ LRESULT CALLBACK MsgBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             CloseMessageBox(hwnd, false);
         }
         return 0;
+    }
+
+    return DefWindowProc(hwnd, msg, wparam, lparam);
+}
+
+// ========== 弹出菜单窗口过程 ==========
+LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    PopupMenuState* state = nullptr;
+    
+    if (msg == WM_CREATE) {
+        // 从 CREATESTRUCT 中获取 lpParam（即 state 指针）
+        CREATESTRUCT* cs = (CREATESTRUCT*)lparam;
+        state = (PopupMenuState*)cs->lpCreateParams;
+        
+        // 将 state 存储到窗口数据中
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)state);
+        
+        // 同时添加到全局映射
+        if (state) {
+            g_popup_menus[hwnd] = state;
+        }
+    } else {
+        // 从窗口数据中获取 state
+        state = (PopupMenuState*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    }
+
+    switch (msg) {
+    case WM_CREATE: {
+        FILE* log = nullptr;
+        fopen_s(&log, "C:\\popup_menu_debug.txt", "a");
+        if (log) {
+            fprintf(log, "WM_CREATE: hwnd=%p, state=%p\n", hwnd, state);
+            fclose(log);
+        }
+        
+        // 初始化D2D渲染目标
+        if (state && !state->render_target) {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            
+            D2D1_SIZE_U size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
+            D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+            D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(hwnd, size);
+            
+            if (g_d2d_factory) {
+                HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(props, hwndProps, &state->render_target);
+                
+                FILE* log2 = nullptr;
+                fopen_s(&log2, "C:\\popup_menu_debug.txt", "a");
+                if (log2) {
+                    fprintf(log2, "CreateHwndRenderTarget result: hr=0x%08X, render_target=%p\n", 
+                        hr, state->render_target);
+                    fclose(log2);
+                }
+            } else {
+                FILE* log3 = nullptr;
+                fopen_s(&log3, "C:\\popup_menu_debug.txt", "a");
+                if (log3) {
+                    fprintf(log3, "ERROR: g_d2d_factory is NULL\n");
+                    fclose(log3);
+                }
+            }
+            
+            if (g_dwrite_factory) {
+                state->dwrite_factory = g_dwrite_factory;
+                state->dwrite_factory->AddRef();
+            }
+        }
+        return 0;
+    }
+
+    case WM_PAINT: {
+        if (state && state->render_target) {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+
+            char debug_msg[256];
+            sprintf_s(debug_msg, "WM_PAINT: state=%p, items.size()=%zu\n", state, state->items.size());
+            OutputDebugStringA(debug_msg);
+
+            state->render_target->BeginDraw();
+            
+            // 清除背景
+            UINT32 bg = ThemeColor_Background();
+            state->render_target->Clear(D2D1::ColorF(
+                ((bg >> 16) & 0xFF) / 255.0f,
+                ((bg >> 8) & 0xFF) / 255.0f,
+                (bg & 0xFF) / 255.0f,
+                1.0f));
+            
+            // 绘制菜单项
+            DrawPopupMenu(state->render_target, state->dwrite_factory, state);
+            
+            state->render_target->EndDraw();
+            EndPaint(hwnd, &ps);
+        } else {
+            char debug_msg[256];
+            sprintf_s(debug_msg, "WM_PAINT: state=%p, render_target=%p\n", 
+                state, state ? state->render_target : nullptr);
+            OutputDebugStringA(debug_msg);
+        }
+        return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+        if (state) {
+            int x = LOWORD(lparam);
+            int y = HIWORD(lparam);
+            int old_hovered = state->hovered_index;
+            state->hovered_index = -1;
+            
+            float fx = (float)x;
+            float fy = (float)y;
+            for (size_t i = 0; i < state->items.size(); i++) {
+                const D2D1_RECT_F& bounds = state->items[i].bounds;
+                if (fx >= bounds.left && fx <= bounds.right && 
+                    fy >= bounds.top && fy <= bounds.bottom) {
+                    state->hovered_index = (int)i;
+                    break;
+                }
+            }
+            
+            if (old_hovered != state->hovered_index) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONDOWN: {
+        if (state) {
+            int x = LOWORD(lparam);
+            int y = HIWORD(lparam);
+            float fx = (float)x;
+            float fy = (float)y;
+            
+            for (size_t i = 0; i < state->items.size(); i++) {
+                const D2D1_RECT_F& bounds = state->items[i].bounds;
+                if (fx >= bounds.left && fx <= bounds.right && 
+                    fy >= bounds.top && fy <= bounds.bottom) {
+                    MenuItem& item = state->items[i];
+                    if (item.enabled && !item.separator) {
+                        // 触发回调
+                        if (state->callback) {
+                            state->callback(0, item.id);
+                        }
+                        // 关闭菜单
+                        DestroyWindow(hwnd);
+                    }
+                    return 0;
+                }
+            }
+        }
+        return 0;
+    }
+
+    case WM_KEYDOWN: {
+        if (state) {
+            if (wparam == VK_UP) {
+                // 向上切换
+                int old_index = state->hovered_index;
+                do {
+                    state->hovered_index--;
+                    if (state->hovered_index < 0) {
+                        state->hovered_index = (int)state->items.size() - 1;
+                    }
+                    // 跳过分隔符
+                    if (state->hovered_index == old_index) break; // 防止死循环
+                } while (state->hovered_index >= 0 && 
+                         state->hovered_index < (int)state->items.size() &&
+                         state->items[state->hovered_index].separator);
+                
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            else if (wparam == VK_DOWN) {
+                // 向下切换
+                int old_index = state->hovered_index;
+                do {
+                    state->hovered_index++;
+                    if (state->hovered_index >= (int)state->items.size()) {
+                        state->hovered_index = 0;
+                    }
+                    // 跳过分隔符
+                    if (state->hovered_index == old_index) break; // 防止死循环
+                } while (state->hovered_index >= 0 && 
+                         state->hovered_index < (int)state->items.size() &&
+                         state->items[state->hovered_index].separator);
+                
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            else if (wparam == VK_RETURN || wparam == VK_SPACE) {
+                // 触发当前选中项
+                if (state->hovered_index >= 0 && state->hovered_index < (int)state->items.size()) {
+                    MenuItem& item = state->items[state->hovered_index];
+                    if (item.enabled && !item.separator) {
+                        if (state->callback) {
+                            state->callback(0, item.id);
+                        }
+                        DestroyWindow(hwnd);
+                    }
+                }
+                return 0;
+            }
+            else if (wparam == VK_ESCAPE) {
+                // 关闭菜单
+                DestroyWindow(hwnd);
+                return 0;
+            }
+        }
+        break;
+    }
+
+    case WM_KILLFOCUS: {
+        // 失去焦点时关闭菜单
+        DestroyWindow(hwnd);
+        return 0;
+    }
+
+    case WM_DESTROY: {
+        // 清理资源
+        if (state) {
+            if (state->render_target) {
+                state->render_target->Release();
+                state->render_target = nullptr;
+            }
+            if (state->dwrite_factory) {
+                state->dwrite_factory->Release();
+                state->dwrite_factory = nullptr;
+            }
+            delete state;
+            g_popup_menus.erase(hwnd);
+        }
+        return 0;
+    }
     }
 
     return DefWindowProc(hwnd, msg, wparam, lparam);
@@ -12429,3 +13125,521 @@ __declspec(dllexport) void __stdcall SetThemeChangedCallback(ThemeChangedCallbac
 }
 
 } // extern "C"
+
+// ========== 菜单系统实现 ==========
+
+// 辅助函数：查找菜单项
+static MenuItem* FindMenuItem(std::vector<MenuItem>& items, int item_id) {
+    for (auto& item : items) {
+        if (item.id == item_id) return &item;
+        if (!item.sub_items.empty()) {
+            MenuItem* found = FindMenuItem(item.sub_items, item_id);
+            if (found) return found;
+        }
+    }
+    return nullptr;
+}
+
+// 辅助函数：计算菜单项文本宽度
+static float CalculateMenuItemWidth(IDWriteFactory* factory, const std::wstring& text, const FontStyle& font) {
+    if (text.empty()) return 0.0f;
+    
+    IDWriteTextFormat* fmt = nullptr;
+    factory->CreateTextFormat(
+        font.font_name.c_str(),
+        nullptr,
+        font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        (float)font.font_size,
+        L"zh-CN",
+        &fmt
+    );
+    
+    if (!fmt) return 0.0f;
+    
+    IDWriteTextLayout* layout = nullptr;
+    factory->CreateTextLayout(
+        text.c_str(),
+        (UINT32)text.length(),
+        fmt,
+        10000.0f,
+        100.0f,
+        &layout
+    );
+    
+    float width = 0.0f;
+    if (layout) {
+        DWRITE_TEXT_METRICS metrics;
+        layout->GetMetrics(&metrics);
+        width = metrics.width;
+        layout->Release();
+    }
+    
+    fmt->Release();
+    return width;
+}
+
+// 创建菜单栏
+__declspec(dllexport) HWND __stdcall CreateMenuBar(HWND hWindow) {
+    WriteLog("CreateMenuBar: hWindow=%p", hWindow);
+    if (!hWindow) {
+        WriteLog("CreateMenuBar: hWindow is NULL!");
+        return nullptr;
+    }
+    
+    auto it = g_windows.find(hWindow);
+    if (it == g_windows.end()) {
+        WriteLog("CreateMenuBar: window not found in g_windows!");
+        return nullptr;
+    }
+    
+    MenuBarState* state = new MenuBarState();
+    state->hwnd = hWindow;
+    state->visible = true;
+    state->bg_color = 0;
+    state->font.font_name = L"Segoe UI Emoji";
+    state->font.font_size = 14;
+    state->font.bold = false;
+    state->font.italic = false;
+    state->font.underline = false;
+    state->callback = nullptr;
+    
+    // 使用窗口句柄作为菜单栏标识
+    g_menubars[hWindow] = state;
+    WriteLog("CreateMenuBar: menubar created, g_menubars.size()=%zu", g_menubars.size());
+    
+    // 触发窗口重绘
+    InvalidateRect(hWindow, NULL, FALSE);
+    
+    return hWindow;
+}
+
+// 销毁菜单栏
+__declspec(dllexport) void __stdcall DestroyMenuBar(HWND hMenuBar) {
+    auto it = g_menubars.find(hMenuBar);
+    if (it != g_menubars.end()) {
+        MenuBarState* menubar = it->second;
+        
+        // 清理子菜单窗口
+        if (menubar->submenu) {
+            delete menubar->submenu;
+            menubar->submenu = nullptr;
+        }
+        
+        delete menubar;
+        g_menubars.erase(it);
+        InvalidateRect(hMenuBar, NULL, FALSE);
+    }
+}
+
+// 添加菜单栏项
+__declspec(dllexport) int __stdcall MenuBarAddItem(
+    HWND hMenuBar,
+    const unsigned char* text_bytes,
+    int text_len,
+    int item_id
+) {
+    auto it = g_menubars.find(hMenuBar);
+    if (it == g_menubars.end()) return -1;
+    
+    MenuBarState* state = it->second;
+    
+    MenuItem item;
+    item.id = item_id;
+    item.text = Utf8ToWide(text_bytes, text_len);
+    item.enabled = true;
+    item.checked = false;
+    item.separator = false;
+    
+    state->items.push_back(item);
+    InvalidateRect(hMenuBar, NULL, FALSE);
+    
+    return (int)state->items.size() - 1;
+}
+
+// 添加菜单栏子项
+__declspec(dllexport) int __stdcall MenuBarAddSubItem(
+    HWND hMenuBar,
+    int parent_item_id,
+    const unsigned char* text_bytes,
+    int text_len,
+    int item_id
+) {
+    WriteLog("MenuBarAddSubItem: hMenuBar=%p, parent_item_id=%d, item_id=%d", hMenuBar, parent_item_id, item_id);
+    auto it = g_menubars.find(hMenuBar);
+    if (it == g_menubars.end()) {
+        WriteLog("MenuBarAddSubItem: menubar not found!");
+        return -1;
+    }
+    
+    MenuBarState* state = it->second;
+    MenuItem* parent = FindMenuItem(state->items, parent_item_id);
+    if (!parent) {
+        WriteLog("MenuBarAddSubItem: parent item not found!");
+        return -1;
+    }
+    
+    MenuItem item;
+    item.id = item_id;
+    
+    // 检查是否为分隔符（item_id == -1 且 text_bytes == 0 或 text_len == 0）
+    if (item_id == -1 && (text_bytes == nullptr || text_len == 0)) {
+        item.separator = true;
+        item.text = L"";
+        item.enabled = false;
+        item.checked = false;
+    } else {
+        item.separator = false;
+        item.text = Utf8ToWide(text_bytes, text_len);
+        item.enabled = true;
+        item.checked = false;
+    }
+    
+    parent->sub_items.push_back(item);
+    WriteLog("MenuBarAddSubItem: sub_item added, parent->sub_items.size()=%zu", parent->sub_items.size());
+    InvalidateRect(hMenuBar, NULL, FALSE);
+    
+    return (int)parent->sub_items.size() - 1;
+}
+
+// 设置菜单栏位置和大小
+__declspec(dllexport) void __stdcall SetMenuBarPlacement(
+    HWND hMenuBar,
+    int x, int y, int width, int height
+) {
+    // 菜单栏位置由窗口自动管理，此函数预留用于未来扩展
+    InvalidateRect(hMenuBar, NULL, FALSE);
+}
+
+// 设置菜单栏回调
+__declspec(dllexport) void __stdcall SetMenuBarCallback(
+    HWND hMenuBar,
+    MenuItemClickCallback callback
+) {
+    WriteLog("SetMenuBarCallback: hMenuBar=%p, callback=%p", hMenuBar, callback);
+    auto it = g_menubars.find(hMenuBar);
+    if (it != g_menubars.end()) {
+        it->second->callback = callback;
+        WriteLog("SetMenuBarCallback: callback set successfully");
+    } else {
+        WriteLog("SetMenuBarCallback: menubar not found!");
+    }
+}
+
+// 更新菜单栏子项文本
+__declspec(dllexport) BOOL __stdcall MenuBarUpdateSubItemText(
+    HWND hMenuBar,
+    int parent_item_id,
+    int item_id,
+    const unsigned char* text_bytes,
+    int text_len
+) {
+    WriteLog("MenuBarUpdateSubItemText: hMenuBar=%p, parent_item_id=%d, item_id=%d, text_len=%d",
+             hMenuBar, parent_item_id, item_id, text_len);
+
+    auto it = g_menubars.find(hMenuBar);
+    if (it == g_menubars.end()) {
+        WriteLog("MenuBarUpdateSubItemText: menubar not found!");
+        return FALSE;
+    }
+
+    MenuBarState* state = it->second;
+    if (!state) {
+        WriteLog("MenuBarUpdateSubItemText: state is NULL!");
+        return FALSE;
+    }
+
+    // 查找父菜单项
+    MenuItem* parent = FindMenuItem(state->items, parent_item_id);
+    if (!parent) {
+        WriteLog("MenuBarUpdateSubItemText: parent item not found!");
+        return FALSE;
+    }
+
+    // 在父项的子项中查找目标 item_id
+    for (auto& sub : parent->sub_items) {
+        if (sub.id == item_id) {
+            sub.text = Utf8ToWide(text_bytes, text_len);
+            WriteLog("MenuBarUpdateSubItemText: text updated successfully");
+            InvalidateRect(hMenuBar, NULL, FALSE);
+            return TRUE;
+        }
+    }
+
+    WriteLog("MenuBarUpdateSubItemText: sub item not found!");
+    return FALSE;
+}
+
+// 创建弹出菜单
+__declspec(dllexport) HWND __stdcall CreateEmojiPopupMenu(HWND hOwner) {
+    if (!hOwner) return nullptr;
+    
+    PopupMenuState* state = new PopupMenuState();
+    state->owner_hwnd = hOwner;
+    state->visible = false;
+    state->hover_color = 0;
+    state->item_height = 32;
+    state->callback = nullptr;
+    
+    // 生成唯一句柄（使用指针地址）
+    HWND hPopupMenu = (HWND)state;
+    g_popup_menus[hPopupMenu] = state;
+    
+    return hPopupMenu;
+}
+
+// 销毁弹出菜单
+__declspec(dllexport) void __stdcall DestroyEmojiPopupMenu(HWND hPopupMenu) {
+    auto it = g_popup_menus.find(hPopupMenu);
+    if (it != g_popup_menus.end()) {
+        delete it->second;
+        g_popup_menus.erase(it);
+    }
+}
+
+// 添加弹出菜单项
+__declspec(dllexport) int __stdcall PopupMenuAddItem(
+    HWND hPopupMenu,
+    const unsigned char* text_bytes,
+    int text_len,
+    int item_id
+) {
+    // 写入日志文件
+    FILE* log = nullptr;
+    fopen_s(&log, "C:\\popup_menu_debug.txt", "a");
+    if (log) {
+        fprintf(log, "PopupMenuAddItem called: hPopupMenu=%p, text_len=%d, item_id=%d\n", 
+            hPopupMenu, text_len, item_id);
+        fclose(log);
+    }
+    
+    auto it = g_popup_menus.find(hPopupMenu);
+    if (it == g_popup_menus.end()) {
+        FILE* log2 = nullptr;
+        fopen_s(&log2, "C:\\popup_menu_debug.txt", "a");
+        if (log2) {
+            fprintf(log2, "ERROR: hPopupMenu not found in g_popup_menus\n");
+            fclose(log2);
+        }
+        return -1;
+    }
+    
+    PopupMenuState* state = it->second;
+    
+    MenuItem item;
+    item.id = item_id;
+    
+    // 如果 item_id == -1 且 text_len == 0，则为分隔符
+    if (item_id == -1 && text_len == 0) {
+        item.separator = true;
+        item.text = L"";
+        
+        FILE* log3 = nullptr;
+        fopen_s(&log3, "C:\\popup_menu_debug.txt", "a");
+        if (log3) {
+            fprintf(log3, "Adding separator\n");
+            fclose(log3);
+        }
+    } else {
+        item.text = Utf8ToWide(text_bytes, text_len);
+        item.separator = false;
+        
+        FILE* log4 = nullptr;
+        fopen_s(&log4, "C:\\popup_menu_debug.txt", "a");
+        if (log4) {
+            fprintf(log4, "Adding item: id=%d, text_len=%d\n", item_id, text_len);
+            fclose(log4);
+        }
+    }
+    
+    item.enabled = true;
+    item.checked = false;
+    
+    state->items.push_back(item);
+    
+    FILE* log5 = nullptr;
+    fopen_s(&log5, "C:\\popup_menu_debug.txt", "a");
+    if (log5) {
+        fprintf(log5, "Total items in menu: %zu\n\n", state->items.size());
+        fclose(log5);
+    }
+    
+    return (int)state->items.size() - 1;
+}
+
+// 添加弹出菜单子项
+__declspec(dllexport) int __stdcall PopupMenuAddSubItem(
+    HWND hPopupMenu,
+    int parent_item_id,
+    const unsigned char* text_bytes,
+    int text_len,
+    int item_id
+) {
+    auto it = g_popup_menus.find(hPopupMenu);
+    if (it == g_popup_menus.end()) return -1;
+    
+    PopupMenuState* state = it->second;
+    MenuItem* parent = FindMenuItem(state->items, parent_item_id);
+    if (!parent) return -1;
+    
+    MenuItem item;
+    item.id = item_id;
+    item.text = Utf8ToWide(text_bytes, text_len);
+    item.enabled = true;
+    item.checked = false;
+    item.separator = false;
+    
+    parent->sub_items.push_back(item);
+    
+    return (int)parent->sub_items.size() - 1;
+}
+
+// 绑定控件与弹出菜单
+__declspec(dllexport) void __stdcall BindControlMenu(
+    HWND hControl,
+    HWND hPopupMenu
+) {
+    if (!hControl || !hPopupMenu) return;
+    g_control_popup_menu_bindings[hControl] = hPopupMenu;
+}
+
+// 显示右键菜单
+__declspec(dllexport) void __stdcall ShowContextMenu(
+    HWND hPopupMenu,
+    int x,
+    int y
+) {
+    // 写入日志
+    FILE* log = nullptr;
+    fopen_s(&log, "C:\\popup_menu_debug.txt", "a");
+    if (log) {
+        fprintf(log, "\n=== ShowContextMenu called ===\n");
+        fprintf(log, "hPopupMenu=%p, x=%d, y=%d\n", hPopupMenu, x, y);
+        fclose(log);
+    }
+    
+    auto it = g_popup_menus.find(hPopupMenu);
+    if (it == g_popup_menus.end()) {
+        FILE* log2 = nullptr;
+        fopen_s(&log2, "C:\\popup_menu_debug.txt", "a");
+        if (log2) {
+            fprintf(log2, "ERROR: hPopupMenu not found in g_popup_menus\n");
+            fclose(log2);
+        }
+        return;
+    }
+    
+    PopupMenuState* state = it->second;
+    
+    FILE* log3 = nullptr;
+    fopen_s(&log3, "C:\\popup_menu_debug.txt", "a");
+    if (log3) {
+        fprintf(log3, "state=%p, items.size()=%zu\n", state, state->items.size());
+        fclose(log3);
+    }
+    
+    // 注册弹出菜单窗口类
+    static bool class_registered = false;
+    if (!class_registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.style = CS_DROPSHADOW;
+        wc.lpfnWndProc = PopupMenuProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        wc.lpszClassName = L"EmojiPopupMenuClass";
+        RegisterClassExW(&wc);
+        class_registered = true;
+    }
+    
+    // 计算菜单尺寸
+    int menu_width = 200;
+    int menu_height = 0;
+    int item_height = 32;
+    int separator_height = 8;
+    
+    for (const auto& item : state->items) {
+        if (item.separator) {
+            menu_height += separator_height;
+        } else {
+            menu_height += item_height;
+        }
+    }
+    
+    // 如果x,y为-1,使用当前鼠标位置
+    if (x == -1 || y == -1) {
+        POINT pt;
+        GetCursorPos(&pt);
+        x = pt.x;
+        y = pt.y;
+    }
+    
+    // 创建弹出窗口
+    HWND hwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        L"EmojiPopupMenuClass",
+        L"",
+        WS_POPUP | WS_BORDER,
+        x, y, menu_width, menu_height,
+        state->owner_hwnd,
+        nullptr,
+        GetModuleHandle(nullptr),
+        state  // ⚠️ 关键：通过 lpParam 传递 state 指针
+    );
+    
+    FILE* log4 = nullptr;
+    fopen_s(&log4, "C:\\popup_menu_debug.txt", "a");
+    if (log4) {
+        fprintf(log4, "CreateWindowExW returned: hwnd=%p\n", hwnd);
+        fprintf(log4, "Window position: x=%d, y=%d, width=%d, height=%d\n", 
+            x, y, menu_width, menu_height);
+        fclose(log4);
+    }
+    
+    if (hwnd) {
+        state->hwnd = hwnd;
+        state->width = menu_width;
+        state->height = menu_height;
+        
+        // 将state与窗口关联
+        g_popup_menus[hwnd] = state;
+        
+        FILE* log5 = nullptr;
+        fopen_s(&log5, "C:\\popup_menu_debug.txt", "a");
+        if (log5) {
+            fprintf(log5, "Window created successfully, calling ShowWindow\n");
+            fclose(log5);
+        }
+        
+        ShowWindow(hwnd, SW_SHOW);
+        SetFocus(hwnd);
+        
+        FILE* log6 = nullptr;
+        fopen_s(&log6, "C:\\popup_menu_debug.txt", "a");
+        if (log6) {
+            fprintf(log6, "ShowWindow and SetFocus called\n");
+            fclose(log6);
+        }
+    } else {
+        FILE* log7 = nullptr;
+        fopen_s(&log7, "C:\\popup_menu_debug.txt", "a");
+        if (log7) {
+            DWORD err = GetLastError();
+            fprintf(log7, "ERROR: CreateWindowExW failed, GetLastError=%lu\n", err);
+            fclose(log7);
+        }
+    }
+}
+
+// 设置弹出菜单回调
+__declspec(dllexport) void __stdcall SetPopupMenuCallback(
+    HWND hPopupMenu,
+    MenuItemClickCallback callback
+) {
+    auto it = g_popup_menus.find(hPopupMenu);
+    if (it != g_popup_menus.end()) {
+        it->second->callback = callback;
+    }
+}
