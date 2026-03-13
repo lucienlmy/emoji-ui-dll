@@ -131,26 +131,26 @@ emoji_window_cpp/
 | 控件 | 文档 | 说明 |
 |------|------|------|
 | 按钮 | [button.md](docs/controls/button.md) | 支持彩色 Emoji 的按钮控件 |
-| 标签 | 📄 label.md | 文本标签，支持自动换行 |
-| 编辑框 | 📄 editbox.md | 单行/多行编辑框，支持垂直居中 |
+| 标签 | [label.md](docs/controls/label.md) | 文本标签，支持自动换行 |
+| 编辑框 | [editbox.md](docs/controls/editbox.md) | 单行/多行编辑框，支持垂直居中 |
 | 复选框 | [checkbox.md](docs/controls/checkbox.md) | Element UI 风格复选框 |
-| 单选按钮 | 📄 radiobutton.md | 分组互斥的单选按钮 |
+| 单选按钮 | [radiobutton.md](docs/controls/radiobutton.md) | 分组互斥的单选按钮 |
 | 进度条 | [progressbar.md](docs/controls/progressbar.md) | 支持确定/不确定模式 |
 
 ### 高级控件
 
 | 控件 | 文档 | 说明 |
 |------|------|------|
-| 列表框 | 📄 listbox.md | 可滚动的项目列表 |
-| 组合框 | 📄 combobox.md | 下拉列表选择器 |
+| 列表框 | [listbox.md](docs/controls/listbox.md) | 可滚动的项目列表 |
+| 组合框 | [combobox.md](docs/controls/combobox.md) | 下拉列表选择器 |
 | 图片框 | [picturebox.md](docs/controls/picturebox.md) | 支持多种格式和缩放模式 |
-| 分组框 | 📄 groupbox.md | 控件分组容器 |
-| 热键控件 | 📄 hotkey.md | 键盘快捷键捕获 |
+| 分组框 | [groupbox.md](docs/controls/groupbox.md) | 控件分组容器 |
+| 热键控件 | [hotkey.md](docs/controls/hotkey.md) | 键盘快捷键捕获 |
 | 树形框 | [treeview.md](docs/controls/treeview.md) | 层次结构数据，支持 Emoji 图标和拖放 |
 | 表格 | [datagridview.md](docs/controls/datagridview.md) | 高性能数据表格，支持虚拟模式 |
-| 选项卡 | 📄 tabcontrol.md | 多标签页容器 |
+| 选项卡 | [tabcontrol.md](docs/controls/tabcontrol.md) | 多标签页容器 |
 
-> 📝 标记为 📄 的文档正在完善中，可参考原 README 或易语言示例代码
+
 
 ---
 
