@@ -20,7 +20,8 @@
 #pragma comment(lib, "dwmapi.lib")         // DWM库
 
 // Button click callback type (stdcall)
-typedef void (__stdcall *ButtonClickCallback)(int button_id);
+// 参数: button_id - 按钮ID, parent_hwnd - 父窗口句柄
+typedef void (__stdcall *ButtonClickCallback)(int button_id, HWND parent_hwnd);
 
 // Message box callback type (confirmed: 1=OK, 0=Cancel)
 typedef void (__stdcall *MessageBoxCallback)(int confirmed);

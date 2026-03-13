@@ -346,7 +346,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     button.is_pressed = false;
 
                     if (g_button_callback) {
-                        g_button_callback(button.id);
+                        g_button_callback(button.id, hwnd);
                     }
 
                     InvalidateRect(hwnd, nullptr, FALSE);
