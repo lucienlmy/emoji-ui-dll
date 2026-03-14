@@ -38,9 +38,18 @@ int create_emoji_button_bytes(
 ## 设置按钮点击回调
 
 ```c++
-typedef void (__stdcall *ButtonClickCallback)(int button_id);
+typedef void (__stdcall *ButtonClickCallback)(int button_id, HWND parent_hwnd);
 void __stdcall set_button_click_callback(ButtonClickCallback callback);
 ```
+
+### 回调参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `button_id` | 被点击的按钮 ID |
+| `parent_hwnd` | 按钮所在的父窗口句柄 |
+
+> **提示**：`parent_hwnd` 参数在 TabControl 等多窗口场景中非常有用，可以通过父窗口句柄区分不同 Tab 页中的按钮。
 
 ## 易语言声明
 
@@ -63,6 +72,8 @@ void __stdcall set_button_click_callback(ButtonClickCallback callback);
 
 ## 易语言使用示例
 
+### 基础示例
+
 ```
 .程序集变量 按钮ID, 整数型
 
@@ -80,10 +91,56 @@ emoji字节集 = { 240, 159, 152, 128 }  ' 😀
 
 .子程序 按钮点击处理, , 公开, stdcall
 .参数 按钮ID_, 整数型
+.参数 父窗口句柄, 整数型
 
 .如果真 (按钮ID_ = 按钮ID)
     信息框 ("按钮被点击了！", 0, "提示")
 .如果真结束
+```
+
+### TabControl 多窗口示例
+
+在 TabControl 中，不同 Tab 页的按钮 ID 可能重复。此时可以通过父窗口句柄来区分：
+
+```
+.程序集变量 Tab1内容窗口, 整数型
+.程序集变量 Tab2内容窗口, 整数型
+.程序集变量 按钮1_ID, 整数型
+.程序集变量 按钮2_ID, 整数型
+
+.子程序 创建界面
+' 创建 TabControl 和 Tab 页
+TabControl句柄 = 创建TabControl (主窗口, 10, 10, 600, 400)
+添加Tab页 (TabControl句柄, "首页", 0)
+添加Tab页 (TabControl句柄, "设置", 0)
+
+' 获取各 Tab 的内容窗口
+Tab1内容窗口 = 获取Tab内容窗口 (TabControl句柄, 0)
+Tab2内容窗口 = 获取Tab内容窗口 (TabControl句柄, 1)
+
+' 在不同 Tab 中创建按钮（ID 可能相同）
+按钮1_ID = 创建Emoji按钮_字节集 (Tab1内容窗口, ...)  ' 返回 1000
+按钮2_ID = 创建Emoji按钮_字节集 (Tab2内容窗口, ...)  ' 也可能返回 1000
+
+设置按钮点击回调 (&按钮点击处理)
+
+
+.子程序 按钮点击处理, , 公开, stdcall
+.参数 按钮ID, 整数型
+.参数 父窗口句柄, 整数型
+
+' 通过父窗口句柄区分不同 Tab
+.判断开始 (父窗口句柄 = Tab1内容窗口)
+    .判断开始 (按钮ID = 按钮1_ID)
+        信息框 ("Tab1 的按钮被点击", 0, )
+    .判断结束
+    
+.判断 (父窗口句柄 = Tab2内容窗口)
+    .判断开始 (按钮ID = 按钮2_ID)
+        信息框 ("Tab2 的按钮被点击", 0, )
+    .判断结束
+    
+.判断结束
 ```
 
 ## 注意事项
