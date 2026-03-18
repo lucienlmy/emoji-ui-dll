@@ -60,5 +60,14 @@ Desktop.ini
 # Documentation and project files (root directory only)
 /CLAUDE.md
 
+# Test files (root)
+/test_*
+/check_*
+/compile_*
+
+# Downloads folder (not project files)
+examples/Csharp/下载/
+examples/Csharp/Demo截图.png
+
 # Python cache
 examples/Python/__pycache__/
