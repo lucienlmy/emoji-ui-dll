@@ -41,6 +41,14 @@ function collectEventHandlers(controls: DesignControl[]): EventHandlerMeta[] {
   return handlers;
 }
 
+const CONTROLS_NEEDING_TEXT_BYTES = new Set([
+  'button', 'label', 'editbox', 'checkbox', 'radiobutton', 'groupbox',
+]);
+
+const CONTROLS_NEEDING_FONT_BYTES = new Set([
+  'label', 'editbox', 'checkbox', 'radiobutton', 'groupbox', 'combobox',
+]);
+
 export function generateEpl(win: DesignWindow, controls: DesignControl[]): string {
   const lines: string[] = [];
   const eventHandlers = collectEventHandlers(controls);
@@ -60,8 +68,11 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
   lines.push(`.局部变量 标题字节集, 字节集`);
 
   for (const c of controls) {
-    if (['button', 'label', 'editbox', 'checkbox', 'radiobutton', 'groupbox'].includes(c.type)) {
+    if (CONTROLS_NEEDING_TEXT_BYTES.has(c.type)) {
       lines.push(`.局部变量 文本_${c.name}, 字节集`);
+    }
+    if (CONTROLS_NEEDING_FONT_BYTES.has(c.type)) {
+      lines.push(`.局部变量 字体_${c.name}, 字节集`);
     }
   }
 
@@ -80,69 +91,95 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
     lines.push(``);
     lines.push(`' ${c.name}`);
 
+    const fontName = (p.fontName as string) || 'Microsoft YaHei UI';
+    const fontSize = (p.fontSize as number) || 13;
+    const fgColor = eplColor((p.fgColor as string) || '#303133');
+    const bgColor = eplColor((p.bgColor as string) || '#FFFFFF');
+
+    const emitTextBytes = (text: string) => {
+      lines.push(`文本_${c.name} ＝ 编码_Ansi到Utf8 ("${text}")`);
+    };
+    const emitFontBytes = () => {
+      lines.push(`字体_${c.name} ＝ 编码_Ansi到Utf8 ("${fontName}")`);
+    };
+    const textPtr = `取变量数据地址 (文本_${c.name})`;
+    const textLen = `取字节集长度 (文本_${c.name})`;
+    const fontPtr = `取变量数据地址 (字体_${c.name})`;
+    const fontLen = `取字节集长度 (字体_${c.name})`;
+
     switch (c.type) {
       case 'button': {
         const emoji = (p.emoji as string) || '';
         const text = (p.text as string) || '按钮';
+        emitTextBytes(text);
         if (emoji) {
           const emojiBytes = textToUtf8Bytes(emoji);
           lines.push(`.局部变量 emoji_${c.name}, 字节集`);
           lines.push(`emoji_${c.name} ＝ ${utf8BytesToEplFormat(emojiBytes)}`);
-        }
-        lines.push(`文本_${c.name} ＝ 编码_Ansi到Utf8 ("${text}")`);
-        if (emoji) {
-          lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (主窗口句柄, 取变量数据地址 (emoji_${c.name}), 取字节集长度 (emoji_${c.name}), 取变量数据地址 (文本_${c.name}), 取字节集长度 (文本_${c.name}), ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
+          lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (主窗口句柄, 取变量数据地址 (emoji_${c.name}), 取字节集长度 (emoji_${c.name}), ${textPtr}, ${textLen}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
         } else {
-          lines.push(`${c.name} ＝ 创建Emoji按钮_辅助 (主窗口句柄, "", "${text}", ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
+          lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (主窗口句柄, 0, 0, ${textPtr}, ${textLen}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
         }
         break;
       }
       case 'label': {
         const text = (p.text as string) || '标签';
-        lines.push(`${c.name} ＝ 创建标签_辅助 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, "${text}", ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.wordWrap)})`);
+        emitTextBytes(text);
+        emitFontBytes();
+        lines.push(`${c.name} ＝ 创建标签 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.wordWrap)})`);
         break;
       }
       case 'editbox': {
         const text = (p.text as string) || '';
-        const fnName = p.emojiSupport ? '创建彩色Emoji编辑框_辅助' : '创建编辑框_辅助';
-        lines.push(`${c.name} ＝ ${fnName} (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, "${text}", ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.multiline)}, ${eplBool(p.readOnly)}, ${eplBool(p.password)}, ${eplBool(p.showBorder !== false)}, ${eplBool(p.vertCenter !== false)})`);
+        const fnName = p.emojiSupport ? '创建彩色Emoji编辑框' : '创建编辑框';
+        emitTextBytes(text);
+        emitFontBytes();
+        lines.push(`${c.name} ＝ ${fnName} (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.multiline)}, ${eplBool(p.readOnly)}, ${eplBool(p.password)}, ${eplBool(p.showBorder !== false)}, ${eplBool(p.vertCenter !== false)})`);
         break;
       }
       case 'checkbox': {
         const text = (p.text as string) || '复选框';
-        lines.push(`${c.name} ＝ 创建复选框_辅助 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, "${text}", ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, ${eplColor((p.checkColor as string) || '#409EFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${eplBool(p.checked)})`);
+        emitTextBytes(text);
+        emitFontBytes();
+        lines.push(`${c.name} ＝ 创建复选框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${eplBool(p.checked)}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
       }
       case 'radiobutton': {
         const text = (p.text as string) || '单选按钮';
-        lines.push(`${c.name} ＝ 创建单选按钮_辅助 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, "${text}", ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, ${eplColor((p.radioColor as string) || '#409EFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.groupId as number) || 1}, ${eplBool(p.checked)})`);
+        emitTextBytes(text);
+        emitFontBytes();
+        lines.push(`${c.name} ＝ 创建单选按钮 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${(p.groupId as number) || 1}, ${eplBool(p.checked)}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
       }
       case 'progressbar':
-        lines.push(`${c.name} ＝ 创建进度条 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.value as number) || 50}, ${eplColor((p.fgColor as string) || '#409EFF')}, ${eplColor((p.bgColor as string) || '#EBEEF5')}, ${p.showText !== false ? 1 : 0})`);
+        lines.push(`${c.name} ＝ 创建进度条 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.value as number) || 50}, ${eplColor((p.fgColor as string) || '#409EFF')}, ${eplColor((p.bgColor as string) || '#EBEEF5')}, ${p.showText !== false ? '真' : '假'}, ${eplColor((p.textColor as string) || '#303133')})`);
         break;
       case 'groupbox': {
         const text = (p.text as string) || '分组框';
-        lines.push(`${c.name} ＝ 创建分组框_辅助 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, "${text}", ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, ${eplColor((p.borderColor as string) || '#DCDFE6')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
+        emitTextBytes(text);
+        emitFontBytes();
+        lines.push(`${c.name} ＝ 创建分组框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${eplColor((p.borderColor as string) || '#DCDFE6')}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
       }
       case 'picturebox':
-        lines.push(`${c.name} ＝ 创建图片框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#F5F7FA')}, ${eplColor((p.borderColor as string) || '#DCDFE6')}, ${(p.scaleMode as number) || 2})`);
+        lines.push(`${c.name} ＝ 创建图片框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.scaleMode as number) || 2}, ${eplColor((p.bgColor as string) || '#F5F7FA')})`);
         break;
-      case 'combobox':
-        lines.push(`${c.name} ＝ 创建组合框_辅助 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
+      case 'combobox': {
+        emitFontBytes();
+        lines.push(`${c.name} ＝ 创建组合框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.readOnly)}, ${fgColor}, ${bgColor}, ${(p.itemHeight as number) || 35}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
+      }
       case 'listbox':
-        lines.push(`${c.name} ＝ 创建列表框_辅助 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${eplBool(p.multiSelect)})`);
+        lines.push(`${c.name} ＝ 创建列表框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.multiSelect)}, ${fgColor}, ${bgColor})`);
         break;
       case 'tabcontrol':
-        lines.push(`${c.name} ＝ 创建选项卡 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height})`);
+        lines.push(`${c.name} ＝ 创建TabControl (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height})`);
         break;
       case 'datagridview':
-        lines.push(`${c.name} ＝ 创建表格 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, ${eplColor((p.headerColor as string) || '#409EFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13})`);
+        lines.push(`${c.name} ＝ 创建DataGridView (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.virtualMode)}, ${eplBool(p.zebraStripe)}, ${fgColor}, ${bgColor}, ${eplColor((p.headerColor as string) || '#409EFF')}, ${fontPtr || '0'}, ${0}, ${fontSize})`);
         break;
       case 'treeview':
-        lines.push(`${c.name} ＝ 创建树形框_辅助 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.fgColor as string) || '#303133')}, ${eplColor((p.bgColor as string) || '#FFFFFF')}, "${(p.fontName as string) || 'Microsoft YaHei UI'}", ${(p.fontSize as number) || 13}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${eplBool(p.showCheckBoxes)})`);
+        lines.push(`${c.name} ＝ 创建树形框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${fgColor}, ${bgColor})`);
         break;
     }
   }
