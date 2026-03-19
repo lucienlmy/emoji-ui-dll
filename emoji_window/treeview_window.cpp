@@ -2958,12 +2958,15 @@ void RenderNode(TreeViewState* state, TreeNode* node, float y_offset) {
         x_cursor += checkbox_size + 6 * state->dpi_scale;
     }
     
-    // 4. 如果有图标则绘制 emoji 图标
+    // 4. 如果有图标则绘制 emoji 图标（与文本同一水平线，使用相同字号以对齐）
     if (!node->icon.empty()) {
         float icon_x = x_cursor;
-        float icon_y = y_offset + (node_height - state->icon_size * state->dpi_scale) / 2;
+        float text_font_size = 14.0f * state->dpi_scale;  // 与 RecreateTextFormat 一致
+        float icon_size = state->icon_size * state->dpi_scale;
+        if (icon_size > text_font_size) icon_size = text_font_size;
+        float icon_y = y_offset;  // 与文本顶部对齐
         
-        RenderEmoji(state, node->icon.c_str(), icon_x, icon_y, state->icon_size * state->dpi_scale);
+        RenderEmoji(state, node->icon.c_str(), icon_x, icon_y, icon_size);
         x_cursor += (state->icon_size + 6) * state->dpi_scale;
     }
     
@@ -3114,38 +3117,43 @@ void RenderCheckbox(TreeViewState* state, float x, float y, float size, bool che
 
 /**
  * 渲染 Emoji 图标
- * 使用TextFormatCache获取Segoe UI Emoji字体格式，绘制彩色emoji，应用DPI缩放
+ * 使用 CreateTextLayout + DrawTextLayout 并启用 ENABLE_COLOR_FONT 以显示彩色 emoji
  */
 void RenderEmoji(TreeViewState* state, const wchar_t* emoji, float x, float y, float size) {
-    if (!state || !emoji || !state->render_target || !state->brush || !state->text_format_cache) {
+    if (!state || !emoji || !state->render_target || !state->brush || !state->dwrite_factory || !state->text_format_cache) {
         return;
     }
-    
+
     ID2D1HwndRenderTarget* rt = state->render_target;
-    
-    // 从缓存获取或创建彩色字体文本格式
-    // 注意：size参数已经是DPI缩放后的值，所以dpi_scale传1.0
+    size_t emoji_len = wcslen(emoji);
+    if (emoji_len == 0) return;
+
     IDWriteTextFormat* emoji_format = state->text_format_cache->GetOrCreate(
-        L"Segoe UI Emoji",  // 支持彩色 emoji 的字体
-        size,               // 字体大小（已经过 DPI 缩放）
-        1.0f                // 不再次缩放
+        L"Segoe UI Emoji",
+        size,
+        1.0f
     );
-    
-    if (emoji_format) {
-        // 绘制 emoji（颜色会自动使用 emoji 的彩色）
-        D2D1_RECT_F rect = D2D1::RectF(x, y, x + size * 1.5f, y + size * 1.5f);
-        
-        // 设置画刷颜色（emoji 会自动使用彩色，这里的颜色主要用于非彩色字符）
-        state->brush->SetColor(D2D1::ColorF(0, 0, 0));
-        
-        rt->DrawText(
-            emoji,
-            static_cast<UINT32>(wcslen(emoji)),
-            emoji_format,
-            rect,
-            state->brush
-        );
-    }
+    if (!emoji_format) return;
+
+    IDWriteTextLayout* text_layout = nullptr;
+    HRESULT hr = state->dwrite_factory->CreateTextLayout(
+        emoji,
+        static_cast<UINT32>(emoji_len),
+        emoji_format,
+        size * 2.0f,
+        size * 2.0f,
+        &text_layout
+    );
+    if (FAILED(hr) || !text_layout) return;
+
+    state->brush->SetColor(D2D1::ColorF(0, 0, 0));
+    rt->DrawTextLayout(
+        D2D1::Point2F(x, y),
+        text_layout,
+        state->brush,
+        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
+    );
+    text_layout->Release();
 }
 
 /**

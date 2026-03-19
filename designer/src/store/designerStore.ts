@@ -108,10 +108,12 @@ export const useDesignerStore = create<DesignerState>((set) => ({
   window: {
     title: '我的应用',
     emoji: '🎨',
+    x: -1,
+    y: -1,
     width: 800,
     height: 600,
     titlebarColor: '#409EFF',
-    bgColor: '#F5F7FA',
+    bgColor: '#FFFFFF',
   },
   controls: [],
   selectedIds: [],
@@ -137,8 +139,19 @@ export const useDesignerStore = create<DesignerState>((set) => ({
 
   loadDesign: (window, controls) => {
     updateNextIdSeed(controls);
+    const fullWindow: DesignWindow = {
+      ...window,
+      title: window.title ?? '我的应用',
+      emoji: window.emoji ?? '🎨',
+      x: window.x ?? -1,
+      y: window.y ?? -1,
+      width: window.width ?? 800,
+      height: window.height ?? 600,
+      titlebarColor: window.titlebarColor ?? '#409EFF',
+      bgColor: window.bgColor ?? '#FFFFFF',
+    };
     set({
-      window,
+      window: fullWindow,
       controls,
       selectedIds: [],
       clipboard: null,

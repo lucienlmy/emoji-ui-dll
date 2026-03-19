@@ -482,7 +482,7 @@ def comprehensive_demo():
 
     # ===== 创建主窗口 =====
     title = utf8("所有控件属性操作综合示例")
-    hwnd = dll.create_window_bytes_ex(title, len(title), 1100, 820, rgb_color(50, 100, 180))
+    hwnd = dll.create_window_bytes_ex(title, len(title), 1100, 820, rgb_color(50, 100, 180), 0)
     if not hwnd:
         print("错误: 创建窗口失败")
         return

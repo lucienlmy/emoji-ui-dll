@@ -11,6 +11,26 @@ const win: DesignWindow = {
 };
 
 describe('容器控件代码生成', () => {
+  test('易语言创建窗口应包含第八参数客户区背景色', () => {
+    const eplCode = generateCode('epl', win, []);
+    const line = eplCode.split('\n').find((l) => l.includes('创建Emoji窗口_字节集_扩展'));
+    expect(line).toBeTruthy();
+    const start = line!.indexOf('(') + 1;
+    const end = line!.lastIndexOf(')');
+    const argsStr = line!.slice(start, end);
+    const args = argsStr.split(',').map((s) => s.trim());
+    expect(args.length).toBe(8);  // 标题指针, 标题长度, x, y, 宽度, 高度, 标题栏颜色, 客户区背景色
+    expect(args[7]).toMatch(/^\d+$/);  // 客户区背景色
+  });
+
+  test('窗口无 bgColor 时第六参数应使用默认纯白', () => {
+    const { bgColor: _bg, ...winNoBg } = win;
+    const eplCode = generateCode('epl', winNoBg as DesignWindow, []);
+    const line = eplCode.split('\n').find((l) => l.includes('创建Emoji窗口_字节集_扩展'));
+    expect(line).toBeTruthy();
+    expect(line).toContain('4294967295'); // 0xFFFFFFFF 纯白
+  });
+
   test('易语言代码中的控件句柄应生成到程序集变量而不是局部变量', () => {
     const controls = [
       {

@@ -38,6 +38,8 @@ export interface DesignControl {
 export interface DesignWindow {
   title: string;
   emoji: string;
+  x?: number;
+  y?: number;
   width: number;
   height: number;
   titlebarColor: string;

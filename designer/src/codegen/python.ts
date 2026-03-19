@@ -66,7 +66,7 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
   lines.push(``);
 
   lines.push(`# ===== DLL 函数声明 =====`);
-  lines.push(`dll.create_window_bytes_ex.argtypes = [ctypes.c_char_p, c_int, c_int, c_int, c_uint]`);
+  lines.push(`dll.create_window_bytes_ex.argtypes = [ctypes.c_char_p, c_int, c_int, c_int, c_int, c_int, c_uint, c_uint]`);
   lines.push(`dll.create_window_bytes_ex.restype = c_void_p`);
   lines.push(`dll.set_button_click_callback.argtypes = [ctypes.CFUNCTYPE(None, c_int, c_void_p)]`);
   lines.push(`dll.set_message_loop_main_window.argtypes = [c_void_p]`);
@@ -154,7 +154,10 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
   lines.push(`# ===== 创建窗口 =====`);
   const titleFull = `${win.emoji} ${win.title}`.trim();
   lines.push(`title = "${titleFull}".encode("utf-8")`);
-  lines.push(`hwnd = dll.create_window_bytes_ex(title, len(title), ${win.width}, ${win.height}, ${pyColor(win.titlebarColor)})`);
+  const winBg = (win.bgColor as string) || '#FFFFFF';
+  const winX = win.x ?? -1;
+  const winY = win.y ?? -1;
+  lines.push(`hwnd = dll.create_window_bytes_ex(title, len(title), ${winX}, ${winY}, ${win.width}, ${win.height}, ${pyColor(win.titlebarColor)}, ${pyColor(winBg)})`);
   lines.push(``);
 
   lines.push(`# ===== 创建控件 =====`);

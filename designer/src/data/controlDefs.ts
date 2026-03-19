@@ -335,8 +335,10 @@ export const controlDefinitions: ControlDefinition[] = [
       bold: false, italic: false, underline: false,
       showCheckBoxes: false,
       allowDragDrop: false,
+      nodes: '根节点1\n  子节点1\n  子节点2\n根节点2\n  子节点2-1',
     },
     properties: [
+      { key: 'nodes', label: '节点(每行一个，缩进2空格表示子节点)', type: 'string' },
       ...colorProps,
       ...fontProps,
       { key: 'showCheckBoxes', label: '显示复选框', type: 'boolean' },

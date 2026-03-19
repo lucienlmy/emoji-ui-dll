@@ -617,6 +617,7 @@ struct WindowState {
     // 自定义标题栏支持
     std::wstring title;           // 窗口标题（用于D2D彩色emoji绘制）
     UINT32 titlebar_color = 0;    // 标题栏背景色（0=跟随主题）
+    UINT32 client_bg_color = 0;   // 客户区背景色（0=使用 ThemeColor_Background 纯白）
     int titlebar_height = 30;     // 标题栏高度（像素）
     bool custom_titlebar = true;  // 是否启用自定义标题栏
     int hovered_titlebar_button = 0; // 0=无 1=最小化 2=最大化 3=关闭
@@ -858,10 +859,11 @@ extern WindowCloseCallback g_window_close_callback;
 
 // Export functions (stdcall calling convention)
 extern "C" {
-    __declspec(dllexport) HWND __stdcall create_window(const char* title, int width, int height);
-    __declspec(dllexport) HWND __stdcall create_window_bytes(const unsigned char* title_bytes, int title_len, int width, int height);
-    __declspec(dllexport) HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int title_len, int width, int height, UINT32 titlebar_color);
+    __declspec(dllexport) HWND __stdcall create_window(const char* title, int x, int y, int width, int height);
+    __declspec(dllexport) HWND __stdcall create_window_bytes(const unsigned char* title_bytes, int title_len, int x, int y, int width, int height);
+    __declspec(dllexport) HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int title_len, int x, int y, int width, int height, UINT32 titlebar_color, UINT32 client_bg_color);
     __declspec(dllexport) void __stdcall set_window_titlebar_color(HWND hwnd, UINT32 color);
+    __declspec(dllexport) void __stdcall SetWindowBackgroundColor(HWND hwnd, UINT32 color);
 
     __declspec(dllexport) int __stdcall create_emoji_button_bytes(
         HWND parent,
@@ -940,6 +942,8 @@ extern "C" {
     __declspec(dllexport) int __stdcall run_message_loop();
     __declspec(dllexport) void __stdcall destroy_window(HWND hwnd);
     __declspec(dllexport) void __stdcall set_window_icon(HWND hwnd, const char* icon_path);
+    // 从字节集设置窗口图标（易语言可插入图片资源后传入 取变量数据地址(字节集) 和 取字节集长度(字节集)）
+    __declspec(dllexport) void __stdcall set_window_icon_bytes(HWND hwnd, const unsigned char* icon_data, int data_len);
     __declspec(dllexport) void __stdcall set_window_title(HWND hwnd, const char* title_utf8, int title_len);
 
     // Message box (OK button only, supports Unicode and Emoji)

@@ -102,8 +102,30 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
     if (CONTROLS_NEEDING_FONT_BYTES.has(c.type)) {
       lines.push(`.局部变量 字体_${c.name}, 字节集`);
     }
+    if (c.type === 'datagridview') {
+      const cols = ((c.props.columns as string) || '').split('\n').map((s) => s.trim()).filter(Boolean);
+      for (let i = 0; i < cols.length; i++) {
+        lines.push(`.局部变量 列_${c.name}_${i}, 字节集`);
+      }
+    }
+    if (c.type === 'treeview') {
+      const nodesStr = (c.props.nodes as string) || '';
+      const nodeLines = nodesStr.split('\n').map((s) => s.trimEnd()).filter((s) => s.length > 0);
+      for (let i = 0; i < nodeLines.length; i++) {
+        const line = nodeLines[i];
+        const trimmed = line.trimStart();
+        const { emoji } = splitLeadingEmoji(trimmed || `节点${i + 1}`);
+        lines.push(`.局部变量 节点文本_${c.name}_${i}, 字节集`);
+        if (emoji) lines.push(`.局部变量 节点图标_${c.name}_${i}, 字节集`);
+        lines.push(`.局部变量 节点ID_${c.name}_${i}, 整数型`);
+      }
+    }
     if (c.type === 'tabcontrol') {
       lines.push(`.局部变量 tab_${c.name}_tmp, 字节集`);
+      const tabCount = ((c.props.tabs as string) || '页面1\n页面2\n页面3').split('\n').filter((t) => t.trim()).length;
+      for (let i = 0; i < tabCount; i++) {
+        lines.push(`.局部变量 ${c.name}_page_${i}, 整数型`);
+      }
     }
   }
 
@@ -112,20 +134,57 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
   const titleFull = `${win.emoji} ${win.title}`.trim();
   const titleBytes = textToUtf8Bytes(titleFull);
   lines.push(`标题字节集 ＝ ${utf8BytesToEplFormat(titleBytes)}`);
-  lines.push(`主窗口句柄 ＝ 创建Emoji窗口_字节集_扩展 (取变量数据地址 (标题字节集), 取字节集长度 (标题字节集), ${win.width}, ${win.height}, ${eplColor(win.titlebarColor)})`);
+  const winBg = (win.bgColor ?? (win as { bg_color?: string }).bg_color ?? '#FFFFFF') as string;
+  const clientBgEpl = eplColor(winBg);
+  const winX = win.x ?? -1;
+  const winY = win.y ?? -1;
+  lines.push(`主窗口句柄 ＝ 创建Emoji窗口_字节集_扩展 (取变量数据地址 (标题字节集), 取字节集长度 (标题字节集), ${winX}, ${winY}, ${win.width}, ${win.height}, ${eplColor((win.titlebarColor as string) || '#409EFF')}, ${clientBgEpl})`);
   lines.push(``);
 
   lines.push(`' ===== 创建控件 =====`);
 
+  const getParentExpr = (c: DesignControl): string => {
+    if ((c.parentKind === 'tabcontrol' || c.parentKind === 'tabpage') && c.parentId) {
+      const idx = c.parentTabIndex ?? 0;
+      return `${c.parentId}_page_${idx}`;
+    }
+    return '主窗口句柄';
+  };
+
+  // 创建 Tab 子控件前需先切换到对应 Tab，否则 TreeView 等控件不显示
+  const getTabSwitch = (c: DesignControl): { tabId: string; index: number } | null => {
+    if ((c.parentKind === 'tabcontrol' || c.parentKind === 'tabpage') && c.parentId) {
+      const idx = c.parentTabIndex ?? 0;
+      return { tabId: c.parentId, index: idx };
+    }
+    return null;
+  };
+
+  let lastTabSwitch: { tabId: string; index: number } | null = null;
+
   for (const c of controls) {
     const p = c.props;
+    const parentExpr = getParentExpr(c);
     lines.push(``);
     lines.push(`' ${c.name}`);
+
+    // Tab 子控件必须在父 Tab 可见时创建，先切换到对应 Tab
+    if (c.type !== 'tabcontrol') {
+      const tabSwitch = getTabSwitch(c);
+      if (tabSwitch) {
+        if (!lastTabSwitch || lastTabSwitch.tabId !== tabSwitch.tabId || lastTabSwitch.index !== tabSwitch.index) {
+          lines.push(`切换到Tab (${tabSwitch.tabId}, ${tabSwitch.index})`);
+          lastTabSwitch = tabSwitch;
+        }
+      } else {
+        lastTabSwitch = null;
+      }
+    }
 
     const fontName = (p.fontName as string) || 'Microsoft YaHei UI';
     const fontSize = (p.fontSize as number) || 13;
     const fgColor = eplColor((p.fgColor as string) || '#303133');
-    const bgColor = eplColor((p.bgColor as string) || '#F5F7FA');
+    const bgColor = eplColor((p.bgColor as string) || '#FFFFFF');
 
     const emitTextBytes = (text: string) => {
       emitUtf8Text(`文本_${c.name}`, text, lines);
@@ -152,9 +211,9 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
           const emojiBytes = textToUtf8Bytes(emoji);
           lines.push(`.局部变量 emoji_${c.name}, 字节集`);
           lines.push(`emoji_${c.name} ＝ ${utf8BytesToEplFormat(emojiBytes)}`);
-          lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (主窗口句柄, 取变量数据地址 (emoji_${c.name}), 取字节集长度 (emoji_${c.name}), ${textPtr}, ${textLen}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
+          lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (${parentExpr}, 取变量数据地址 (emoji_${c.name}), 取字节集长度 (emoji_${c.name}), ${textPtr}, ${textLen}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
         } else {
-          lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (主窗口句柄, 0, 0, ${textPtr}, ${textLen}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
+          lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (${parentExpr}, 0, 0, ${textPtr}, ${textLen}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
         }
         break;
       }
@@ -162,7 +221,7 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
         const text = (p.text as string) || '标签';
         emitTextBytes(text);
         emitFontBytes();
-        lines.push(`${c.name} ＝ 创建标签 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.wordWrap)})`);
+        lines.push(`${c.name} ＝ 创建标签 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.wordWrap)})`);
         break;
       }
       case 'editbox': {
@@ -170,43 +229,43 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
         const fnName = p.emojiSupport ? '创建彩色Emoji编辑框' : '创建编辑框';
         emitTextBytes(text);
         emitFontBytes();
-        lines.push(`${c.name} ＝ ${fnName} (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.multiline)}, ${eplBool(p.readOnly)}, ${eplBool(p.password)}, ${eplBool(p.showBorder !== false)}, ${eplBool(p.vertCenter !== false)})`);
+        lines.push(`${c.name} ＝ ${fnName} (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)}, ${(p.alignment as number) || 0}, ${eplBool(p.multiline)}, ${eplBool(p.readOnly)}, ${eplBool(p.password)}, ${eplBool(p.showBorder !== false)}, ${eplBool(p.vertCenter !== false)})`);
         break;
       }
       case 'checkbox': {
         const text = (p.text as string) || '复选框';
         emitTextBytes(text);
         emitFontBytes();
-        lines.push(`${c.name} ＝ 创建复选框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${eplBool(p.checked)}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
+        lines.push(`${c.name} ＝ 创建复选框 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${eplBool(p.checked)}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
       }
       case 'radiobutton': {
         const text = (p.text as string) || '单选按钮';
         emitTextBytes(text);
         emitFontBytes();
-        lines.push(`${c.name} ＝ 创建单选按钮 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${(p.groupId as number) || 1}, ${eplBool(p.checked)}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
+        lines.push(`${c.name} ＝ 创建单选按钮 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${(p.groupId as number) || 1}, ${eplBool(p.checked)}, ${fgColor}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
       }
       case 'progressbar':
-        lines.push(`${c.name} ＝ 创建进度条 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.value as number) || 50}, ${eplColor((p.fgColor as string) || '#409EFF')}, ${eplColor((p.bgColor as string) || '#EBEEF5')}, ${p.showText !== false ? '真' : '假'}, ${eplColor((p.textColor as string) || '#303133')})`);
+        lines.push(`${c.name} ＝ 创建进度条 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.value as number) || 50}, ${eplColor((p.fgColor as string) || '#409EFF')}, ${eplColor((p.bgColor as string) || '#EBEEF5')}, ${p.showText !== false ? '真' : '假'}, ${eplColor((p.textColor as string) || '#303133')})`);
         break;
       case 'groupbox': {
         const text = (p.text as string) || '分组框';
         emitTextBytes(text);
         emitFontBytes();
-        lines.push(`${c.name} ＝ 创建分组框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${eplColor((p.borderColor as string) || '#DCDFE6')}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
+        lines.push(`${c.name} ＝ 创建分组框 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${textPtr}, ${textLen}, ${eplColor((p.borderColor as string) || '#DCDFE6')}, ${bgColor}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
       }
       case 'picturebox':
-        lines.push(`${c.name} ＝ 创建图片框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.scaleMode as number) || 2}, ${eplColor((p.bgColor as string) || '#F5F7FA')})`);
+        lines.push(`${c.name} ＝ 创建图片框 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.scaleMode as number) || 2}, ${eplColor((p.bgColor as string) || '#F5F7FA')})`);
         break;
       case 'combobox': {
         emitFontBytes();
-        lines.push(`${c.name} ＝ 创建组合框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.readOnly)}, ${fgColor}, ${bgColor}, ${(p.itemHeight as number) || 35}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
+        lines.push(`${c.name} ＝ 创建组合框 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.readOnly)}, ${fgColor}, ${bgColor}, ${(p.itemHeight as number) || 35}, ${fontPtr}, ${fontLen}, ${fontSize}, ${eplBool(p.bold)}, ${eplBool(p.italic)}, ${eplBool(p.underline)})`);
         break;
       }
       case 'listbox':
-        lines.push(`${c.name} ＝ 创建列表框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.multiSelect)}, ${fgColor}, ${bgColor})`);
+        lines.push(`${c.name} ＝ 创建列表框 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.multiSelect)}, ${fgColor}, ${bgColor})`);
         break;
       case 'tabcontrol': {
         lines.push(`${c.name} ＝ 创建TabControl (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height})`);
@@ -214,19 +273,85 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
           .split('\n')
           .map((t) => t.trim())
           .filter(Boolean);
-        for (const tabName of tabNames) {
+        for (let index = 0; index < tabNames.length; index++) {
           const varName = `tab_${c.name}_tmp`;
-          emitUtf8Text(varName, tabName, lines);
+          emitUtf8Text(varName, tabNames[index], lines);
           lines.push(`添加Tab页 (${c.name}, 取变量数据地址 (${varName}), 取字节集长度 (${varName}), 0)`);
+          lines.push(`${c.name}_page_${index} ＝ 获取Tab内容窗口 (${c.name}, ${index})`);
+        }
+        // 延后到所有控件创建后再调用，确保 Tab 子控件在父窗口可见时创建
+        lines.push(`' 更新TabControl布局 将在所有控件创建后调用`);
+        break;
+      }
+      case 'datagridview': {
+        lines.push(`${c.name} ＝ 创建DataGridView (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.virtualMode)}, ${eplBool(p.zebraStripe)}, ${fgColor}, ${bgColor})`);
+        const columnsStr = (p.columns as string) || '';
+        const columns = columnsStr.split('\n').map((s) => s.trim()).filter(Boolean);
+        const colWidth = columns.length > 0 ? Math.max(80, Math.floor((c.width - 20) / columns.length)) : 100;
+        for (let i = 0; i < columns.length; i++) {
+          const colName = columns[i];
+          if (!colName) continue;
+          const varName = `列_${c.name}_${i}`;
+          emitUtf8Text(varName, colName, lines);
+          lines.push(`表格_添加文本列 (${c.name}, 取变量数据地址 (${varName}), 取字节集长度 (${varName}), ${colWidth})`);
         }
         break;
       }
-      case 'datagridview':
-        lines.push(`${c.name} ＝ 创建DataGridView (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplBool(p.virtualMode)}, ${eplBool(p.zebraStripe)}, ${fgColor}, ${bgColor}, ${eplColor((p.headerColor as string) || '#409EFF')}, ${fontPtr || '0'}, ${0}, ${fontSize})`);
+      case 'treeview': {
+        lines.push(`${c.name} ＝ 创建树形框 (${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${bgColor}, ${fgColor}, 0)`);
+        const nodesStr = (p.nodes as string) || '';
+        const nodeLines = nodesStr.split('\n').map((s) => s.trimEnd()).filter((s) => s.length > 0);
+        if (nodeLines.length > 0) {
+          lines.push(`ClearTree (${c.name})`);
+          const stack: { level: number; idVar: string }[] = [];
+          for (let i = 0; i < nodeLines.length; i++) {
+            const line = nodeLines[i];
+            const trimmed = line.trimStart();
+            const level = (line.length - trimmed.length) / 2;  // 2 spaces per level
+            const fullText = trimmed || `节点${i + 1}`;
+            const { emoji, rest } = splitLeadingEmoji(fullText);
+            const text = rest || fullText;  // 无 emoji 时用全文
+            const textVar = `节点文本_${c.name}_${i}`;
+            const iconVar = `节点图标_${c.name}_${i}`;
+            const idVar = `节点ID_${c.name}_${i}`;
+            emitUtf8Text(textVar, text, lines);
+            if (emoji) {
+              const emojiBytes = textToUtf8Bytes(emoji);
+              lines.push(`${iconVar} ＝ ${utf8BytesToEplFormat(emojiBytes)}`);
+            }
+            const iconArgs = emoji
+              ? `取变量数据地址 (${iconVar}), 取字节集长度 (${iconVar})`
+              : '0, 0';
+            if (level === 0) {
+              lines.push(`${idVar} ＝ AddRootNode (${c.name}, 取变量数据地址 (${textVar}), 取字节集长度 (${textVar}), ${iconArgs})`);
+              stack.length = 0;
+              stack.push({ level: 0, idVar });
+            } else {
+              while (stack.length > 0 && stack[stack.length - 1].level >= level) stack.pop();
+              if (stack.length === 0) {
+                lines.push(`${idVar} ＝ AddRootNode (${c.name}, 取变量数据地址 (${textVar}), 取字节集长度 (${textVar}), ${iconArgs})`);
+                stack.push({ level: 0, idVar });
+              } else {
+                const parentVar = stack[stack.length - 1].idVar;
+                lines.push(`${idVar} ＝ AddChildNode (${c.name}, ${parentVar}, 取变量数据地址 (${textVar}), 取字节集长度 (${textVar}), ${iconArgs})`);
+                stack.push({ level, idVar });
+              }
+            }
+          }
+        }
         break;
-      case 'treeview':
-        lines.push(`${c.name} ＝ 创建树形框 (主窗口句柄, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${fgColor}, ${bgColor})`);
-        break;
+      }
+    }
+  }
+
+  // 所有 Tab 子控件创建完成后，切换回第一页并更新布局
+  const tabControls = controls.filter((c) => c.type === 'tabcontrol');
+  if (tabControls.length > 0) {
+    lines.push(``);
+    lines.push(`' ===== 更新 TabControl 布局 =====`);
+    for (const tc of tabControls) {
+      lines.push(`切换到Tab (${tc.name}, 0)`);
+      lines.push(`更新TabControl布局 (${tc.name})`);
     }
   }
 

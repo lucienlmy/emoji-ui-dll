@@ -2290,6 +2290,72 @@ void __stdcall set_window_icon(HWND hwnd, const char* icon_path) {
     }
 }
 
+// .ico 文件格式结构（用于从内存加载）
+#pragma pack(push, 1)
+struct IcoDirEntry {
+    BYTE bWidth;
+    BYTE bHeight;
+    BYTE bColorCount;
+    BYTE bReserved;
+    WORD wPlanes;
+    WORD wBitCount;
+    DWORD dwBytesInRes;
+    DWORD dwImageOffset;
+};
+#pragma pack(pop)
+
+// 从字节集设置窗口图标（支持 .ico 文件格式，易语言可插入图片资源后传入字节集）
+void __stdcall set_window_icon_bytes(HWND hwnd, const unsigned char* icon_data, int data_len) {
+    if (!hwnd || !icon_data || data_len < 6) return;
+
+    HICON hIcon = nullptr;
+
+    // 解析 .ico 文件格式：ICONDIR(6字节) + ICONDIRENTRY(16字节)*N
+    if (data_len >= 6 + 16) {
+        WORD idCount = *(const WORD*)(icon_data + 4);
+        if (idCount > 0 && data_len >= 6 + 16) {
+            const IcoDirEntry* entry = (const IcoDirEntry*)(icon_data + 6);
+            DWORD offset = entry->dwImageOffset;
+            DWORD size = entry->dwBytesInRes;
+            int w = (entry->bWidth == 0) ? 256 : entry->bWidth;
+            int h = (entry->bHeight == 0) ? 256 : entry->bHeight;
+
+            if (offset + size <= (DWORD)data_len && size > 0) {
+                hIcon = (HICON)CreateIconFromResourceEx(
+                    (PBYTE)icon_data + offset,
+                    size,
+                    TRUE,
+                    0x00030000,
+                    w, h,
+                    LR_DEFAULTCOLOR
+                );
+            }
+        }
+    }
+
+    // 若 CreateIconFromResourceEx 失败（如 PNG 图标），尝试临时文件方式
+    if (!hIcon) {
+        wchar_t tempPath[MAX_PATH], tempFile[MAX_PATH];
+        if (GetTempPathW(MAX_PATH, tempPath) && GetTempFileNameW(tempPath, L"ico", 0, tempFile)) {
+            HANDLE hFile = CreateFileW(tempFile, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile != INVALID_HANDLE_VALUE) {
+                DWORD written;
+                WriteFile(hFile, icon_data, data_len, &written, nullptr);
+                CloseHandle(hFile);
+                if (written == (DWORD)data_len) {
+                    hIcon = (HICON)LoadImageW(nullptr, tempFile, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+                }
+                DeleteFileW(tempFile);
+            }
+        }
+    }
+
+    if (hIcon) {
+        SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+        SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+    }
+}
+
 // Set window title (UTF-8 input)
 void __stdcall set_window_title(HWND hwnd, const char* title_utf8, int title_len) {
     if (!hwnd || !title_utf8 || title_len <= 0) return;
@@ -3236,6 +3302,154 @@ static BOOL CALLBACK ShowAndInvalidateChildProc(HWND hChild, LPARAM) {
     return TRUE;
 }
 
+// Tab 内容窗口过程：支持 D2D 渲染和 Emoji 按钮
+static const wchar_t* TAB_CONTENT_D2D_CLASS = L"TabContentD2DClass";
+
+static void TabContentEnsureRenderTarget(HWND hwnd, WindowState* state) {
+    if (!state || !g_d2d_factory) return;
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    int w = rc.right - rc.left;
+    int h = rc.bottom - rc.top;
+    if (w < 1 || h < 1) return;
+    if (state->render_target) {
+        state->render_target->Release();
+        state->render_target = nullptr;
+    }
+    ID2D1HwndRenderTarget* rt = nullptr;
+    HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(
+        D2D1::RenderTargetProperties(),
+        D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU((UINT)w, (UINT)h)),
+        &rt
+    );
+    if (SUCCEEDED(hr) && rt) {
+        UINT dpi = GetDpiForWindow(hwnd);
+        if (dpi > 0) rt->SetDpi((float)dpi, (float)dpi);
+        state->render_target = rt;
+        state->dwrite_factory = g_dwrite_factory;
+    }
+}
+
+static LRESULT CALLBACK TabContentWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    auto it = g_windows.find(hwnd);
+    if (it == g_windows.end() && msg != WM_CREATE) {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    WindowState* state = (it != g_windows.end()) ? it->second : nullptr;
+
+    switch (msg) {
+    case WM_CREATE: {
+        WindowState* new_state = new WindowState();
+        new_state->hwnd = hwnd;
+        new_state->custom_titlebar = false;
+        new_state->titlebar_height = 0;
+        new_state->client_bg_color = 0;
+        g_windows[hwnd] = new_state;
+        return 0;
+    }
+    case WM_SIZE: {
+        if (state) TabContentEnsureRenderTarget(hwnd, state);
+        break;
+    }
+    case WM_SHOWWINDOW:
+        if (wparam && state) TabContentEnsureRenderTarget(hwnd, state);
+        break;
+    case WM_EW_TABPAGE_VISIBLE:
+        if (state) TabContentEnsureRenderTarget(hwnd, state);
+        return 0;
+    case WM_PAINT: {
+        if (state && state->render_target) {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+            state->render_target->BeginDraw();
+            UINT32 win_bg = (state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background();
+            state->render_target->Clear(D2D1::ColorF(
+                ((win_bg >> 16) & 0xFF) / 255.0f,
+                ((win_bg >> 8) & 0xFF) / 255.0f,
+                (win_bg & 0xFF) / 255.0f, 1.0f));
+            for (const auto& button : state->buttons) {
+                bool should_draw = true;
+                for (const auto& gb_pair : g_groupboxes) {
+                    GroupBoxState* gb = gb_pair.second;
+                    if (std::find(gb->button_ids.begin(), gb->button_ids.end(), button.id) != gb->button_ids.end()) {
+                        should_draw = gb->visible;
+                        break;
+                    }
+                }
+                if (should_draw) DrawButton(state->render_target, state->dwrite_factory, button);
+            }
+            for (const auto& pair : g_labels) {
+                LabelState* label = pair.second;
+                if (label && label->parent == hwnd && label->parent_drawn) {
+                    DrawParentLabel(state->render_target, state->dwrite_factory, label);
+                }
+            }
+            state->render_target->EndDraw();
+            EndPaint(hwnd, &ps);
+        }
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        if (state) {
+            int x = LOWORD(lparam);
+            int y = HIWORD(lparam);
+            for (auto& button : state->buttons) {
+                if (button.enabled && button.visible && button.ContainsPoint(x, y)) {
+                    button.is_pressed = true;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
+                }
+            }
+        }
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        if (state) {
+            int x = LOWORD(lparam);
+            int y = HIWORD(lparam);
+            for (auto& button : state->buttons) {
+                if (button.is_pressed && button.enabled && button.visible && button.ContainsPoint(x, y)) {
+                    button.is_pressed = false;
+                    if (g_button_callback) g_button_callback(button.id, hwnd);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
+                }
+                button.is_pressed = false;
+            }
+        }
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        if (state) {
+            int x = LOWORD(lparam);
+            int y = HIWORD(lparam);
+            bool needs_redraw = false;
+            for (auto& button : state->buttons) {
+                bool hovered = button.enabled && button.visible && button.ContainsPoint(x, y);
+                if (hovered != button.is_hovered) {
+                    button.is_hovered = hovered;
+                    needs_redraw = true;
+                }
+            }
+            if (needs_redraw) InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_DESTROY: {
+        if (state) {
+            if (state->render_target) {
+                state->render_target->Release();
+                state->render_target = nullptr;
+            }
+            delete state;
+            g_windows.erase(hwnd);
+        }
+        return 0;
+    }
+    }
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
 // 更新 Tab 布局（显示/隐藏内容窗口）
 // 所有内容窗口保持在同一位置叠加，仅用 ShowWindow 控制可见性
 void UpdateTabLayout(TabControlState* state) {
@@ -3259,6 +3473,7 @@ void UpdateTabLayout(TabControlState* state) {
                 SetWindowPos(page.hContentWindow, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
                 ShowWindow(page.hContentWindow, SW_SHOW);  // 确保子控件收到 WM_SHOWWINDOW
                 page.visible = true;
+                SendMessage(page.hContentWindow, WM_EW_TABPAGE_VISIBLE, 0, 0);  // Tab 内容窗口 D2D 重建
                 EnumChildWindows(page.hContentWindow, ShowAndInvalidateChildProc, 0);
                 RedrawWindow(page.hContentWindow, nullptr, nullptr,
                     RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -3547,14 +3762,13 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
             );
         }
 
-        // 使用纯 DefWindowProc 的简单窗口类，避免任何自绘覆盖子控件（TreeView 等）
+        // 使用 TabContentD2DClass 支持 D2D 渲染和 Emoji 按钮
         static bool tab_content_class_registered = false;
-        const wchar_t* tab_content_class = L"TabContentPlainClass";
         if (!tab_content_class_registered) {
             WNDCLASSW wc = {};
-            wc.lpfnWndProc = DefWindowProcW;
+            wc.lpfnWndProc = TabContentWindowProc;
             wc.hInstance = GetModuleHandle(nullptr);
-            wc.lpszClassName = tab_content_class;
+            wc.lpszClassName = TAB_CONTENT_D2D_CLASS;
             wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
             wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
             RegisterClassW(&wc);
@@ -3563,7 +3777,7 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
 
         hContentWindow = CreateWindowExW(
             0,
-            tab_content_class,
+            TAB_CONTENT_D2D_CLASS,
             L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
             0, 0, 0, 0,

@@ -299,6 +299,8 @@ public void SetCheckBoxCallback(int checkBoxId, Action<int, int> handler)
 [DllImport(DLL, CallingConvention = CC)] public static extern void destroy_window(IntPtr hwnd);
 [DllImport(DLL, CallingConvention = CC)] public static extern int GetWindowTitle(IntPtr hwnd, IntPtr buf, int bufSize);
 [DllImport(DLL, CallingConvention = CC)] public static extern void GetWindowBounds(IntPtr hwnd, out int x, out int y, out int w, out int h);
+[DllImport(DLL, CallingConvention = CC)] public static extern void set_window_icon(IntPtr hwnd, string icon_path);
+[DllImport(DLL, CallingConvention = CC)] public static extern void set_window_icon_bytes(IntPtr hwnd, byte[] icon_data, int data_len);
 ```
 
 ### 按钮

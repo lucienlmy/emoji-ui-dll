@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -110,7 +110,7 @@ namespace EmojiWindowDemo
 
         #region 窗口
         [DllImport(DLL, CallingConvention = CC)] public static extern IntPtr create_window_bytes(byte[] title, int titleLen, int w, int h);
-        [DllImport(DLL, CallingConvention = CC)] public static extern IntPtr create_window_bytes_ex(byte[] title, int titleLen, int w, int h, int titlebarColor);
+        [DllImport(DLL, CallingConvention = CC)] public static extern IntPtr create_window_bytes_ex(byte[] title, int titleLen, int w, int h, uint titlebarColor, uint clientBgColor);
         [DllImport(DLL, CallingConvention = CC)] public static extern void set_message_loop_main_window(IntPtr hwnd);
         [DllImport(DLL, CallingConvention = CC)] public static extern int run_message_loop();
         [DllImport(DLL, CallingConvention = CC)] public static extern void destroy_window(IntPtr hwnd);

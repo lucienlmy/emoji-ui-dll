@@ -35,6 +35,16 @@ export default function PropertyPanel() {
             <input value={win.emoji} onChange={(e) => setWindow({ emoji: e.target.value })} style={{ width: 50 }} />
           </div>
           <div className="prop-row">
+            <label>X 位置</label>
+            <input type="number" value={win.x ?? -1}
+              onChange={(e) => setWindow({ x: e.target.value === '' ? -1 : +e.target.value })} title="-1=系统默认" />
+          </div>
+          <div className="prop-row">
+            <label>Y 位置</label>
+            <input type="number" value={win.y ?? -1}
+              onChange={(e) => setWindow({ y: e.target.value === '' ? -1 : +e.target.value })} title="-1=系统默认" />
+          </div>
+          <div className="prop-row">
             <label>宽度</label>
             <input type="number" value={win.width} min={200}
               onChange={(e) => setWindow({ width: +e.target.value })} />
@@ -85,7 +95,7 @@ export default function PropertyPanel() {
             <div className="prop-row" key={prop.key}>
               <label>{prop.label}</label>
               {prop.type === 'string' && (
-                prop.key === 'items' || prop.key === 'tabs' || prop.key === 'columns' ? (
+                prop.key === 'items' || prop.key === 'tabs' || prop.key === 'columns' || prop.key === 'nodes' ? (
                   <textarea
                     value={(val as string) || ''}
                     rows={3}

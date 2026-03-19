@@ -68,7 +68,7 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
 
   lines.push(`    // ===== DLL 导入声明 =====`);
   lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
-  lines.push(`    static extern IntPtr create_window_bytes_ex(byte[] title, int titleLen, int w, int h, uint titlebarColor);`);
+  lines.push(`    static extern IntPtr create_window_bytes_ex(byte[] title, int titleLen, int x, int y, int w, int h, uint titlebarColor, uint clientBgColor);`);
   lines.push(``);
   lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
   lines.push(`    static extern void set_message_loop_main_window(IntPtr hwnd);`);
@@ -185,7 +185,10 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
   lines.push(`    {`);
   const titleFull = `${win.emoji} ${win.title}`.trim();
   lines.push(`        byte[] title = ToUtf8("${titleFull}");`);
-  lines.push(`        IntPtr hwnd = create_window_bytes_ex(title, title.Length, ${win.width}, ${win.height}, ${csColor(win.titlebarColor)});`);
+        const winBg = (win.bgColor as string) || '#FFFFFF';
+        const winX = win.x ?? -1;
+        const winY = win.y ?? -1;
+        lines.push(`        IntPtr hwnd = create_window_bytes_ex(title, title.Length, ${winX}, ${winY}, ${win.width}, ${win.height}, ${csColor(win.titlebarColor)}, ${csColor(winBg)});`);
   lines.push(``);
   lines.push(`        byte[] font;`);
 

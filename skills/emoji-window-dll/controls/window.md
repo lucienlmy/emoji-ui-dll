@@ -33,6 +33,7 @@
 | 函数名 | 参数 | 返回值 | 说明 |
 |--------|------|--------|------|
 | `set_window_icon` | `int hwnd, string icon_path` | `void` | 设置窗口图标（文件路径） |
+| `set_window_icon_bytes` | `int hwnd, int icon_data_ptr, int data_len` | `void` | 从字节集设置窗口图标（易语言插入图片资源后传入 `取变量数据地址(图标字节集)` 和 `取字节集长度(图标字节集)`） |
 | `set_window_titlebar_color` | `int hwnd, int color` | `void` | 设置标题栏颜色（RGB，0=跟随主题） |
 | `GetWindowTitlebarColor` | `int hwnd` | `int` (RGB，-1=错误) | 获取标题栏颜色 |
 
@@ -70,3 +71,4 @@ void __stdcall OnWindowClose(int hwnd);
 - `GetWindowTitle` 需两次调用：第一次 buf_ptr=0 获取所需大小，第二次传入缓冲区读取内容
 - `GetWindowBounds` 的 x/y/w/h 参数需要传址（指针），易语言中使用 `传址 变量`
 - 窗口关闭回调在用户点击关闭按钮或代码调用 `destroy_window` 时均会触发
+- 使用 `set_window_icon_bytes` 时，易语言可插入 .ico 图片资源，先赋值 `图标字节集 ＝ #图标1`，再传入 `取变量数据地址(图标字节集)` 和 `取字节集长度(图标字节集)`，无需依赖外部文件路径
