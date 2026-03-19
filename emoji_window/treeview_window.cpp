@@ -629,11 +629,77 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
 void RenderTreeView(TreeViewState* state);
 void RenderNode(TreeViewState* state, TreeNode* node, float y_offset);
+
+// 重建 D2D 渲染目标（窗口隐藏后显示时可能失效）
+static bool RecreateTreeViewRenderTarget(TreeViewState* state) {
+    if (!state || !state->d2d_factory) return false;
+    SafeRelease(&state->brush);
+    SafeRelease(&state->render_target);
+    RECT rc;
+    GetClientRect(state->hwnd, &rc);
+    int w = rc.right - rc.left, h = rc.bottom - rc.top;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    HRESULT hr = state->d2d_factory->CreateHwndRenderTarget(
+        D2D1::RenderTargetProperties(),
+        D2D1::HwndRenderTargetProperties(state->hwnd, D2D1::SizeU((UINT)w, (UINT)h)),
+        &state->render_target);
+    if (FAILED(hr) || !state->render_target) return false;
+    hr = state->render_target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &state->brush);
+    return SUCCEEDED(hr) && state->brush;
+}
 void RenderExpandIcon(TreeViewState* state, float x, float y, bool expanded);
 void RenderCheckbox(TreeViewState* state, float x, float y, float size, bool checked);
 void RenderEmoji(TreeViewState* state, const wchar_t* emoji, float x, float y, float size);
 void RenderScrollbar(TreeViewState* state);
 void RenderCustomEditBox(TreeViewState* state);
+
+// ============================================================================
+// CreateSimpleTreeView - 标准 Windows SysTreeView32 控件（用于排查 Tab 内显示问题）
+// ============================================================================
+
+HWND __stdcall CreateSimpleTreeView(HWND parent, int x, int y, int width, int height) {
+    if (!parent) return NULL;
+
+    // 确保 Common Controls 已初始化（含 TreeView）
+    static bool treeview_comctl_init = false;
+    if (!treeview_comctl_init) {
+        INITCOMMONCONTROLSEX icex = {};
+        icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
+        icex.dwICC = ICC_TREEVIEW_CLASSES;
+        if (InitCommonControlsEx(&icex)) {
+            treeview_comctl_init = true;
+        }
+    }
+
+    DWORD style = WS_CHILD | WS_VISIBLE | WS_BORDER
+        | TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS;
+
+    HWND hTree = CreateWindowExW(
+        0,
+        WC_TREEVIEWW,
+        L"",
+        style,
+        x, y, width, height,
+        parent,
+        NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+
+    if (!hTree) return NULL;
+
+    // 添加默认根节点便于验证显示
+    wchar_t rootText[] = L"\u6839\u8282\u70B9";  // "根节点"
+    TVINSERTSTRUCTW tvis = {};
+    tvis.hParent = TVI_ROOT;
+    tvis.hInsertAfter = TVI_LAST;
+    tvis.item.mask = TVIF_TEXT;
+    tvis.item.pszText = rootText;
+    TreeView_InsertItem(hTree, &tvis);
+
+    return hTree;
+}
 
 // ============================================================================
 // API 实现（占位符 - 将在后续任务中实现）
@@ -831,7 +897,10 @@ HWND __stdcall CreateTreeView(
     
     // 存入全局 map
     g_treeview_states[hwnd] = state;
-    
+
+    // 添加默认根节点，确保空树也有可见内容（便于 Tab 内显示验证）
+    AddRootNode(hwnd, reinterpret_cast<const unsigned char*>("\xe6\xa0\xb9\xe8\x8a\x82\xe7\x82\xb9"), 9, nullptr, 0);
+
     return hwnd;
 }
 
@@ -2037,6 +2106,22 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case WM_CREATE:
             // 窗口创建时的初始化已在 CreateTreeView 中完成
             return 0;
+
+        case WM_EW_TABPAGE_VISIBLE:
+            // Tab 页变为可见时由父窗口发送，重建 D2D 渲染目标
+            if (state) {
+                RecreateTreeViewRenderTarget(state);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+
+        case WM_SHOWWINDOW:
+            // 从隐藏变为可见时（如 Tab 切换），重建 D2D 渲染目标并强制重绘
+            if (wParam == TRUE && state) {
+                RecreateTreeViewRenderTarget(state);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return DefWindowProc(hwnd, msg, wParam, lParam);
             
         case WM_DESTROY:
             // 清理工作已在 DestroyTreeView 中完成
@@ -2738,9 +2823,8 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
  * 优化：使用二分查找快速定位可见节点范围，支持10000+节点的高性能渲染
  */
 void RenderTreeView(TreeViewState* state) {
-    if (!state || !state->render_target) {
-        return;
-    }
+    if (!state) return;
+    if (!state->render_target && !RecreateTreeViewRenderTarget(state)) return;
     
     ID2D1HwndRenderTarget* rt = state->render_target;
     
@@ -2804,10 +2888,11 @@ void RenderTreeView(TreeViewState* state) {
     // 结束绘制
     HRESULT hr = rt->EndDraw();
     
-    // 如果设备丢失，需要重新创建资源
+    // 窗口隐藏后显示时渲染目标可能失效，需重建
     if (hr == D2DERR_RECREATE_TARGET) {
-        // 这里可以添加重新创建渲染目标的逻辑
-        // 暂时忽略，在后续版本中完善
+        if (RecreateTreeViewRenderTarget(state)) {
+            InvalidateRect(state->hwnd, nullptr, TRUE);
+        }
     }
 }
 

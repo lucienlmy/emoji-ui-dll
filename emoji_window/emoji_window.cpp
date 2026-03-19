@@ -1,5 +1,6 @@
 #include "log.h"
 #include "emoji_window.h"
+#include "treeview_window.h"  // WM_EW_TABPAGE_VISIBLE
 #include "submenu_window.h"
 #include <algorithm>
 #include <windowsx.h>  // For GET_X_LPARAM and GET_Y_LPARAM
@@ -320,6 +321,7 @@ UINT32 DarkenColor(UINT32 color, float factor) {
 struct WindowCreateInit {
     std::wstring title;
     UINT32 titlebar_color = 0;
+    UINT32 client_bg_color = 0;   // 客户区背景色，0=纯白(ThemeColor_Background)
     bool custom_titlebar = true;
 };
 
@@ -1265,6 +1267,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         if (init) {
             new_state->title = init->title;
             new_state->titlebar_color = init->titlebar_color;
+            new_state->client_bg_color = init->client_bg_color;
             new_state->custom_titlebar = init->custom_titlebar;
         }
         g_windows[hwnd] = new_state;
@@ -1408,8 +1411,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             BeginPaint(hwnd, &ps);
 
             state->render_target->BeginDraw();
-            // 使用主题背景色（浅色背景）
-            UINT32 win_bg = ThemeColor_BackgroundLight();
+            // 客户区背景色：0=纯白(ThemeColor_Background)，非0=用户指定色；与标签/复选框/单选框底色一致
+            UINT32 win_bg = (state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background();
             state->render_target->Clear(D2D1::ColorF(
                 ((win_bg >> 16) & 0xFF) / 255.0f,
                 ((win_bg >> 8) & 0xFF) / 255.0f,
@@ -1847,7 +1850,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 }
 
 // Create window
-HWND __stdcall create_window(const char* title, int width, int height) {
+// x, y: 窗口位置（像素），传 -1 表示使用系统默认位置 CW_USEDEFAULT
+HWND __stdcall create_window(const char* title, int x, int y, int width, int height) {
     static bool com_initialized = false;
     if (!com_initialized) {
         CoInitialize(nullptr);
@@ -1896,12 +1900,15 @@ HWND __stdcall create_window(const char* title, int width, int height) {
     init_data.titlebar_color = 0;
     init_data.custom_titlebar = true;
 
+    int pos_x = (x < 0) ? CW_USEDEFAULT : x;
+    int pos_y = (y < 0) ? CW_USEDEFAULT : y;
+
     HWND hwnd = CreateWindowExW(
         0,
         class_name,
         wtitle.c_str(),
         WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,  // WS_CLIPCHILDREN: 绘制时裁剪子控件区域
-        CW_USEDEFAULT, CW_USEDEFAULT,
+        pos_x, pos_y,
         width, height,
         nullptr, nullptr,
         GetModuleHandle(nullptr),
@@ -1942,6 +1949,16 @@ HWND __stdcall create_window(const char* title, int width, int height) {
     MARGINS margins = { 0, 0, state->titlebar_height, 0 };
     DwmExtendFrameIntoClientArea(hwnd, &margins);
 
+    // Windows 11+ 圆角窗口（与设计器一致）
+    #ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+    #define DWMWA_WINDOW_CORNER_PREFERENCE 33
+    #endif
+    #ifndef DWMWCP_ROUND
+    #define DWMWCP_ROUND 2
+    #endif
+    DWORD corner_pref = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner_pref, sizeof(corner_pref));
+
     // 确保系统窗口文本存在，任务栏/Alt+Tab 也能显示标题
     SetWindowTextW(hwnd, wtitle.c_str());
 
@@ -1952,13 +1969,14 @@ HWND __stdcall create_window(const char* title, int width, int height) {
 }
 
 // Create window (UTF-8 bytes version) - supports emoji in title
-HWND __stdcall create_window_bytes(const unsigned char* title_bytes, int title_len, int width, int height) {
-    // 向后兼容：titlebar_color=0 表示跟随主题
-    return create_window_bytes_ex(title_bytes, title_len, width, height, 0);
+HWND __stdcall create_window_bytes(const unsigned char* title_bytes, int title_len, int x, int y, int width, int height) {
+    // 向后兼容：titlebar_color=0 跟随主题，client_bg_color=0 纯白
+    return create_window_bytes_ex(title_bytes, title_len, x, y, width, height, 0, 0);
 }
 
-// Create window with custom titlebar color (UTF-8 bytes version)
-HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int title_len, int width, int height, UINT32 titlebar_color) {
+// Create window with custom titlebar and client background color (UTF-8 bytes version)
+// x, y: 窗口位置（像素），传 -1 表示使用系统默认位置 CW_USEDEFAULT
+HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int title_len, int x, int y, int width, int height, UINT32 titlebar_color, UINT32 client_bg_color) {
     // Convert UTF-8 bytes to wide string
     std::string utf8_title;
     if (title_bytes && title_len > 0) {
@@ -2010,14 +2028,18 @@ HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int titl
     WindowCreateInit init_data;
     init_data.title = wtitle;
     init_data.titlebar_color = titlebar_color;
+    init_data.client_bg_color = client_bg_color;
     init_data.custom_titlebar = true;
+
+    int pos_x = (x < 0) ? CW_USEDEFAULT : x;
+    int pos_y = (y < 0) ? CW_USEDEFAULT : y;
 
     HWND hwnd = CreateWindowExW(
         0,
         class_name,
         wtitle.c_str(),
         WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
-        CW_USEDEFAULT, CW_USEDEFAULT,
+        pos_x, pos_y,
         width, height,
         nullptr, nullptr,
         GetModuleHandle(nullptr),
@@ -2049,6 +2071,16 @@ HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int titl
     // DWM扩展客户区到标题栏区域
     MARGINS margins = { 0, 0, state->titlebar_height, 0 };
     DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+    // Windows 11+ 圆角窗口（与设计器一致）
+    #ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+    #define DWMWA_WINDOW_CORNER_PREFERENCE 33
+    #endif
+    #ifndef DWMWCP_ROUND
+    #define DWMWCP_ROUND 2
+    #endif
+    DWORD corner_pref = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner_pref, sizeof(corner_pref));
 
     // 确保系统窗口文本存在，任务栏/Alt+Tab 也能显示标题
     SetWindowTextW(hwnd, wtitle.c_str());
@@ -2286,6 +2318,16 @@ void __stdcall set_window_titlebar_color(HWND hwnd, UINT32 color) {
     auto it = g_windows.find(hwnd);
     if (it != g_windows.end()) {
         it->second->titlebar_color = color;
+        InvalidateRect(hwnd, nullptr, FALSE);
+    }
+}
+
+// 设置窗口客户区背景色（ARGB，0=使用 ThemeColor_Background 纯白）
+extern "C" __declspec(dllexport) void __stdcall SetWindowBackgroundColor(HWND hwnd, UINT32 color) {
+    if (!hwnd) return;
+    auto it = g_windows.find(hwnd);
+    if (it != g_windows.end()) {
+        it->second->client_bg_color = color;
         InvalidateRect(hwnd, nullptr, FALSE);
     }
 }
@@ -3184,45 +3226,44 @@ void __stdcall show_confirm_box_bytes(
 
 // ========== TabControl 实现 ==========
 
+// EnumChildWindows 回调：显示子窗口并强制重绘（解决 Tab 切换后 TreeView 等不显示）
+static BOOL CALLBACK ShowAndInvalidateChildProc(HWND hChild, LPARAM) {
+    if (IsWindow(hChild)) {
+        ShowWindow(hChild, SW_SHOW);
+        SendMessage(hChild, WM_EW_TABPAGE_VISIBLE, 0, 0);  // 通知 D2D 控件重建渲染目标
+        InvalidateRect(hChild, nullptr, TRUE);
+    }
+    return TRUE;
+}
+
 // 更新 Tab 布局（显示/隐藏内容窗口）
+// 所有内容窗口保持在同一位置叠加，仅用 ShowWindow 控制可见性
 void UpdateTabLayout(TabControlState* state) {
     if (!state || !state->hTabControl) return;
 
-    // 获取 Tab Control 的显示区域（相对于 TabControl）
     RECT rcTab;
     GetClientRect(state->hTabControl, &rcTab);
     TabCtrl_AdjustRect(state->hTabControl, FALSE, &rcTab);
 
-    // 将坐标转换为相对于父窗口的坐标
-    POINT pt = { rcTab.left, rcTab.top };
-    MapWindowPoints(state->hTabControl, state->hParent, &pt, 1);
-    rcTab.left = pt.x;
-    rcTab.top = pt.y;
+    int w = rcTab.right - rcTab.left;
+    int h = rcTab.bottom - rcTab.top;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
 
-    POINT pt2 = { rcTab.right, rcTab.bottom };
-    MapWindowPoints(state->hTabControl, state->hParent, &pt2, 1);
-    rcTab.right = pt2.x;
-    rcTab.bottom = pt2.y;
-
-    // 遍历所有 Tab 页，更新可见性和位置
     for (size_t i = 0; i < state->pages.size(); i++) {
         TabPageInfo& page = state->pages[i];
         if (page.hContentWindow && IsWindow(page.hContentWindow)) {
+            SetWindowPos(page.hContentWindow, nullptr, rcTab.left, rcTab.top, w, h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
             if ((int)i == state->currentIndex) {
-                // 显示当前选中的页面
-                SetWindowPos(
-                    page.hContentWindow,
-                    HWND_TOP,
-                    rcTab.left,
-                    rcTab.top,
-                    rcTab.right - rcTab.left,
-                    rcTab.bottom - rcTab.top,
-                    SWP_SHOWWINDOW
-                );
+                SetWindowPos(page.hContentWindow, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                ShowWindow(page.hContentWindow, SW_SHOW);  // 确保子控件收到 WM_SHOWWINDOW
                 page.visible = true;
+                EnumChildWindows(page.hContentWindow, ShowAndInvalidateChildProc, 0);
+                RedrawWindow(page.hContentWindow, nullptr, nullptr,
+                    RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
             } else {
-                // 隐藏其他页面（但不销毁，保留内容）
-                ShowWindow(page.hContentWindow, SW_HIDE);
+                ShowWindow(page.hContentWindow, SW_HIDE);  // 隐藏以让 D2D 控件在显示时重建渲染目标
                 page.visible = false;
             }
         }
@@ -3418,19 +3459,19 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
     if (!comctl_initialized) {
         INITCOMMONCONTROLSEX icex;
         icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
-        icex.dwICC = ICC_TAB_CLASSES;
+        icex.dwICC = ICC_TAB_CLASSES | ICC_TREEVIEW_CLASSES;
         InitCommonControlsEx(&icex);
         comctl_initialized = true;
     }
 
-    // 创建 Tab Control（TCS_OWNERDRAWFIXED：父窗口自绘标签，实现彩色 Emoji 渲染）
+    // 创建 Tab Control（TCS_OWNERDRAWFIXED：父窗口自绘标签；TCS_FLATBUTTONS：扁平样式，与设计器一致）
     int tb_offset = GetTitleBarOffset(hParent);
     HWND hTabControl = CreateWindowExW(
         0,
         WC_TABCONTROLW,
         L"",
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS | TCS_FOCUSNEVER
-        | TCS_OWNERDRAWFIXED | TCS_FIXEDWIDTH,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | TCS_TABS | TCS_FOCUSNEVER
+        | TCS_OWNERDRAWFIXED | TCS_FIXEDWIDTH | TCS_FLATBUTTONS,
         x, y + tb_offset, width, height,
         hParent,
         nullptr,
@@ -3443,8 +3484,8 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
     // 设置固定标签尺寸（宽=120px 能容纳 Emoji + 中文；高=34px 给 Emoji 足够空间）
     SendMessage(hTabControl, TCM_SETITEMSIZE, 0, MAKELPARAM(120, 34));
 
-    // 启用现代视觉样式（XP/Vista+ 风格，仅影响标签边框；标签内容由 WM_DRAWITEM 自绘）
-    SetWindowTheme(hTabControl, L"Explorer", nullptr);
+    // 扁平化内容区边框，与设计器一致（去除 3D 凹陷）
+    SetWindowTheme(hTabControl, L"", L"");
 
     // 设置字体（使用 Segoe UI 以获得现代外观）
     HFONT hFont = CreateFontW(
@@ -3506,60 +3547,32 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
             );
         }
 
-        // 注册窗口类（如果还没有注册）
-        static bool content_class_registered = false;
-        const wchar_t* content_class_name = L"EmojiTabContentClass";
-
-        if (!content_class_registered) {
+        // 使用纯 DefWindowProc 的简单窗口类，避免任何自绘覆盖子控件（TreeView 等）
+        static bool tab_content_class_registered = false;
+        const wchar_t* tab_content_class = L"TabContentPlainClass";
+        if (!tab_content_class_registered) {
             WNDCLASSW wc = {};
-            wc.lpfnWndProc = WindowProc;  // 使用与主窗口相同的窗口过程
+            wc.lpfnWndProc = DefWindowProcW;
             wc.hInstance = GetModuleHandle(nullptr);
-            wc.lpszClassName = content_class_name;
+            wc.lpszClassName = tab_content_class;
             wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);  // ✅ 使用标准背景色，避免闪烁
+            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
             RegisterClassW(&wc);
-            content_class_registered = true;
+            tab_content_class_registered = true;
         }
 
-        // 创建内容窗口（使用 EmojiWindowClass 以支持按钮）
         hContentWindow = CreateWindowExW(
             0,
-            content_class_name,
+            tab_content_class,
             L"",
-            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,  // ✅ 添加 WS_CLIPCHILDREN 避免子控件闪烁
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
             0, 0, 0, 0,
-            state->hParent,
+            state->hTabControl,
             nullptr,
             GetModuleHandle(nullptr),
             nullptr
         );
-
         if (!hContentWindow) return -1;
-
-        // 为内容窗口创建 D2D 渲染目标
-        RECT rc;
-        GetClientRect(hContentWindow, &rc);
-
-        ID2D1HwndRenderTarget* render_target = nullptr;
-        HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(
-            D2D1::RenderTargetProperties(),
-            D2D1::HwndRenderTargetProperties(
-                hContentWindow,
-                D2D1::SizeU(rc.right > 0 ? rc.right : 1, rc.bottom > 0 ? rc.bottom : 1)
-            ),
-            &render_target
-        );
-
-        if (SUCCEEDED(hr) && render_target) {
-            // 创建 WindowState 并添加到全局映射表
-            // 注意：Tab 内容窗口只是一个“容器子窗口”，不应启用自绘标题栏（否则会在右上角绘制最小化/最大化/关闭按钮，且导致布局偏移）
-            WindowState* content_state = new WindowState();
-            content_state->hwnd = hContentWindow;
-            content_state->render_target = render_target;
-            content_state->dwrite_factory = g_dwrite_factory;
-            content_state->custom_titlebar = false;
-            g_windows[hContentWindow] = content_state;
-        }
     }
 
     // 添加 Tab 项到 TabControl
@@ -3571,17 +3584,7 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
     int result = TabCtrl_InsertItem(hTabControl, index, &tci);
 
     if (result == -1) {
-        // 清理失败时创建的窗口和 WindowState
         if (hContentWindow && IsWindow(hContentWindow)) {
-            auto win_it = g_windows.find(hContentWindow);
-            if (win_it != g_windows.end()) {
-                WindowState* win_state = win_it->second;
-                if (win_state->render_target) {
-                    win_state->render_target->Release();
-                }
-                delete win_state;
-                g_windows.erase(win_it);
-            }
             DestroyWindow(hContentWindow);
         }
         return -1;
@@ -5030,7 +5033,8 @@ void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxSt
             (UINT32)state->text.length(),
             text_format,
             text_rect,
-            text_brush
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT  // 启用彩色 Emoji
         );
 
         text_brush->Release();
@@ -6583,7 +6587,8 @@ void DrawRadioButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, RadioBu
             (UINT32)state->text.length(),
             text_format,
             text_rect,
-            text_brush
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT  // 启用彩色 Emoji
         );
 
         text_brush->Release();
@@ -7611,7 +7616,8 @@ void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxSt
     ID2D1SolidColorBrush* brush = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(button_color), &brush);
     if (brush) {
-        rt->FillRectangle(button_rect, brush);
+        D2D1_ROUNDED_RECT btn_rr = D2D1::RoundedRect(button_rect, 4.0f, 4.0f);
+        rt->FillRoundedRectangle(btn_rr, brush);
         brush->Release();
     }
     
@@ -7642,11 +7648,12 @@ void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxSt
         brush->Release();
     }
     
-    // 绘制边框
-    rt->CreateSolidColorBrush(ColorFromUInt32(0xFFDCDFE6), &brush);
+    // 绘制边框（圆角 4px，与设计器一致）
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_BorderBase()), &brush);
     if (brush) {
-        D2D1_RECT_F border_rect = D2D1::RectF(0.5f, 0.5f, state->width - 0.5f, state->height - 0.5f);
-        rt->DrawRectangle(border_rect, brush, 1.0f);
+        D2D1_RECT_F border_rect = D2D1::RectF(0.5f, 0.5f, (float)state->width - 0.5f, (float)state->height - 0.5f);
+        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(border_rect, 4.0f, 4.0f);
+        rt->DrawRoundedRectangle(rr, brush, 1.0f);
         brush->Release();
     }
     
@@ -8199,13 +8206,13 @@ HWND __stdcall CreateComboBox(
     state->font.underline = (underline != 0);
     state->callback = nullptr;
     
-    // 创建编辑�?
+    // 创建编辑框（WS_BORDER：编辑区显示边框，与设计器一致）
     int button_width = 30;
     state->edit_hwnd = CreateWindowExW(
         0,
         L"EDIT",
         L"",
-        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | (readonly ? ES_READONLY : 0),
+        WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | (readonly ? ES_READONLY : 0),
         0, 0,
         width - button_width,
         height,
@@ -9757,6 +9764,15 @@ void DrawGroupBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxSt
     D2D1_ELLIPSE corner_br = D2D1::Ellipse(D2D1::Point2F((float)state->width - 4.0f, (float)state->height - 4.0f), 4.0f, 4.0f);
     rt->DrawEllipse(corner_br, border_brush, 1.0f);
     
+    // 绘制标题背景（与设计器一致：标题处“切断”边框，背景与窗口一致）
+    ID2D1SolidColorBrush* bg_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(ResolveThemeColor(state->bg_color)), &bg_brush);
+    if (bg_brush) {
+        D2D1_RECT_F title_bg = D2D1::RectF(gap_start, 0, gap_end, title_height + 2.0f);
+        rt->FillRectangle(title_bg, bg_brush);
+        bg_brush->Release();
+    }
+    
     // 绘制标题文本
     D2D1_RECT_F title_rect = D2D1::RectF(
         gap_start + 5.0f,
@@ -9765,7 +9781,6 @@ void DrawGroupBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxSt
         title_height
     );
     
-    // 使用DrawText而不是DrawTextW
     rt->DrawText(
         state->title.c_str(),
         (UINT32)state->title.length(),

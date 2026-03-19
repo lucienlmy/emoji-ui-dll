@@ -5,6 +5,9 @@
 
 #include <windows.h>
 
+// Tab 页变为可见时发送，用于 D2D 自定义控件重建渲染目标
+#define WM_EW_TABPAGE_VISIBLE (WM_APP + 1)
+
 // 回调类型枚举
 enum TreeViewCallbackType {
     CALLBACK_NODE_SELECTED = 1,      // 节点被选中
@@ -41,6 +44,16 @@ extern "C" {
 // ============================================================================
 // 控件生命周期管理
 // ============================================================================
+
+/**
+ * 创建标准 Windows 树形控件 (SysTreeView32)
+ * 用于排查 Tab 页面内自定义 TreeView 不显示的问题。
+ * 若此控件能在页面2显示，则问题在自定义 TreeView；否则在 Tab 布局。
+ * @param parent 父窗口句柄
+ * @param x,y,width,height 位置和大小
+ * @return 树形框窗口句柄，失败返回 NULL
+ */
+HWND __stdcall CreateSimpleTreeView(HWND parent, int x, int y, int width, int height);
 
 /**
  * 创建树形框控件
