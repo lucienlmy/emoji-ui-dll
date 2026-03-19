@@ -22,6 +22,15 @@ function hasNonGbkChars(text: string): boolean {
   return false;
 }
 
+function splitLeadingEmoji(text: string): { emoji: string; rest: string } {
+  const emojiRegex = /^(\p{Emoji_Presentation}|\p{Extended_Pictographic})+/u;
+  const match = text.match(emojiRegex);
+  if (match) {
+    return { emoji: match[0], rest: text.slice(match[0].length) };
+  }
+  return { emoji: '', rest: text };
+}
+
 function emitUtf8Text(varName: string, text: string, lines: string[]): void {
   if (hasNonGbkChars(text)) {
     const bytes = textToUtf8Bytes(text);
@@ -116,7 +125,7 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
     const fontName = (p.fontName as string) || 'Microsoft YaHei UI';
     const fontSize = (p.fontSize as number) || 13;
     const fgColor = eplColor((p.fgColor as string) || '#303133');
-    const bgColor = eplColor((p.bgColor as string) || '#FFFFFF');
+    const bgColor = eplColor((p.bgColor as string) || '#F5F7FA');
 
     const emitTextBytes = (text: string) => {
       emitUtf8Text(`文本_${c.name}`, text, lines);
@@ -131,9 +140,14 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
 
     switch (c.type) {
       case 'button': {
-        const emoji = (p.emoji as string) || '';
-        const text = (p.text as string) || '按钮';
-        emitTextBytes(text);
+        let emoji = (p.emoji as string) || '';
+        let text = (p.text as string) || '按钮';
+        if (!emoji) {
+          const split = splitLeadingEmoji(text);
+          emoji = split.emoji;
+          text = split.rest || text;
+        }
+        emitUtf8Text(`文本_${c.name}`, text, lines);
         if (emoji) {
           const emojiBytes = textToUtf8Bytes(emoji);
           lines.push(`.局部变量 emoji_${c.name}, 字节集`);
