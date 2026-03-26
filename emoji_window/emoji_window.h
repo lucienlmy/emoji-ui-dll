@@ -2137,6 +2137,14 @@ extern "C" {
         int x, int y, int width, int height
     );
 
+    // 设置列表项文本
+    __declspec(dllexport) BOOL __stdcall SetListItemText(
+        HWND hListBox,
+        int index,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+
     // ========== 组合框功能 ==========
 
     // 创建组合框（增强版）

@@ -159,6 +159,7 @@ EXPORTS
     EnableListBox
     ShowListBox
     SetListBoxBounds
+    SetListItemText
     CreateComboBox
     AddComboItem
     RemoveComboItem

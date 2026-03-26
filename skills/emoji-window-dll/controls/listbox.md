@@ -33,6 +33,7 @@
 |--------|------|--------|
 | `GetListItemCount` | `int hListBox` | `int` 项目数量 |
 | `GetListItemText` | `int hListBox, int index, uint8_t* buffer, int bufferSize` | `int` 实际复制字节数 |
+| `SetListItemText` | `int hListBox, int index, const uint8_t* text_bytes, int text_len` | `BOOL` 成功TRUE/失败FALSE |
 
 ### 回调
 
@@ -62,5 +63,8 @@ void __stdcall ListBoxCallback(int hListBox, int index);
 - 项目索引从 0 开始
 - `SetSelectedIndex` 传入 -1 可取消选中
 - `GetListItemText` 采用两次调用模式：第一次 buffer 传 0 获取所需大小，第二次分配缓冲区后再调用获取内容
+- `SetListItemText` 可直接修改指定索引项目的文本，无需删除重建
 - 文本均为 UTF-8 编码，在易语言中需转换为字节集传递
 - 多选模式下 `GetSelectedIndex` 只返回第一个选中项
+- 当项目总高度超过列表框可见区域时，自动显示圆角滚动条滑块
+- 支持鼠标滚轮滚动

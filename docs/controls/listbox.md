@@ -56,6 +56,23 @@ int __stdcall GetListItemText(HWND hListBox, int index, unsigned char* buffer, i
 
 **返回值:** 实际文本长度(字节数)
 
+### 设置项目文本
+
+```c++
+BOOL __stdcall SetListItemText(HWND hListBox, int index, const unsigned char* text_bytes, int text_len);
+```
+
+**参数说明:**
+
+| 参数 | 说明 |
+|------|------|
+| `hListBox` | 列表框句柄 |
+| `index` | 项目索引(从0开始) |
+| `text_bytes` | 新文本的UTF-8字节指针 |
+| `text_len` | 新文本字节长度 |
+
+**返回值:** 成功返回TRUE，失败返回FALSE
+
 ### 获取项目数量
 
 ```c++
@@ -88,7 +105,9 @@ void __stdcall SetListBoxBounds(HWND hListBox, int x, int y, int width, int heig
 - 选中文本色: #FFFFFF
 - 悬停背景色: #ECF5FF
 - 边框颜色: #DCDFE6
-- 滚动条宽度: 8px
+- 滚动条宽度: 8px（圆角矩形滑块，内容超出时自动显示）
+- 滚动条轨道: 半透明背景，右侧2px间距
+- 支持鼠标滚轮滚动
 - 支持彩色 Emoji 显示
 - 支持多语言 Unicode 字符
 
@@ -182,6 +201,8 @@ void __stdcall SetListBoxBounds(HWND hListBox, int x, int y, int width, int heig
 3. 索引从 0 开始
 4. 获取文本时需要先调用一次获取长度,再分配缓冲区
 5. 多选模式下可使用 Ctrl/Shift 键配合鼠标选择
+6. 当项目总高度超过列表框高度时，自动显示滚动条
+7. `SetListItemText` 可直接修改已有项目的文本，无需删除重建
 
 ## 相关文档
 

@@ -7622,6 +7622,43 @@ void DrawListBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ListBoxStat
     
     if (fallback_format) fallback_format->Release();
     
+    // ===== 绘制滚动条 =====
+    int total_content_height = (int)state->items.size() * state->item_height;
+    int visible_height = (int)size.height;
+    if (total_content_height > visible_height) {
+        float scrollbar_width = 8.0f;
+        float scrollbar_x = size.width - scrollbar_width - 2.0f;
+        float track_height = size.height - 4.0f;
+        float track_y = 2.0f;
+        
+        // 滚动条背景轨道
+        ID2D1SolidColorBrush* sb_brush = nullptr;
+        rt->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f), &sb_brush);
+        if (sb_brush) {
+            D2D1_ROUNDED_RECT track_rect = D2D1::RoundedRect(
+                D2D1::RectF(scrollbar_x, track_y, scrollbar_x + scrollbar_width, track_y + track_height),
+                scrollbar_width / 2, scrollbar_width / 2
+            );
+            rt->FillRoundedRectangle(track_rect, sb_brush);
+            
+            // 滚动条滑块
+            float thumb_ratio = (float)visible_height / (float)total_content_height;
+            float thumb_height = (std::max)(20.0f, track_height * thumb_ratio);
+            int max_scroll = total_content_height - visible_height;
+            float scroll_ratio = (max_scroll > 0) ? (float)state->scroll_offset / (float)max_scroll : 0.0f;
+            float thumb_y = track_y + scroll_ratio * (track_height - thumb_height);
+            
+            sb_brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.2f));
+            D2D1_ROUNDED_RECT thumb_rect = D2D1::RoundedRect(
+                D2D1::RectF(scrollbar_x + 1.0f, thumb_y, scrollbar_x + scrollbar_width - 1.0f, thumb_y + thumb_height),
+                (scrollbar_width - 2.0f) / 2, (scrollbar_width - 2.0f) / 2
+            );
+            rt->FillRoundedRectangle(thumb_rect, sb_brush);
+            
+            sb_brush->Release();
+        }
+    }
+    
     text_format->Release();
     brush->Release();
 }
@@ -7996,8 +8033,9 @@ void __stdcall EnableListBox(
     if (it == g_listboxes.end()) return;
     
     it->second->enabled = (enable != 0);
-    EnableWindow(hListBox, enable);
-    InvalidateRect(hListBox, nullptr, TRUE);
+    // 不调用 EnableWindow，避免 Windows 原生 STATIC 控件擦除背景导致闪烁/消失
+    // 仅通过内部 enabled 状态控制交互行为
+    RedrawWindow(hListBox, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
 }
 
 // 显示/隐藏列表框
@@ -8028,6 +8066,33 @@ void __stdcall SetListBoxBounds(
                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
     InvalidateRect(hListBox, nullptr, TRUE);
 }
+
+// 设置列表项文本
+BOOL __stdcall SetListItemText(
+    HWND hListBox,
+    int index,
+    const unsigned char* text_bytes,
+    int text_len
+) {
+    auto it = g_listboxes.find(hListBox);
+    if (it == g_listboxes.end()) return FALSE;
+    
+    ListBoxState* state = it->second;
+    if (index < 0 || index >= (int)state->items.size()) return FALSE;
+    if (!text_bytes || text_len <= 0) return FALSE;
+    
+    // UTF-8 转 wstring
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, (const char*)text_bytes, text_len, nullptr, 0);
+    if (wlen <= 0) return FALSE;
+    
+    std::wstring wtext(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, (const char*)text_bytes, text_len, &wtext[0], wlen);
+    
+    state->items[index].text = wtext;
+    InvalidateRect(hListBox, nullptr, TRUE);
+    return TRUE;
+}
+
 // ========== 组合框控件实�?==========
 
 // 绘制组合�?
