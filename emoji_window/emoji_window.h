@@ -29,6 +29,9 @@ typedef void (__stdcall *MessageBoxCallback)(int confirmed);
 // Tab 切换回调函数类型 (stdcall 调用约定)
 typedef void (__stdcall *TAB_CALLBACK)(HWND hTabControl, int selectedIndex);
 
+// 获取父窗口的标题栏偏移量（如果有自定义标题栏）
+int GetTitleBarOffset(HWND hParent);
+
 // Tab 关闭回调函数类型 (stdcall 调用约定)
 typedef void (__stdcall *TAB_CLOSE_CALLBACK)(HWND hTabControl, int index);
 

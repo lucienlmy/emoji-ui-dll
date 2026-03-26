@@ -443,7 +443,7 @@ static TitleBarButtonType HitTestTitleBarButtonFromScreen(WindowState* state, LP
 }
 
 // 获取父窗口的标题栏偏移量（如果有自定义标题栏）
-static int GetTitleBarOffset(HWND hParent) {
+int GetTitleBarOffset(HWND hParent) {
     auto it = g_windows.find(hParent);
     if (it != g_windows.end() && it->second->custom_titlebar) {
         return it->second->titlebar_height;

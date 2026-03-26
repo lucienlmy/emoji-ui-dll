@@ -386,7 +386,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             state->render_target->Resize(D2D1::SizeU(width, height));
 
             if (g_window_resize_callback) {
-                g_window_resize_callback(hwnd, (int)width, (int)height);
+                // 从D2D渲染目标获取DPI
+                FLOAT dpiX = 96.0f, dpiY = 96.0f;
+                state->render_target->GetDpi(&dpiX, &dpiY);
+                int logicalWidth = (int)((float)width * 96.0f / dpiX);
+                int logicalHeight = (int)((float)height * 96.0f / dpiY);
+                
+                // 调试：写入文件
+                FILE* f = fopen("resize_debug.txt", "a");
+                if (f) {
+                    fprintf(f, "WM_SIZE: phys=%ux%u dpiX=%.1f dpiY=%.1f logical=%dx%d tb_h=%d custom_tb=%d\n",
+                        width, height, dpiX, dpiY, logicalWidth, logicalHeight,
+                        state->titlebar_height, state->custom_titlebar ? 1 : 0);
+                    fclose(f);
+                }
+                
+                g_window_resize_callback(hwnd, logicalWidth, logicalHeight);
             }
         }
         return 0;
@@ -2697,7 +2712,9 @@ __declspec(dllexport) void __stdcall SetLabelBounds(
     int x, int y, int width, int height
 ) {
     if (!hLabel) return;
-    SetWindowPos(hLabel, NULL, x, y, width, height, SWP_NOZORDER);
+    HWND hParent = GetParent(hLabel);
+    int tb_offset = hParent ? GetTitleBarOffset(hParent) : 0;
+    SetWindowPos(hLabel, NULL, x, y + tb_offset, width, height, SWP_NOZORDER);
 }
 
 __declspec(dllexport) void __stdcall EnableLabel(
@@ -3531,7 +3548,9 @@ __declspec(dllexport) void __stdcall SetProgressBarBounds(
     state->width = width;
     state->height = height;
     
-    SetWindowPos(hProgressBar, NULL, x, y, width, height, SWP_NOZORDER);
+    HWND hParent = GetParent(hProgressBar);
+    int tb_offset = hParent ? GetTitleBarOffset(hParent) : 0;
+    SetWindowPos(hProgressBar, NULL, x, y + tb_offset, width, height, SWP_NOZORDER);
     InvalidateRect(hProgressBar, NULL, FALSE);
 }
 

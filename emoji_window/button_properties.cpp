@@ -112,8 +112,10 @@ extern "C" __declspec(dllexport) void __stdcall SetButtonBounds(int button_id, i
     EmojiButton* button = FindButton(button_id, &parent);
     if (!button || !parent) return;
     
+    // 补偿标题栏偏移（与创建时一致）
+    int tb_offset = GetTitleBarOffset(parent);
     button->x = x;
-    button->y = y;
+    button->y = y + tb_offset;
     button->width = width;
     button->height = height;
     
