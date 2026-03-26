@@ -412,6 +412,51 @@ bool __stdcall SetTreeViewScrollPos(HWND hwnd, int pos);
 int __stdcall GetTreeViewScrollPos(HWND hwnd);
 
 // ============================================================================
+// 侧栏模式与全局样式（多层级折叠菜单）
+// ============================================================================
+
+bool __stdcall SetTreeViewSidebarMode(HWND hwnd, bool enable);
+bool __stdcall GetTreeViewSidebarMode(HWND hwnd);
+
+bool __stdcall SetTreeViewRowHeight(HWND hwnd, float height);
+float __stdcall GetTreeViewRowHeight(HWND hwnd);
+
+bool __stdcall SetTreeViewItemSpacing(HWND hwnd, float spacing);
+float __stdcall GetTreeViewItemSpacing(HWND hwnd);
+
+bool __stdcall SetTreeViewTextColor(HWND hwnd, unsigned int argb);
+unsigned int __stdcall GetTreeViewTextColor(HWND hwnd);
+
+bool __stdcall SetTreeViewSelectedBgColor(HWND hwnd, unsigned int argb);
+unsigned int __stdcall GetTreeViewSelectedBgColor(HWND hwnd);
+
+bool __stdcall SetTreeViewSelectedForeColor(HWND hwnd, unsigned int argb);
+unsigned int __stdcall GetTreeViewSelectedForeColor(HWND hwnd);
+
+bool __stdcall SetTreeViewHoverBgColor(HWND hwnd, unsigned int argb);
+unsigned int __stdcall GetTreeViewHoverBgColor(HWND hwnd);
+
+bool __stdcall SetTreeViewFont(
+    HWND hwnd,
+    const unsigned char* family_utf8,
+    int family_len,
+    float font_size,
+    int font_weight,
+    bool italic
+);
+
+bool __stdcall GetTreeViewFont(
+    HWND hwnd,
+    unsigned char* family_buf,
+    int family_buf_size,
+    float* out_font_size,
+    int* out_font_weight,
+    bool* out_italic
+);
+
+bool __stdcall MoveTreeViewNode(HWND hwnd, int node_id, int new_parent_id, int insert_index);
+
+// ============================================================================
 // 回调设置
 // ============================================================================
 

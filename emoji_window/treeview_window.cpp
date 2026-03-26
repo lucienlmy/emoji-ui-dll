@@ -3,6 +3,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <cwctype>
+#include <cstring>
 #include <commctrl.h>  // 用于子类化功能
 #include <richedit.h>  // 用于 RichEdit 控件（支持彩色 emoji）
 
@@ -122,6 +123,60 @@ D2D1_COLOR_F ArgbToColorF(unsigned int argb) {
     float b = (argb & 0xFF) / 255.0f;
     
     return D2D1::ColorF(r, g, b, a);
+}
+
+static unsigned int ColorFToArgb(const D2D1_COLOR_F& c) {
+    auto ch = [](float v) -> unsigned int {
+        int n = static_cast<int>(v * 255.0f + 0.5f);
+        if (n < 0) n = 0;
+        if (n > 255) n = 255;
+        return static_cast<unsigned int>(n);
+    };
+    return (ch(c.a) << 24) | (ch(c.r) << 16) | (ch(c.g) << 8) | ch(c.b);
+}
+
+static bool IsNodeInSubtree(TreeNode* root, TreeNode* target) {
+    if (!root || !target) {
+        return false;
+    }
+    if (root == target) {
+        return true;
+    }
+    for (TreeNode* ch : root->children) {
+        if (IsNodeInSubtree(ch, target)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void TreeViewInvalidateLayout(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state || !state->hwnd) {
+        return;
+    }
+    RebuildVisibleNodes(state);
+    RecalculateLayout(state);
+    InvalidateRect(hwnd, NULL, TRUE);
+}
+
+static void TreeViewApplySelection(HWND hwnd, TreeViewState* state, TreeNode* node, bool notify, bool always_notify_if_same) {
+    if (!state || !node || !state->hwnd) {
+        return;
+    }
+    bool same = (state->selected_node == node);
+    if (same && !always_notify_if_same) {
+        return;
+    }
+    if (state->selected_node && state->selected_node != node) {
+        state->selected_node->selected = false;
+    }
+    state->selected_node = node;
+    node->selected = true;
+    if (notify && state->on_node_selected && (!same || always_notify_if_same)) {
+        state->on_node_selected(node->id, state->callback_context);
+    }
+    InvalidateRect(hwnd, NULL, FALSE);
 }
 
 /**
@@ -298,11 +353,16 @@ void RecalculateLayout(TreeViewState* state) {
     
     float y_offset = 0;
     float node_height = state->node_height * state->dpi_scale;
+    float spacing = state->item_spacing * state->dpi_scale;
     
-    for (TreeNode* node : state->visible_nodes) {
+    for (size_t i = 0; i < state->visible_nodes.size(); ++i) {
+        TreeNode* node = state->visible_nodes[i];
         node->y_position = y_offset;
         node->height = node_height;
         y_offset += node_height;
+        if (i + 1 < state->visible_nodes.size()) {
+            y_offset += spacing;
+        }
     }
     
     state->content_height = static_cast<int>(y_offset);
@@ -348,13 +408,13 @@ void RecreateTextFormat(TreeViewState* state) {
     // 释放旧的文本格式（不需要手动释放，由缓存管理）
     state->text_format = nullptr;
     
-    // 从缓存获取或创建新的文本格式
-    // 使用 Segoe UI Emoji 字体以支持彩色emoji，中文会自动fallback到合适的字体
-    // 基础字体大小为 14.0f 逻辑单位
+    const wchar_t* face = state->font_family_name.empty() ? L"Segoe UI Emoji" : state->font_family_name.c_str();
     state->text_format = state->text_format_cache->GetOrCreate(
-        L"Segoe UI Emoji",      // 使用支持彩色emoji的字体
-        14.0f,                  // 基础字体大小
-        state->dpi_scale        // DPI 缩放比例
+        face,
+        state->font_size_logical > 0.1f ? state->font_size_logical : 14.0f,
+        state->dpi_scale,
+        state->font_weight,
+        state->font_style
     );
 }
 
@@ -855,7 +915,8 @@ HWND __stdcall CreateTreeView(
     // 设置默认样式
     state->background_color = ArgbToColorF(bg_color);
     state->text_color = ArgbToColorF(text_color);
-    state->selected_color = D2D1::ColorF(0.26f, 0.59f, 0.98f, 0.2f);  // Element UI 蓝色半透明
+    state->selected_color = D2D1::ColorF(0.26f, 0.59f, 0.98f, 0.2f);  // Element UI 蓝色半透明（选中背景）
+    state->selected_foreground = D2D1::ColorF(0.26f, 0.59f, 0.98f, 1.0f); // 选中前景（字/图标）
     state->hover_color = D2D1::ColorF(0.96f, 0.96f, 0.96f);           // 浅灰色
     state->border_color = D2D1::ColorF(0.9f, 0.9f, 0.9f);
     
@@ -982,6 +1043,8 @@ int __stdcall AddRootNode(
         return -1;
     }
     
+    node->fore_color = state->text_color;
+    
     // 设置图标（如果提供）
     if (icon && icon_len > 0) {
         std::wstring icon_utf16 = Utf8ToUtf16(icon, icon_len);
@@ -1046,6 +1109,8 @@ int __stdcall AddChildNode(
     if (!node) {
         return -1;
     }
+    
+    node->fore_color = state->text_color;
     
     // 设置图标（如果提供）
     if (icon && icon_len > 0) {
@@ -1383,28 +1448,11 @@ bool __stdcall SetSelectedNode(HWND hwnd, int node_id) {
         return false;
     }
     
-    // 如果节点已经被选中，直接返回成功
     if (state->selected_node == node) {
         return true;
     }
     
-    // 取消之前选中节点的高亮
-    if (state->selected_node) {
-        state->selected_node->selected = false;
-    }
-    
-    // 设置 state->selected_node
-    state->selected_node = node;
-    node->selected = true;
-    
-    // 触发 on_node_selected 回调
-    if (state->on_node_selected) {
-        state->on_node_selected(node_id, state->callback_context);
-    }
-    
-    // 触发重绘
-    InvalidateRect(hwnd, NULL, FALSE);
-    
+    TreeViewApplySelection(hwnd, state, node, true, false);
     return true;
 }
 
@@ -2095,6 +2143,234 @@ bool __stdcall EnableTreeViewDragDrop(HWND hwnd, bool enable) {
     return true;
 }
 
+bool __stdcall SetTreeViewSidebarMode(HWND hwnd, bool enable) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    state->sidebar_mode = enable;
+    InvalidateRect(hwnd, NULL, TRUE);
+    return true;
+}
+
+bool __stdcall GetTreeViewSidebarMode(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    return state->sidebar_mode;
+}
+
+bool __stdcall SetTreeViewRowHeight(HWND hwnd, float height) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state || height < 4.0f) {
+        return false;
+    }
+    state->node_height = height;
+    TreeViewInvalidateLayout(hwnd);
+    return true;
+}
+
+float __stdcall GetTreeViewRowHeight(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return 0.0f;
+    }
+    return state->node_height;
+}
+
+bool __stdcall SetTreeViewItemSpacing(HWND hwnd, float spacing) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state || spacing < 0.0f) {
+        return false;
+    }
+    state->item_spacing = spacing;
+    TreeViewInvalidateLayout(hwnd);
+    return true;
+}
+
+float __stdcall GetTreeViewItemSpacing(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return 0.0f;
+    }
+    return state->item_spacing;
+}
+
+bool __stdcall SetTreeViewTextColor(HWND hwnd, unsigned int argb) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    state->text_color = ArgbToColorF(argb);
+    for (auto& kv : state->node_map) {
+        if (kv.second) {
+            kv.second->fore_color = state->text_color;
+        }
+    }
+    InvalidateRect(hwnd, NULL, TRUE);
+    return true;
+}
+
+unsigned int __stdcall GetTreeViewTextColor(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return 0;
+    }
+    return ColorFToArgb(state->text_color);
+}
+
+bool __stdcall SetTreeViewSelectedBgColor(HWND hwnd, unsigned int argb) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    state->selected_color = ArgbToColorF(argb);
+    InvalidateRect(hwnd, NULL, TRUE);
+    return true;
+}
+
+unsigned int __stdcall GetTreeViewSelectedBgColor(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return 0;
+    }
+    return ColorFToArgb(state->selected_color);
+}
+
+bool __stdcall SetTreeViewSelectedForeColor(HWND hwnd, unsigned int argb) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    state->selected_foreground = ArgbToColorF(argb);
+    InvalidateRect(hwnd, NULL, TRUE);
+    return true;
+}
+
+unsigned int __stdcall GetTreeViewSelectedForeColor(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return 0;
+    }
+    return ColorFToArgb(state->selected_foreground);
+}
+
+bool __stdcall SetTreeViewHoverBgColor(HWND hwnd, unsigned int argb) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    state->hover_color = ArgbToColorF(argb);
+    InvalidateRect(hwnd, NULL, TRUE);
+    return true;
+}
+
+unsigned int __stdcall GetTreeViewHoverBgColor(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return 0;
+    }
+    return ColorFToArgb(state->hover_color);
+}
+
+bool __stdcall SetTreeViewFont(
+    HWND hwnd,
+    const unsigned char* family_utf8,
+    int family_len,
+    float font_size,
+    int font_weight,
+    bool italic
+) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state || !family_utf8 || family_len <= 0 || font_size < 4.0f) {
+        return false;
+    }
+    std::wstring fam = Utf8ToUtf16(family_utf8, family_len);
+    if (fam.empty()) {
+        return false;
+    }
+    state->font_family_name = fam;
+    state->font_size_logical = font_size;
+    if (font_weight < 0) {
+        font_weight = static_cast<int>(DWRITE_FONT_WEIGHT_NORMAL);
+    }
+    if (font_weight > 1000) {
+        font_weight = 1000;
+    }
+    state->font_weight = static_cast<DWRITE_FONT_WEIGHT>(font_weight);
+    state->font_style = italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
+    if (state->text_format_cache) {
+        state->text_format_cache->Clear();
+    }
+    RecreateTextFormat(state);
+    TreeViewInvalidateLayout(hwnd);
+    return true;
+}
+
+bool __stdcall GetTreeViewFont(
+    HWND hwnd,
+    unsigned char* family_buf,
+    int family_buf_size,
+    float* out_font_size,
+    int* out_font_weight,
+    bool* out_italic
+) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    if (out_font_size) {
+        *out_font_size = state->font_size_logical;
+    }
+    if (out_font_weight) {
+        *out_font_weight = static_cast<int>(state->font_weight);
+    }
+    if (out_italic) {
+        *out_italic = (state->font_style == DWRITE_FONT_STYLE_ITALIC);
+    }
+    if (!family_buf || family_buf_size <= 0) {
+        return true;
+    }
+    std::string u8 = Utf16ToUtf8(state->font_family_name);
+    int n = static_cast<int>(u8.size());
+    if (n >= family_buf_size) {
+        n = family_buf_size - 1;
+    }
+    memcpy(family_buf, u8.data(), static_cast<size_t>(n));
+    family_buf[n] = 0;
+    return true;
+}
+
+bool __stdcall MoveTreeViewNode(HWND hwnd, int node_id, int new_parent_id, int insert_index) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    TreeNode* node = FindNodeById(state, node_id);
+    if (!node) {
+        return false;
+    }
+    TreeNode* new_parent = nullptr;
+    if (new_parent_id >= 0) {
+        new_parent = FindNodeById(state, new_parent_id);
+        if (!new_parent) {
+            return false;
+        }
+        if (new_parent == node || IsNodeInSubtree(node, new_parent)) {
+            return false;
+        }
+    }
+    if (!MoveNodeToPosition(state, node, new_parent, insert_index)) {
+        return false;
+    }
+    TreeViewInvalidateLayout(hwnd);
+    if (state->on_node_moved) {
+        state->on_node_moved(node_id, new_parent_id, insert_index, state->callback_context);
+    }
+    return true;
+}
+
 // ============================================================================
 // 窗口过程（基本框架）
 // ============================================================================
@@ -2213,17 +2489,16 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 TreeNode* clicked_node = HitTestNode(state, x, y);
                 
                 if (clicked_node && clicked_node->enabled) {
-                    // 计算节点的基础位置
                     float x_base = clicked_node->level * state->indent_width * state->dpi_scale;
+                    float pad_l = state->sidebar_pad_left * state->dpi_scale;
                     float x_cursor = x_base;
                     
-                    // 检测是否点击展开图标（切换展开/折叠）
-                    if (!clicked_node->children.empty()) {
+                    if (state->sidebar_mode) {
+                        x_cursor = x_base + pad_l;
+                    } else if (!clicked_node->children.empty()) {
                         float expand_icon_x = x_cursor + 4 * state->dpi_scale;
                         float expand_icon_width = (state->expand_icon_size + 8) * state->dpi_scale;
-                        
                         if (x >= expand_icon_x && x < expand_icon_x + expand_icon_width) {
-                            // 切换展开/折叠状态
                             if (clicked_node->expanded) {
                                 CollapseNode(hwnd, clicked_node->id);
                             } else {
@@ -2231,42 +2506,53 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                             }
                             return 0;
                         }
+                        x_cursor += (state->expand_icon_size + 8) * state->dpi_scale;
+                    } else {
+                        x_cursor += (state->expand_icon_size + 8) * state->dpi_scale;
                     }
                     
-                    // 更新 x_cursor 位置
-                    x_cursor += (state->expand_icon_size + 8) * state->dpi_scale;
-                    
-                    // 检测是否点击复选框（切换选中状态）
                     if (clicked_node->has_checkbox) {
                         float checkbox_size = 16 * state->dpi_scale;
                         float checkbox_x = x_cursor;
-                        
                         if (x >= checkbox_x && x < checkbox_x + checkbox_size) {
-                            // 切换复选框状态
                             clicked_node->checked = !clicked_node->checked;
-                            
-                            // 触发 on_node_checked 回调
                             if (state->on_node_checked) {
                                 state->on_node_checked(clicked_node->id, clicked_node->checked, state->callback_context);
                             }
-                            
                             InvalidateRect(hwnd, NULL, FALSE);
                             return 0;
                         }
                     }
                     
-                    // 否则选中节点
-                    if (state->selected_node != clicked_node) {
-                        SetSelectedNode(hwnd, clicked_node->id);
-                    }
-                    
-                    // 如果启用拖放则开始拖放操作
-                    if (state->drag_enabled) {
-                        state->drag_node = clicked_node;
-                        state->drag_start_pos.x = x;
-                        state->drag_start_pos.y = y;
-                        state->is_dragging = false;  // 还没开始拖动，只是记录起始位置
-                        SetCapture(hwnd);
+                    if (state->sidebar_mode) {
+                        if (!clicked_node->children.empty()) {
+                            if (!clicked_node->expanded) {
+                                ExpandNode(hwnd, clicked_node->id);
+                                TreeViewApplySelection(hwnd, state, clicked_node, true, false);
+                            } else {
+                                CollapseNode(hwnd, clicked_node->id);
+                            }
+                        } else {
+                            TreeViewApplySelection(hwnd, state, clicked_node, true, true);
+                        }
+                        if (state->drag_enabled) {
+                            state->drag_node = clicked_node;
+                            state->drag_start_pos.x = x;
+                            state->drag_start_pos.y = y;
+                            state->is_dragging = false;
+                            SetCapture(hwnd);
+                        }
+                    } else {
+                        if (state->selected_node != clicked_node) {
+                            SetSelectedNode(hwnd, clicked_node->id);
+                        }
+                        if (state->drag_enabled) {
+                            state->drag_node = clicked_node;
+                            state->drag_start_pos.x = x;
+                            state->drag_start_pos.y = y;
+                            state->is_dragging = false;
+                            SetCapture(hwnd);
+                        }
                     }
                 }
             }
@@ -2935,20 +3221,26 @@ void RenderNode(TreeViewState* state, TreeNode* node, float y_offset) {
     }
     
     float x_cursor = x_base;
+    float pad_l = state->sidebar_pad_left * state->dpi_scale;
+    float pad_r = state->sidebar_pad_right * state->dpi_scale;
     
-    // 2. 如果有子节点则绘制展开/折叠图标
-    if (!node->children.empty()) {
-        float icon_x = x_cursor + 4 * state->dpi_scale;
-        float icon_y = y_offset + (node_height - state->expand_icon_size * state->dpi_scale) / 2;
-        
-        RenderExpandIcon(state, icon_x, icon_y, node->expanded);
-        x_cursor += (state->expand_icon_size + 8) * state->dpi_scale;
+    if (!state->sidebar_mode) {
+        // 2. 经典树：左侧展开/折叠图标
+        if (!node->children.empty()) {
+            float icon_x = x_cursor + 4 * state->dpi_scale;
+            float icon_y = y_offset + (node_height - state->expand_icon_size * state->dpi_scale) / 2;
+            
+            RenderExpandIcon(state, icon_x, icon_y, node->expanded);
+            x_cursor += (state->expand_icon_size + 8) * state->dpi_scale;
+        } else {
+            x_cursor += (state->expand_icon_size + 8) * state->dpi_scale;
+        }
     } else {
-        // 即使没有子节点，也要预留空间保持对齐
-        x_cursor += (state->expand_icon_size + 8) * state->dpi_scale;
+        // 侧栏：左侧不绘制树形三角，仅内容左内边距
+        x_cursor = x_base + pad_l;
     }
     
-    // 3. 如果有复选框则绘制复选框
+    // 3. 复选框
     if (node->has_checkbox) {
         float checkbox_size = 16 * state->dpi_scale;
         float checkbox_x = x_cursor;
@@ -2958,32 +3250,47 @@ void RenderNode(TreeViewState* state, TreeNode* node, float y_offset) {
         x_cursor += checkbox_size + 6 * state->dpi_scale;
     }
     
-    // 4. 如果有图标则绘制 emoji 图标（与文本同一水平线，使用相同字号以对齐）
+    // 4. emoji 图标
     if (!node->icon.empty()) {
         float icon_x = x_cursor;
-        float text_font_size = 14.0f * state->dpi_scale;  // 与 RecreateTextFormat 一致
+        float text_font_size = state->font_size_logical * state->dpi_scale;
         float icon_size = state->icon_size * state->dpi_scale;
         if (icon_size > text_font_size) icon_size = text_font_size;
-        float icon_y = y_offset;  // 与文本顶部对齐
+        float icon_y = y_offset;
         
+        if (node->enabled && node->selected) {
+            brush->SetColor(state->selected_foreground);
+        } else {
+            brush->SetColor(D2D1::ColorF(0, 0, 0));
+        }
         RenderEmoji(state, node->icon.c_str(), icon_x, icon_y, icon_size);
         x_cursor += (state->icon_size + 6) * state->dpi_scale;
     }
     
-    // 5. 绘制节点文本（使用 DirectWrite，支持彩色emoji）
+    // 5. 文本
     if (!node->text.empty() && state->text_format && state->dwrite_factory) {
-        // 设置文本颜色（考虑启用状态）
-        D2D1_COLOR_F text_color;
-        if (node->enabled) {
-            text_color = node->fore_color;
+        D2D1_COLOR_F text_draw_color;
+        if (!node->enabled) {
+            text_draw_color = D2D1::ColorF(0.6f, 0.6f, 0.6f);
+        } else if (node->selected) {
+            text_draw_color = state->selected_foreground;
         } else {
-            text_color = D2D1::ColorF(0.6f, 0.6f, 0.6f); // 禁用状态为灰色
+            text_draw_color = node->fore_color;
         }
         
-        // 创建文本布局以支持彩色emoji
-        IDWriteTextLayout* text_layout = nullptr;
-        float max_width = static_cast<float>(client_width) - x_cursor - 20 * state->dpi_scale;
+        float right_margin = 20.0f * state->dpi_scale;
+        if (state->sidebar_mode && !node->children.empty()) {
+            right_margin = pad_r + (state->expand_icon_size + 8) * state->dpi_scale;
+        } else if (state->sidebar_mode) {
+            right_margin = pad_r;
+        }
         
+        float max_width = static_cast<float>(client_width) - x_cursor - right_margin;
+        if (max_width < 8.0f) {
+            max_width = 8.0f;
+        }
+        
+        IDWriteTextLayout* text_layout = nullptr;
         HRESULT hr = state->dwrite_factory->CreateTextLayout(
             node->text.c_str(),
             static_cast<UINT32>(node->text.length()),
@@ -2994,20 +3301,83 @@ void RenderNode(TreeViewState* state, TreeNode* node, float y_offset) {
         );
         
         if (SUCCEEDED(hr) && text_layout) {
-            // 设置文本颜色
-            brush->SetColor(text_color);
-            
-            // 使用 DrawTextLayout 支持彩色emoji
+            brush->SetColor(text_draw_color);
             rt->DrawTextLayout(
                 D2D1::Point2F(x_cursor, y_offset),
                 text_layout,
                 brush,
-                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT  // 启用彩色字体
+                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
             );
-            
             text_layout->Release();
         }
     }
+    
+    // 侧栏：右侧 ∨ / ∧
+    if (state->sidebar_mode && !node->children.empty()) {
+        float chev = state->expand_icon_size * state->dpi_scale;
+        float cx = static_cast<float>(client_width) - pad_r - chev * 0.5f;
+        float cy = y_offset + node_height * 0.5f;
+        if (node->enabled && node->selected) {
+            brush->SetColor(state->selected_foreground);
+        } else {
+            brush->SetColor(D2D1::ColorF(0.4f, 0.4f, 0.4f));
+        }
+        RenderSidebarChevron(state, cx, cy, chev, node->expanded);
+    }
+}
+
+/**
+ * 侧栏模式右侧折叠箭头：未展开时 ∨（向下），展开后 ∧（向上）
+ */
+void RenderSidebarChevron(TreeViewState* state, float center_x, float center_y, float size, bool expanded) {
+    if (!state || !state->render_target || !state->brush || !state->d2d_factory) {
+        return;
+    }
+    
+    ID2D1HwndRenderTarget* rt = state->render_target;
+    ID2D1SolidColorBrush* brush = state->brush;
+    
+    ID2D1PathGeometry* path = nullptr;
+    HRESULT hr = state->d2d_factory->CreatePathGeometry(&path);
+    if (FAILED(hr) || !path) {
+        return;
+    }
+    
+    ID2D1GeometrySink* sink = nullptr;
+    hr = path->Open(&sink);
+    if (FAILED(hr) || !sink) {
+        SafeRelease(&path);
+        return;
+    }
+    
+    if (!expanded) {
+        // 向下 ∨
+        D2D1_POINT_2F points[3] = {
+            D2D1::Point2F(center_x - size * 0.35f, center_y - size * 0.15f),
+            D2D1::Point2F(center_x + size * 0.35f, center_y - size * 0.15f),
+            D2D1::Point2F(center_x, center_y + size * 0.25f)
+        };
+        sink->BeginFigure(points[0], D2D1_FIGURE_BEGIN_FILLED);
+        sink->AddLine(points[1]);
+        sink->AddLine(points[2]);
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    } else {
+        // 向上 ∧
+        D2D1_POINT_2F points[3] = {
+            D2D1::Point2F(center_x - size * 0.35f, center_y + size * 0.15f),
+            D2D1::Point2F(center_x + size * 0.35f, center_y + size * 0.15f),
+            D2D1::Point2F(center_x, center_y - size * 0.25f)
+        };
+        sink->BeginFigure(points[0], D2D1_FIGURE_BEGIN_FILLED);
+        sink->AddLine(points[1]);
+        sink->AddLine(points[2]);
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    }
+    
+    sink->Close();
+    rt->FillGeometry(path, brush);
+    SafeRelease(&sink);
+    SafeRelease(&path);
 }
 
 /**
@@ -3717,24 +4087,32 @@ TextFormatCache::~TextFormatCache() {
     SafeRelease(&dwrite_factory);
 }
 
-std::wstring TextFormatCache::GenerateKey(const wchar_t* font_family, float font_size, float dpi_scale) {
-    // 生成唯一的缓存键：字体名称_字体大小_DPI缩放
-    wchar_t buffer[256];
-    swprintf_s(buffer, L"%s_%.1f_%.2f", font_family, font_size, dpi_scale);
+std::wstring TextFormatCache::GenerateKey(
+    const wchar_t* font_family,
+    float font_size,
+    float dpi_scale,
+    DWRITE_FONT_WEIGHT font_weight,
+    DWRITE_FONT_STYLE font_style
+) {
+    wchar_t buffer[320];
+    swprintf_s(buffer, L"%s_%.1f_%.2f_%d_%d", font_family, font_size, dpi_scale,
+        static_cast<int>(font_weight), static_cast<int>(font_style));
     return std::wstring(buffer);
 }
 
 IDWriteTextFormat* TextFormatCache::GetOrCreate(
     const wchar_t* font_family,
     float font_size,
-    float dpi_scale
+    float dpi_scale,
+    DWRITE_FONT_WEIGHT font_weight,
+    DWRITE_FONT_STYLE font_style
 ) {
     if (!dwrite_factory || !font_family) {
         return nullptr;
     }
     
     // 生成缓存键
-    std::wstring key = GenerateKey(font_family, font_size, dpi_scale);
+    std::wstring key = GenerateKey(font_family, font_size, dpi_scale, font_weight, font_style);
     
     // 查找缓存
     auto it = formats.find(key);
@@ -3749,8 +4127,8 @@ IDWriteTextFormat* TextFormatCache::GetOrCreate(
     HRESULT hr = dwrite_factory->CreateTextFormat(
         font_family,
         nullptr,                // 字体集合（使用系统默认）
-        DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL,
+        font_weight,
+        font_style,
         DWRITE_FONT_STRETCH_NORMAL,
         scaled_font_size,       // DPI 缩放后的字体大小
         L"zh-CN",              // 本地化设置

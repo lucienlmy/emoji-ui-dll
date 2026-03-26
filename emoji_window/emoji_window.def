@@ -333,6 +333,23 @@ EXPORTS
     GetScrollPos
     SetTreeViewCallback
     EnableTreeViewDragDrop
+    SetTreeViewSidebarMode
+    GetTreeViewSidebarMode
+    SetTreeViewRowHeight
+    GetTreeViewRowHeight
+    SetTreeViewItemSpacing
+    GetTreeViewItemSpacing
+    SetTreeViewTextColor
+    GetTreeViewTextColor
+    SetTreeViewSelectedBgColor
+    GetTreeViewSelectedBgColor
+    SetTreeViewSelectedForeColor
+    GetTreeViewSelectedForeColor
+    SetTreeViewHoverBgColor
+    GetTreeViewHoverBgColor
+    SetTreeViewFont
+    GetTreeViewFont
+    MoveTreeViewNode
     SetTabItemSize
     SetTabFont
     SetTabColors
