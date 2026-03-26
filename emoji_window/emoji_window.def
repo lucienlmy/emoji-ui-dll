@@ -26,6 +26,10 @@ EXPORTS
     GetWindowVisible
     ShowEmojiWindow
     GetWindowTitlebarColor
+    SetTitleBarTextColor
+    GetTitleBarTextColor
+    SetTitleBarFont
+    SetTitleBarAlignment
     set_message_loop_main_window
     run_message_loop
     destroy_window
@@ -328,3 +332,28 @@ EXPORTS
     GetScrollPos
     SetTreeViewCallback
     EnableTreeViewDragDrop
+    SetTabItemSize
+    SetTabFont
+    SetTabColors
+    SetTabIndicatorColor
+    SetTabPadding
+    EnableTabItem
+    GetTabItemEnabled
+    ShowTabItem
+    SetTabItemIcon
+    SetTabContentBgColor
+    SetTabContentBgColorAll
+    SetTabClosable
+    SetTabCloseCallback
+    SetTabRightClickCallback
+    SetTabDraggable
+    SetTabDoubleClickCallback
+    SetTabPosition
+    SetTabAlignment
+    SetTabScrollable
+    RemoveAllTabs
+    InsertTabItem
+    MoveTabItem
+    GetTabIndexByTitle
+    GetTabEnabled
+    IsTabItemSelected

@@ -279,6 +279,47 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
           lines.push(`添加Tab页 (${c.name}, 取变量数据地址 (${varName}), 取字节集长度 (${varName}), 0)`);
           lines.push(`${c.name}_page_${index} ＝ 获取Tab内容窗口 (${c.name}, ${index})`);
         }
+        // 新增属性：仅在与默认值不同时生成调用代码
+        {
+          const selBg = (p.selectedBgColor as string) || '#FFFFFF';
+          const unselBg = (p.unselectedBgColor as string) || '#F5F7FA';
+          const selText = (p.selectedTextColor as string) || '#409EFF';
+          const unselText = (p.unselectedTextColor as string) || '#606266';
+          if (selBg !== '#FFFFFF' || unselBg !== '#F5F7FA' || selText !== '#409EFF' || unselText !== '#606266') {
+            lines.push(`SetTabColors (${c.name}, ${eplColor(selBg)}, ${eplColor(unselBg)}, ${eplColor(selText)}, ${eplColor(unselText)})`);
+          }
+          const indColor = (p.indicatorColor as string) || '#409EFF';
+          if (indColor !== '#409EFF') {
+            lines.push(`SetTabIndicatorColor (${c.name}, ${eplColor(indColor)})`);
+          }
+          const tabW = (p.tabItemWidth as number) ?? 120;
+          const tabH = (p.tabItemHeight as number) ?? 34;
+          if (tabW !== 120 || tabH !== 34) {
+            lines.push(`SetTabItemSize (${c.name}, ${tabW}, ${tabH})`);
+          }
+          const padH = (p.paddingH as number) ?? 2;
+          const padV = (p.paddingV as number) ?? 0;
+          if (padH !== 2 || padV !== 0) {
+            lines.push(`SetTabPadding (${c.name}, ${padH}, ${padV})`);
+          }
+          if (p.closable) {
+            lines.push(`SetTabClosable (${c.name}, 1)`);
+          }
+          if (p.draggable) {
+            lines.push(`SetTabDraggable (${c.name}, 1)`);
+          }
+          if (p.scrollable) {
+            lines.push(`SetTabScrollable (${c.name}, 1)`);
+          }
+          const tabPos = (p.tabPosition as number) ?? 0;
+          if (tabPos !== 0) {
+            lines.push(`SetTabPosition (${c.name}, ${tabPos})`);
+          }
+          const tabAlign = (p.tabAlignment as number) ?? 0;
+          if (tabAlign !== 0) {
+            lines.push(`SetTabAlignment (${c.name}, ${tabAlign})`);
+          }
+        }
         // 延后到所有控件创建后再调用，确保 Tab 子控件在父窗口可见时创建
         lines.push(`' 更新TabControl布局 将在所有控件创建后调用`);
         break;

@@ -140,6 +140,24 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
     lines.push(`dll.AddTabItem.restype = c_int`);
     lines.push(`dll.GetTabContentWindow.argtypes = [c_void_p, c_int]`);
     lines.push(`dll.GetTabContentWindow.restype = c_void_p`);
+    lines.push(`dll.SetTabColors.argtypes = [c_void_p, c_uint, c_uint, c_uint, c_uint]`);
+    lines.push(`dll.SetTabColors.restype = c_int`);
+    lines.push(`dll.SetTabIndicatorColor.argtypes = [c_void_p, c_uint]`);
+    lines.push(`dll.SetTabIndicatorColor.restype = c_int`);
+    lines.push(`dll.SetTabItemSize.argtypes = [c_void_p, c_int, c_int]`);
+    lines.push(`dll.SetTabItemSize.restype = c_int`);
+    lines.push(`dll.SetTabPadding.argtypes = [c_void_p, c_int, c_int]`);
+    lines.push(`dll.SetTabPadding.restype = c_int`);
+    lines.push(`dll.SetTabClosable.argtypes = [c_void_p, c_int]`);
+    lines.push(`dll.SetTabClosable.restype = c_int`);
+    lines.push(`dll.SetTabDraggable.argtypes = [c_void_p, c_int]`);
+    lines.push(`dll.SetTabDraggable.restype = c_int`);
+    lines.push(`dll.SetTabScrollable.argtypes = [c_void_p, c_int]`);
+    lines.push(`dll.SetTabScrollable.restype = c_int`);
+    lines.push(`dll.SetTabPosition.argtypes = [c_void_p, c_int]`);
+    lines.push(`dll.SetTabPosition.restype = c_int`);
+    lines.push(`dll.SetTabAlignment.argtypes = [c_void_p, c_int]`);
+    lines.push(`dll.SetTabAlignment.restype = c_int`);
   }
   if (hasGrid) {
     lines.push(`dll.CreateDataGridView.argtypes = [c_void_p, c_int, c_int, c_int, c_int, c_uint, c_uint, c_uint, ctypes.c_char_p, c_int, c_int]`);
@@ -297,6 +315,47 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
           lines.push(`tab_text = "${escapePy(tabs[index])}".encode("utf-8")`);
           lines.push(`dll.AddTabItem(${c.name}, tab_text, len(tab_text), 0)`);
           lines.push(`${c.name}_page_${index} = dll.GetTabContentWindow(${c.name}, ${index})`);
+        }
+        // 新增属性：仅在与默认值不同时生成调用代码
+        {
+          const selBg = (p.selectedBgColor as string) || '#FFFFFF';
+          const unselBg = (p.unselectedBgColor as string) || '#F5F7FA';
+          const selText = (p.selectedTextColor as string) || '#409EFF';
+          const unselText = (p.unselectedTextColor as string) || '#606266';
+          if (selBg !== '#FFFFFF' || unselBg !== '#F5F7FA' || selText !== '#409EFF' || unselText !== '#606266') {
+            lines.push(`dll.SetTabColors(${c.name}, ${pyColor(selBg)}, ${pyColor(unselBg)}, ${pyColor(selText)}, ${pyColor(unselText)})`);
+          }
+          const indColor = (p.indicatorColor as string) || '#409EFF';
+          if (indColor !== '#409EFF') {
+            lines.push(`dll.SetTabIndicatorColor(${c.name}, ${pyColor(indColor)})`);
+          }
+          const tabW = (p.tabItemWidth as number) ?? 120;
+          const tabH = (p.tabItemHeight as number) ?? 34;
+          if (tabW !== 120 || tabH !== 34) {
+            lines.push(`dll.SetTabItemSize(${c.name}, ${tabW}, ${tabH})`);
+          }
+          const padH = (p.paddingH as number) ?? 2;
+          const padV = (p.paddingV as number) ?? 0;
+          if (padH !== 2 || padV !== 0) {
+            lines.push(`dll.SetTabPadding(${c.name}, ${padH}, ${padV})`);
+          }
+          if (p.closable) {
+            lines.push(`dll.SetTabClosable(${c.name}, 1)`);
+          }
+          if (p.draggable) {
+            lines.push(`dll.SetTabDraggable(${c.name}, 1)`);
+          }
+          if (p.scrollable) {
+            lines.push(`dll.SetTabScrollable(${c.name}, 1)`);
+          }
+          const tabPos = (p.tabPosition as number) ?? 0;
+          if (tabPos !== 0) {
+            lines.push(`dll.SetTabPosition(${c.name}, ${tabPos})`);
+          }
+          const tabAlign = (p.tabAlignment as number) ?? 0;
+          if (tabAlign !== 0) {
+            lines.push(`dll.SetTabAlignment(${c.name}, ${tabAlign})`);
+          }
         }
         break;
       }

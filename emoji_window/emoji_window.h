@@ -29,6 +29,15 @@ typedef void (__stdcall *MessageBoxCallback)(int confirmed);
 // Tab 切换回调函数类型 (stdcall 调用约定)
 typedef void (__stdcall *TAB_CALLBACK)(HWND hTabControl, int selectedIndex);
 
+// Tab 关闭回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *TAB_CLOSE_CALLBACK)(HWND hTabControl, int index);
+
+// Tab 右键点击回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *TAB_RIGHTCLICK_CALLBACK)(HWND hTabControl, int index, int x, int y);
+
+// Tab 双击回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *TAB_DBLCLICK_CALLBACK)(HWND hTabControl, int index);
+
 // 窗口大小改变回调函数类型 (stdcall 调用约定)
 typedef void (__stdcall *WindowResizeCallback)(HWND hwnd, int width, int height);
 
@@ -622,6 +631,12 @@ struct WindowState {
     bool custom_titlebar = true;  // 是否启用自定义标题栏
     int hovered_titlebar_button = 0; // 0=无 1=最小化 2=最大化 3=关闭
     bool titlebar_mouse_tracking = false;
+
+    // ===== 标题栏文字样式字段 =====
+    UINT32 titlebar_text_color = 0;                          // 标题文字颜色（ARGB），0=跟随主题
+    std::wstring titlebar_font_name = L"Segoe UI Emoji";     // 标题字体名称
+    float titlebar_font_size = 13.0f;                        // 标题字号（像素）
+    int titlebar_alignment = 0;                              // 标题对齐方式：0=左，1=中，2=右
 };
 
 // 菜单项状态
@@ -700,6 +715,9 @@ struct TabPageInfo {
     std::wstring title;             // Tab 标题
     HWND hContentWindow;            // 内容容器窗口句柄
     bool visible;                   // 是否可见
+    bool enabled;                   // 是否启用（默认 true）
+    std::vector<unsigned char> iconData; // 图标 PNG 字节数据（默认空）
+    UINT32 contentBgColor;          // 内容区域背景色（默认 0xFFFFFFFF 白色）
 };
 
 // TabControl 状态管理
@@ -709,6 +727,41 @@ struct TabControlState {
     std::vector<TabPageInfo> pages; // 所有 Tab 页信息
     int currentIndex;               // 当前选中的 Tab 索引
     TAB_CALLBACK callback;          // 切换回调函数
+
+    // ===== 外观字段 =====
+    int tabWidth;                   // 标签宽度（默认 120）
+    int tabHeight;                  // 标签高度（默认 34）
+    std::wstring fontName;          // 字体名称（默认 L"Segoe UI Emoji"）
+    float fontSize;                 // 字号（默认 13.0f）
+    UINT32 selectedBgColor;         // 选中背景色（默认 0xFFFFFFFF 白色）
+    UINT32 unselectedBgColor;       // 未选中背景色（默认 0xFFF5F7FA 浅灰）
+    UINT32 selectedTextColor;       // 选中文字色（默认 0xFF409EFF 蓝色）
+    UINT32 unselectedTextColor;     // 未选中文字色（默认 0xFF606266 深灰）
+    UINT32 indicatorColor;          // 选中指示条颜色（默认 0xFF409EFF）
+    int paddingH;                   // 水平内边距（默认 2）
+    int paddingV;                   // 垂直内边距（默认 0）
+
+    // ===== 交互字段 =====
+    bool closable;                  // 是否显示关闭按钮（默认 false）
+    TAB_CLOSE_CALLBACK closeCallback;       // 关闭回调（默认 nullptr）
+    TAB_RIGHTCLICK_CALLBACK rightClickCallback; // 右键回调（默认 nullptr）
+    TAB_DBLCLICK_CALLBACK dblClickCallback;     // 双击回调（默认 nullptr）
+    bool draggable;                 // 是否可拖拽排序（默认 false）
+
+    // ===== 布局字段 =====
+    int tabPosition;                // 标签栏位置：0=上 1=下 2=左 3=右（默认 0）
+    int tabAlignment;               // 标签对齐：0=左 1=居中 2=右（默认 0）
+    bool scrollable;                // 是否可滚动（默认 false）
+    int scrollOffset;               // 滚动偏移量（默认 0）
+
+    // ===== 拖拽状态字段 =====
+    bool isDragging;                // 是否正在拖拽
+    int dragStartIndex;             // 拖拽起始标签页索引（pages 数组索引）
+    int dragTargetIndex;            // 拖拽目标插入位置索引（pages 数组索引）
+    POINT dragStartPoint;           // 拖拽起始鼠标位置
+
+    // ===== 绘制辅助字段 =====
+    int hoveredCloseTabIndex;       // 鼠标悬停的关闭按钮所在标签页索引（-1=无）
 };
 
 // ========== 主题系统 (需求 11.1-11.10) ==========
@@ -1081,6 +1134,181 @@ extern "C" {
     __declspec(dllexport) int __stdcall EnableTabControl(
         HWND hTabControl,
         int enabled
+    );
+
+    // ========== TabControl 外观函数 ==========
+
+    // 设置标签页固定尺寸（宽度和高度）
+    __declspec(dllexport) int __stdcall SetTabItemSize(
+        HWND hTab,
+        int width,
+        int height
+    );
+
+    // 设置标签页字体（fontName 为 UTF-8 编码）
+    __declspec(dllexport) int __stdcall SetTabFont(
+        HWND hTab,
+        const unsigned char* fontName,
+        int fontNameLen,
+        float fontSize
+    );
+
+    // 设置标签页颜色（选中/未选中的背景色和文字色，ARGB 格式）
+    __declspec(dllexport) int __stdcall SetTabColors(
+        HWND hTab,
+        UINT32 selectedBg,
+        UINT32 unselectedBg,
+        UINT32 selectedText,
+        UINT32 unselectedText
+    );
+
+    // 设置选中标签页底部指示条颜色（ARGB 格式）
+    __declspec(dllexport) int __stdcall SetTabIndicatorColor(
+        HWND hTab,
+        UINT32 color
+    );
+
+    // 设置标签页内边距（水平和垂直）
+    __declspec(dllexport) int __stdcall SetTabPadding(
+        HWND hTab,
+        int horizontal,
+        int vertical
+    );
+
+    // ========== TabControl 单个标签页控制函数 ==========
+
+    // 启用/禁用单个标签页（enabled: 1=启用, 0=禁用）
+    __declspec(dllexport) int __stdcall EnableTabItem(
+        HWND hTab,
+        int index,
+        int enabled
+    );
+
+    // 获取单个标签页的启用状态（返回 1=启用, 0=禁用, -1=错误）
+    __declspec(dllexport) int __stdcall GetTabItemEnabled(
+        HWND hTab,
+        int index
+    );
+
+    // 显示/隐藏单个标签页（visible: 1=显示, 0=隐藏）
+    __declspec(dllexport) int __stdcall ShowTabItem(
+        HWND hTab,
+        int index,
+        int visible
+    );
+
+    // 设置标签页图标（PNG 字节数据，iconBytes=NULL 或 iconLen=0 时清除图标）
+    __declspec(dllexport) int __stdcall SetTabItemIcon(
+        HWND hTab,
+        int index,
+        const unsigned char* iconBytes,
+        int iconLen
+    );
+
+    // 设置指定标签页的内容区域背景色（ARGB 格式）
+    __declspec(dllexport) int __stdcall SetTabContentBgColor(
+        HWND hTab,
+        int index,
+        UINT32 color
+    );
+
+    // 设置所有标签页的内容区域背景色（ARGB 格式）
+    __declspec(dllexport) int __stdcall SetTabContentBgColorAll(
+        HWND hTab,
+        UINT32 color
+    );
+
+    // ========== TabControl 交互增强函数 ==========
+
+    // 设置标签页是否显示关闭按钮（closable: 1=显示, 0=隐藏）
+    __declspec(dllexport) int __stdcall SetTabClosable(
+        HWND hTab,
+        int closable
+    );
+
+    // 设置标签页关闭回调
+    __declspec(dllexport) int __stdcall SetTabCloseCallback(
+        HWND hTab,
+        TAB_CLOSE_CALLBACK callback
+    );
+
+    // 设置标签页右键点击回调
+    __declspec(dllexport) int __stdcall SetTabRightClickCallback(
+        HWND hTab,
+        TAB_RIGHTCLICK_CALLBACK callback
+    );
+
+    // 设置标签页是否可拖拽排序（draggable: 1=可拖拽, 0=不可拖拽）
+    __declspec(dllexport) int __stdcall SetTabDraggable(
+        HWND hTab,
+        int draggable
+    );
+
+    // 设置标签页双击回调
+    __declspec(dllexport) int __stdcall SetTabDoubleClickCallback(
+        HWND hTab,
+        TAB_DBLCLICK_CALLBACK callback
+    );
+
+    // ========== 布局与位置函数 ==========
+
+    // 设置标签栏位置（position: 0=上, 1=下, 2=左, 3=右）
+    __declspec(dllexport) int __stdcall SetTabPosition(
+        HWND hTab,
+        int position
+    );
+
+    // 设置标签对齐方式（align: 0=左对齐, 1=居中, 2=右对齐）
+    __declspec(dllexport) int __stdcall SetTabAlignment(
+        HWND hTab,
+        int align
+    );
+
+    // 设置标签栏是否可滚动（scrollable: 1=可滚动, 0=不可滚动/多行）
+    __declspec(dllexport) int __stdcall SetTabScrollable(
+        HWND hTab,
+        int scrollable
+    );
+
+    // ========== 批量操作函数 ==========
+
+    // 清空所有标签页（销毁内容窗口，清理资源）
+    __declspec(dllexport) int __stdcall RemoveAllTabs(
+        HWND hTab
+    );
+
+    // 在指定位置插入标签页（index < 0 返回 -1，超出范围追加到末尾）
+    __declspec(dllexport) int __stdcall InsertTabItem(
+        HWND hTab,
+        int index,
+        const unsigned char* title,
+        int titleLen,
+        HWND hContent
+    );
+
+    // 移动标签页位置（fromIndex == toIndex 返回 0 不操作）
+    __declspec(dllexport) int __stdcall MoveTabItem(
+        HWND hTab,
+        int fromIndex,
+        int toIndex
+    );
+
+    // 根据标题查找标签页索引（精确匹配，区分大小写，未找到返回 -1）
+    __declspec(dllexport) int __stdcall GetTabIndexByTitle(
+        HWND hTab,
+        const unsigned char* titleBytes,
+        int titleLen
+    );
+
+    // 获取整个 TabControl 的启用状态（1=启用, 0=禁用, -1=无效句柄）
+    __declspec(dllexport) int __stdcall GetTabEnabled(
+        HWND hTab
+    );
+
+    // 判断指定标签页是否为当前选中（1=选中, 0=未选中, -1=错误）
+    __declspec(dllexport) int __stdcall IsTabItemSelected(
+        HWND hTab,
+        int index
     );
 
     // ========== 窗口大小改变回调 ==========

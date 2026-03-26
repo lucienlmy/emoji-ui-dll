@@ -1640,6 +1640,130 @@
     .参数 TabControl句柄, 整数型, , TabControl窗口句柄
     .参数 启用, 整数型, , 1=启用，0=禁用
 
+' ========== TabControl增强命令（v3.0新增）==========
+
+' ----- 外观定制 -----
+.DLL命令 设置标签页尺寸, 整数型, "emoji_window.dll", "SetTabItemSize", , , 设置标签页固定宽度和高度（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 宽度, 整数型, , 标签页宽度（必须大于0）
+    .参数 高度, 整数型, , 标签页高度（必须大于0）
+
+.DLL命令 设置Tab标签字体, 整数型, "emoji_window.dll", "SetTabFont", , , 设置标签页字体名称和字号（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 字体名字节集指针, 整数型, , UTF-8编码的字体名称字节集指针
+    .参数 字体名长度, 整数型, , 字体名称字节集长度
+    .参数 字号, 小数型, , 字号大小（如 14.0）
+
+.DLL命令 设置Tab标签颜色, 整数型, "emoji_window.dll", "SetTabColors", , , 设置选中/未选中标签页的背景色和文字色（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 选中背景色, 整数型, , ARGB格式颜色值
+    .参数 未选中背景色, 整数型, , ARGB格式颜色值
+    .参数 选中文字色, 整数型, , ARGB格式颜色值
+    .参数 未选中文字色, 整数型, , ARGB格式颜色值
+
+.DLL命令 设置指示条颜色, 整数型, "emoji_window.dll", "SetTabIndicatorColor", , , 设置选中标签页底部指示条颜色（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 颜色, 整数型, , ARGB格式颜色值
+
+.DLL命令 设置标签内边距, 整数型, "emoji_window.dll", "SetTabPadding", , , 设置标签页水平和垂直内边距（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 水平内边距, 整数型, , 水平方向内边距（>=0）
+    .参数 垂直内边距, 整数型, , 垂直方向内边距（>=0）
+
+' ----- 单个标签页控制 -----
+.DLL命令 启用禁用标签页, 整数型, "emoji_window.dll", "EnableTabItem", , , 启用或禁用单个标签页（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 索引, 整数型, , 标签页索引（从0开始）
+    .参数 是否启用, 整数型, , 1=启用，0=禁用
+
+.DLL命令 获取标签页启用状态, 整数型, "emoji_window.dll", "GetTabItemEnabled", , , 获取单个标签页的启用状态（1=启用，0=禁用，-1=错误）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 索引, 整数型, , 标签页索引（从0开始）
+
+.DLL命令 显示隐藏标签页, 整数型, "emoji_window.dll", "ShowTabItem", , , 显示或隐藏单个标签页（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 索引, 整数型, , 标签页索引（从0开始）
+    .参数 是否显示, 整数型, , 1=显示，0=隐藏
+
+.DLL命令 设置标签页图标, 整数型, "emoji_window.dll", "SetTabItemIcon", , , 设置标签页图标PNG数据（成功返回0，失败返回-1，传0清除图标）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 索引, 整数型, , 标签页索引（从0开始）
+    .参数 图标字节集指针, 整数型, , PNG图片字节数据指针（传0清除图标）
+    .参数 图标长度, 整数型, , 图片字节数据长度（传0清除图标）
+
+' ----- 内容区域 -----
+.DLL命令 设置标签页内容背景色, 整数型, "emoji_window.dll", "SetTabContentBgColor", , , 设置指定标签页的内容区域背景色（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 索引, 整数型, , 标签页索引（从0开始）
+    .参数 颜色, 整数型, , ARGB格式颜色值
+
+.DLL命令 设置所有标签页内容背景色, 整数型, "emoji_window.dll", "SetTabContentBgColorAll", , , 设置所有标签页的内容区域背景色（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 颜色, 整数型, , ARGB格式颜色值
+
+' ----- 交互增强 -----
+.DLL命令 设置标签页可关闭, 整数型, "emoji_window.dll", "SetTabClosable", , , 设置标签页是否显示关闭按钮（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 是否可关闭, 整数型, , 1=显示关闭按钮，0=隐藏
+
+.DLL命令 设置标签页关闭回调, 整数型, "emoji_window.dll", "SetTabCloseCallback", , , 设置标签页关闭按钮点击回调（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 回调函数, 子程序指针, , 回调函数指针（参数：TabControl句柄, 索引）
+
+.DLL命令 设置标签页右键回调, 整数型, "emoji_window.dll", "SetTabRightClickCallback", , , 设置标签页右键点击回调（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 回调函数, 子程序指针, , 回调函数指针（参数：TabControl句柄, 索引, X, Y）
+
+.DLL命令 设置标签页可拖拽, 整数型, "emoji_window.dll", "SetTabDraggable", , , 设置标签页是否可拖拽排序（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 是否可拖拽, 整数型, , 1=可拖拽，0=不可拖拽
+
+.DLL命令 设置标签页双击回调, 整数型, "emoji_window.dll", "SetTabDoubleClickCallback", , , 设置标签页双击回调（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 回调函数, 子程序指针, , 回调函数指针（参数：TabControl句柄, 索引）
+
+' ----- 布局与位置 -----
+.DLL命令 设置标签栏位置, 整数型, "emoji_window.dll", "SetTabPosition", , , 设置标签栏位置（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 位置, 整数型, , 0=上，1=下，2=左，3=右
+
+.DLL命令 设置标签对齐方式, 整数型, "emoji_window.dll", "SetTabAlignment", , , 设置标签在标签栏中的对齐方式（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 对齐方式, 整数型, , 0=左对齐，1=居中，2=右对齐
+
+.DLL命令 设置标签栏可滚动, 整数型, "emoji_window.dll", "SetTabScrollable", , , 设置标签栏是否可滚动（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 是否可滚动, 整数型, , 1=可滚动，0=不可滚动（多行模式）
+
+' ----- 批量操作 -----
+.DLL命令 清空所有标签页, 整数型, "emoji_window.dll", "RemoveAllTabs", , , 清空所有标签页并销毁内容窗口（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+
+.DLL命令 插入标签页, 整数型, "emoji_window.dll", "InsertTabItem", , , 在指定位置插入标签页（返回实际索引，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 索引, 整数型, , 插入位置索引（超出范围追加到末尾）
+    .参数 标题字节集指针, 整数型, , UTF-8编码的标题字节集指针
+    .参数 标题长度, 整数型, , 标题字节集长度
+    .参数 内容窗口句柄, 整数型, , 内容窗口句柄（传0自动创建）
+
+.DLL命令 移动标签页, 整数型, "emoji_window.dll", "MoveTabItem", , , 移动标签页位置（成功返回0，失败返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 源索引, 整数型, , 源位置索引
+    .参数 目标索引, 整数型, , 目标位置索引
+
+.DLL命令 根据标题查找标签页, 整数型, "emoji_window.dll", "GetTabIndexByTitle", , , 根据标题查找标签页索引（未找到返回-1）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 标题字节集指针, 整数型, , UTF-8编码的标题字节集指针
+    .参数 标题长度, 整数型, , 标题字节集长度
+
+' ----- 状态查询 -----
+.DLL命令 获取TabControl启用状态, 整数型, "emoji_window.dll", "GetTabEnabled", , , 获取整个TabControl的启用状态（1=启用，0=禁用，-1=错误）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+
+.DLL命令 标签页是否选中, 整数型, "emoji_window.dll", "IsTabItemSelected", , , 判断指定标签页是否为当前选中（1=选中，0=未选中，-1=错误）
+    .参数 TabControl句柄, 整数型, , TabControl窗口句柄
+    .参数 索引, 整数型, , 标签页索引（从0开始）
+
 ' ========== 编辑框扩展属性获取命令 ==========
 
 .DLL命令 获取编辑框字体, 整数型, "emoji_window.dll", "GetEditBoxFont", , , 获取编辑框字体信息（返回字体名UTF-8字节数，缓冲区指针为0时返回所需大小）
@@ -1694,3 +1818,23 @@
 
 .DLL命令 获取进度条显示文本状态, 整数型, "emoji_window.dll", "GetProgressBarShowText", , , 获取进度条是否显示百分比文本（1=显示，0=不显示，-1=错误）
     .参数 进度条句柄, 整数型, , 进度条窗口句柄
+
+
+' ========== 标题栏样式自定义功能 ==========
+
+.DLL命令 设置标题栏文字颜色, 整数型, "emoji_window.dll", "SetTitleBarTextColor", , , 设置标题栏文字颜色（ARGB，0=跟随主题），返回1=成功，0=失败
+    .参数 窗口句柄, 整数型, , 窗口句柄
+    .参数 颜色, 整数型, , ARGB颜色值，0表示恢复跟随主题
+
+.DLL命令 获取标题栏文字颜色, 整数型, "emoji_window.dll", "GetTitleBarTextColor", , , 获取标题栏文字颜色（0=跟随主题），无效句柄返回0
+    .参数 窗口句柄, 整数型, , 窗口句柄
+
+.DLL命令 设置标题栏字体, 整数型, "emoji_window.dll", "SetTitleBarFont", , , 设置标题栏字体和字号，返回1=成功，0=失败
+    .参数 窗口句柄, 整数型, , 窗口句柄
+    .参数 字体名字节集指针, 整数型, , UTF-8字体名字节集指针（取变量数据地址）
+    .参数 字体名长度, 整数型, , 字体名字节集长度
+    .参数 字号, 小数型, , 字号（像素），必须大于0
+
+.DLL命令 设置标题栏对齐方式, 整数型, "emoji_window.dll", "SetTitleBarAlignment", , , 设置标题栏文字对齐方式，返回1=成功，0=失败
+    .参数 窗口句柄, 整数型, , 窗口句柄
+    .参数 对齐方式, 整数型, , 0=左对齐，1=居中，2=右对齐

@@ -208,30 +208,98 @@ export default function ControlRenderer({ control, onTabSelect }: Props) {
         }}>🖼️</div>
       );
 
-    case 'tabcontrol':
-      return (
-        <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-          <div style={{
-            display: 'flex', borderBottom: '2px solid #409EFF',
-            background: '#f5f7fa',
-          }}>
-            {((p.tabs as string) || '').split('\n').filter(Boolean).map((tab, i) => (
+    case 'tabcontrol': {
+      const selBg = (p.selectedBgColor as string) || '#FFFFFF';
+      const unselBg = (p.unselectedBgColor as string) || '#F5F7FA';
+      const selText = (p.selectedTextColor as string) || '#409EFF';
+      const unselText = (p.unselectedTextColor as string) || '#606266';
+      const indColor = (p.indicatorColor as string) || '#409EFF';
+      const tabW = (p.tabItemWidth as number) || 120;
+      const tabH = (p.tabItemHeight as number) || 34;
+      const padH = (p.paddingH as number) ?? 2;
+      const padV = (p.paddingV as number) ?? 0;
+      const closable = !!p.closable;
+      const tabPos = (p.tabPosition as number) ?? 0;
+      const tabAlign = (p.tabAlignment as number) ?? 0;
+      const activeIdx = Number(p.activeTab) || 0;
+      const tabItems = ((p.tabs as string) || '').split('\n').filter(Boolean);
+      const isVertical = tabPos === 2 || tabPos === 3;
+      const isBottom = tabPos === 1;
+      const isRight = tabPos === 3;
+
+      const tabBar = (
+        <div style={{
+          display: 'flex',
+          flexDirection: isVertical ? 'column' : 'row',
+          justifyContent: tabAlign === 1 ? 'center' : tabAlign === 2 ? 'flex-end' : 'flex-start',
+          background: unselBg,
+          ...(isVertical
+            ? { borderRight: isRight ? 'none' : `2px solid ${indColor}`, borderLeft: isRight ? `2px solid ${indColor}` : 'none' }
+            : { borderBottom: isBottom ? 'none' : `2px solid ${indColor}`, borderTop: isBottom ? `2px solid ${indColor}` : 'none' }),
+          flexShrink: 0,
+        }}>
+          {tabItems.map((tab, i) => {
+            const isActive = i === activeIdx;
+            return (
               <div key={i} style={{
-                padding: '4px 14px', fontSize: 12,
-                background: i === (Number(p.activeTab) || 0) ? '#fff' : 'transparent',
-                borderTop: i === (Number(p.activeTab) || 0) ? '2px solid #409EFF' : '2px solid transparent',
-                color: i === (Number(p.activeTab) || 0) ? '#409EFF' : '#606266',
+                width: isVertical ? undefined : tabW,
+                height: isVertical ? tabH : undefined,
+                minHeight: isVertical ? undefined : tabH,
+                padding: `${padV}px ${padH + (closable ? 18 : 0)}px ${padV}px ${padH}px`,
+                fontSize: (p.fontSize as number) || 13,
+                fontFamily: (p.fontName as string) || 'Microsoft YaHei UI',
+                fontWeight: p.bold ? 'bold' : 'normal',
+                background: isActive ? selBg : 'transparent',
+                color: isActive ? selText : unselText,
                 cursor: 'default',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                position: 'relative',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                ...(isVertical
+                  ? {
+                      borderLeft: !isRight && isActive ? `2px solid ${indColor}` : '2px solid transparent',
+                      borderRight: isRight && isActive ? `2px solid ${indColor}` : '2px solid transparent',
+                    }
+                  : {
+                      borderTop: !isBottom && isActive ? `2px solid ${indColor}` : '2px solid transparent',
+                      borderBottom: isBottom && isActive ? `2px solid ${indColor}` : '2px solid transparent',
+                    }),
               }}
               onMouseDown={(event) => {
                 event.stopPropagation();
                 onTabSelect?.(i);
-              }}>{tab}</div>
-            ))}
-          </div>
-          <div style={{ flex: 1, background: '#fff', border: '1px solid #e4e7ed', borderTop: 'none' }} />
+              }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tab}</span>
+                {closable && (
+                  <span style={{
+                    position: 'absolute',
+                    right: 4, top: '50%', transform: 'translateY(-50%)',
+                    fontSize: 10, color: '#999', lineHeight: 1,
+                    width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    borderRadius: '50%',
+                  }}>×</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       );
+
+      const contentArea = (
+        <div style={{ flex: 1, background: selBg, border: '1px solid #e4e7ed', borderTop: isBottom || isVertical ? undefined : 'none', borderBottom: isBottom ? 'none' : undefined, borderLeft: isRight ? 'none' : undefined, borderRight: !isRight && isVertical ? 'none' : undefined }} />
+      );
+
+      return (
+        <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: isVertical ? (isRight ? 'row' : 'row') : 'column' }}>
+          {isBottom || isRight ? (
+            <>{contentArea}{tabBar}</>
+          ) : (
+            <>{tabBar}{contentArea}</>
+          )}
+        </div>
+      );
+    }
 
     case 'datagridview':
       return (

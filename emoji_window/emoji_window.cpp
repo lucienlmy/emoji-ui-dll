@@ -50,7 +50,9 @@ static HWND g_message_loop_main_window = nullptr;
 
 // Forward declarations
 LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK TabControlSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 static void EnsureThemesInitialized();
+static int VisibleIndexToPageIndex(TabControlState* state, int visibleIdx);
 
 // ========== 主题辅助函数 ==========
 // 获取主题颜色，如果主题未初始化则返回默认值
@@ -600,19 +602,26 @@ void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Wind
     if (!state->title.empty()) {
         IDWriteTextFormat* fmt = nullptr;
         factory->CreateTextFormat(
-            L"Segoe UI Emoji",
+            state->titlebar_font_name.c_str(),
             nullptr,
             DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
-            13.0f,
+            state->titlebar_font_size,
             L"zh-CN",
             &fmt);
         if (fmt) {
-            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            // 对齐方式映射：0→LEADING，1→CENTER，2→TRAILING
+            DWRITE_TEXT_ALIGNMENT dw_align = DWRITE_TEXT_ALIGNMENT_LEADING;
+            if (state->titlebar_alignment == 1) dw_align = DWRITE_TEXT_ALIGNMENT_CENTER;
+            else if (state->titlebar_alignment == 2) dw_align = DWRITE_TEXT_ALIGNMENT_TRAILING;
+            fmt->SetTextAlignment(dw_align);
             fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-            UINT32 fg = ThemeColor_TextPrimary() & 0x00FFFFFF;
+            // 文字颜色：0 跟随主题，非 0 使用自定义值
+            UINT32 fg = (state->titlebar_text_color != 0)
+                ? (state->titlebar_text_color & 0x00FFFFFF)
+                : (ThemeColor_TextPrimary() & 0x00FFFFFF);
             ID2D1SolidColorBrush* text_brush = nullptr;
             rt->CreateSolidColorBrush(D2D1::ColorF(
                 ((fg >> 16) & 0xFF) / 255.0f,
@@ -2213,6 +2222,7 @@ int __stdcall run_message_loop() {
             if (it != g_tab_controls.end()) {
                 TabControlState* state = it->second;
                 RemoveWindowSubclass(state->hParent, TabControlParentSubclassProc, (UINT_PTR)h);
+                RemoveWindowSubclass(h, TabControlSubclassProc, 0);
                 for (auto& page : state->pages) {
                     if (page.hContentWindow && IsWindow(page.hContentWindow)) {
                         auto win_it = g_windows.find(page.hContentWindow);
@@ -2508,6 +2518,49 @@ extern "C" __declspec(dllexport) UINT32 __stdcall GetWindowTitlebarColor(HWND hw
     
     // 返回标题栏颜色 (RGB格式，去掉alpha通道)
     return it->second->titlebar_color & 0x00FFFFFF;
+}
+
+// 设置标题栏文字颜色
+extern "C" __declspec(dllexport) int __stdcall SetTitleBarTextColor(HWND hwnd, UINT32 color) {
+    auto it = g_windows.find(hwnd);
+    if (it == g_windows.end()) return 0;
+
+    it->second->titlebar_text_color = color;
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return 1;
+}
+
+// 获取标题栏文字颜色
+extern "C" __declspec(dllexport) UINT32 __stdcall GetTitleBarTextColor(HWND hwnd) {
+    auto it = g_windows.find(hwnd);
+    if (it == g_windows.end()) return 0;
+
+    return it->second->titlebar_text_color;
+}
+
+// 设置标题栏字体和字号
+extern "C" __declspec(dllexport) int __stdcall SetTitleBarFont(HWND hwnd, const unsigned char* fontName, int fontNameLen, float fontSize) {
+    if (!fontName || fontNameLen <= 0 || fontSize <= 0) return 0;
+
+    auto it = g_windows.find(hwnd);
+    if (it == g_windows.end()) return 0;
+
+    it->second->titlebar_font_name = Utf8ToWide(fontName, fontNameLen);
+    it->second->titlebar_font_size = fontSize;
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return 1;
+}
+
+// 设置标题栏文字对齐方式
+extern "C" __declspec(dllexport) int __stdcall SetTitleBarAlignment(HWND hwnd, int alignment) {
+    if (alignment < 0 || alignment > 2) return 0;
+
+    auto it = g_windows.find(hwnd);
+    if (it == g_windows.end()) return 0;
+
+    it->second->titlebar_alignment = alignment;
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return 1;
 }
 
 // Draw message box - Element UI Style
@@ -3472,17 +3525,53 @@ void UpdateTabLayout(TabControlState* state) {
             if ((int)i == state->currentIndex) {
                 SetWindowPos(page.hContentWindow, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
                 ShowWindow(page.hContentWindow, SW_SHOW);  // 确保子控件收到 WM_SHOWWINDOW
-                page.visible = true;
                 SendMessage(page.hContentWindow, WM_EW_TABPAGE_VISIBLE, 0, 0);  // Tab 内容窗口 D2D 重建
                 EnumChildWindows(page.hContentWindow, ShowAndInvalidateChildProc, 0);
                 RedrawWindow(page.hContentWindow, nullptr, nullptr,
                     RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
             } else {
                 ShowWindow(page.hContentWindow, SW_HIDE);  // 隐藏以让 D2D 控件在显示时重建渲染目标
-                page.visible = false;
             }
         }
     }
+}
+
+// ========== TabControl 图标解码辅助函数 ==========
+// 从 PNG 字节数据解码为 D2D1Bitmap（用于标签页图标绘制）
+static ID2D1Bitmap* CreateBitmapFromPNGData(ID2D1RenderTarget* rt, const std::vector<unsigned char>& pngData) {
+    if (!rt || pngData.empty() || !EnsureWicFactoryInitialized()) return nullptr;
+
+    IWICStream* stream = nullptr;
+    HRESULT hr = g_wic_factory->CreateStream(&stream);
+    if (FAILED(hr) || !stream) return nullptr;
+
+    hr = stream->InitializeFromMemory((BYTE*)pngData.data(), (DWORD)pngData.size());
+    if (FAILED(hr)) { stream->Release(); return nullptr; }
+
+    IWICBitmapDecoder* decoder = nullptr;
+    hr = g_wic_factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
+    stream->Release();
+    if (FAILED(hr) || !decoder) return nullptr;
+
+    IWICBitmapFrameDecode* frame = nullptr;
+    hr = decoder->GetFrame(0, &frame);
+    decoder->Release();
+    if (FAILED(hr) || !frame) return nullptr;
+
+    IWICFormatConverter* converter = nullptr;
+    hr = g_wic_factory->CreateFormatConverter(&converter);
+    if (SUCCEEDED(hr) && converter) {
+        hr = converter->Initialize(
+            frame, GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut);
+    }
+    frame->Release();
+    if (FAILED(hr) || !converter) { if (converter) converter->Release(); return nullptr; }
+
+    ID2D1Bitmap* bitmap = nullptr;
+    hr = rt->CreateBitmapFromWicBitmap(converter, nullptr, &bitmap);
+    converter->Release();
+    return SUCCEEDED(hr) ? bitmap : nullptr;
 }
 
 // 父窗口子类化过程（处理 TabControl 的通知消息）
@@ -3503,9 +3592,34 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
 
         // 检查是否是来自这个 TabControl 的通知
         if (pnmhdr->hwndFrom == hTabControl) {
-            if (pnmhdr->code == TCN_SELCHANGE) {
+            // ── 2.7: TCN_SELCHANGING 中拦截禁用标签页 ──
+            if (pnmhdr->code == TCN_SELCHANGING) {
+                // 获取即将切换到的目标标签页索引
+                // TCN_SELCHANGING 时，TabCtrl_GetCurSel 返回的是当前选中页（即将离开的页）
+                // 我们需要通过鼠标位置或键盘来判断目标页
+                // 但 Win32 Tab Control 在 TCN_SELCHANGING 时不直接提供目标索引
+                // 使用 TCM_HITTEST 获取鼠标点击的目标标签页
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hTabControl, &pt);
+                TCHITTESTINFO hti = {};
+                hti.pt = pt;
+                int targetVisibleIdx = TabCtrl_HitTest(hTabControl, &hti);
+                // 将 Win32 可见索引映射到 pages 数组索引
+                int targetIdx = VisibleIndexToPageIndex(state, targetVisibleIdx);
+                if (targetIdx >= 0 && targetIdx < (int)state->pages.size()) {
+                    if (!state->pages[targetIdx].enabled) {
+                        // 目标标签页被禁用，返回 TRUE 阻止切换
+                        SetWindowLongPtr(hwnd, DWLP_MSGRESULT, TRUE);
+                        return TRUE;
+                    }
+                }
+            }
+            else if (pnmhdr->code == TCN_SELCHANGE) {
                 // Tab 切换事件
-                int newIndex = TabCtrl_GetCurSel(hTabControl);
+                int newVisibleIndex = TabCtrl_GetCurSel(hTabControl);
+                // 将 Win32 可见索引映射到 pages 数组索引
+                int newIndex = VisibleIndexToPageIndex(state, newVisibleIndex);
                 if (newIndex >= 0 && newIndex < (int)state->pages.size()) {
                     state->currentIndex = newIndex;
                     UpdateTabLayout(state);
@@ -3522,17 +3636,21 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
 
     // TCS_OWNERDRAWFIXED: 父窗口负责绘制每个 Tab 标签
     // 用 ID2D1DCRenderTarget 渲染彩色 Emoji（等同于按钮的 D2D 渲染路径）
+    // 重构：从 TabControlState 读取所有样式参数，支持图标、关闭按钮、禁用状态
     case WM_DRAWITEM: {
         DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lparam;
         // 只处理属于此 TabControl 的绘制请求
         if (dis->CtlType != ODT_TAB || dis->hwndItem != hTabControl) break;
 
-        int tabIdx = (int)dis->itemID;
+        int visibleTabIdx = (int)dis->itemID;
+        // 将 Win32 可见索引映射到 pages 数组索引
+        int tabIdx = VisibleIndexToPageIndex(state, visibleTabIdx);
         // 若标题尚未加入 pages（极少数时序问题），跳过，让系统默认处理
         if (tabIdx < 0 || tabIdx >= (int)state->pages.size()) break;
 
         const std::wstring& title = state->pages[tabIdx].title;
         bool isSelected = (dis->itemState & ODS_SELECTED) != 0;
+        bool isEnabled = state->pages[tabIdx].enabled;  // 2.4: 禁用状态
 
         int w = dis->rcItem.right  - dis->rcItem.left;
         int h = dis->rcItem.bottom - dis->rcItem.top;
@@ -3569,11 +3687,13 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
 
             dcRT->BeginDraw();
 
-            // ── 3. 背景填充 ──
-            // 选中: 白色；未选中: Element UI 浅灰 #F5F7FA
-            D2D1_COLOR_F bgColor = isSelected
-                ? D2D1::ColorF(1.00f, 1.00f, 1.00f, 1.0f)
-                : D2D1::ColorF(0.961f, 0.969f, 0.980f, 1.0f);
+            // 2.4: 禁用标签页使用 50% 透明度
+            float opacity = isEnabled ? 1.0f : 0.5f;
+
+            // ── 3. 背景填充（2.1: 从 state 读取颜色）──
+            UINT32 bgArgb = isSelected ? state->selectedBgColor : state->unselectedBgColor;
+            D2D1_COLOR_F bgColor = ColorFromUInt32(bgArgb);
+            bgColor.a *= opacity;  // 禁用时半透明
 
             ID2D1SolidColorBrush* bgBrush = nullptr;
             dcRT->CreateSolidColorBrush(bgColor, &bgBrush);
@@ -3581,16 +3701,42 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
             dcRT->FillRectangle(fillRect, bgBrush);
             bgBrush->Release();
 
-            // ── 4. 文字（含彩色 Emoji） ──
+            // ── 4. 图标绘制（2.5）+ 文字（2.2）+ 关闭按钮（2.6）──
+            float textLeft = (float)state->paddingH;   // 2.2: 使用 paddingH
+            float textRight = (float)(w - state->paddingH);
+            float closeBtnSize = 16.0f;  // 关闭按钮区域大小
+            float closeBtnMargin = 4.0f; // 关闭按钮与文字间距
+
+            // 2.5: 图标绘制
+            float iconSize = 16.0f;
+            float iconGap = 4.0f;
+            bool hasIcon = !state->pages[tabIdx].iconData.empty();
+            if (hasIcon) {
+                ID2D1Bitmap* iconBitmap = CreateBitmapFromPNGData(dcRT, state->pages[tabIdx].iconData);
+                if (iconBitmap) {
+                    float iconY = ((float)h - iconSize) / 2.0f;
+                    D2D1_RECT_F iconRect = D2D1::RectF(textLeft, iconY, textLeft + iconSize, iconY + iconSize);
+                    dcRT->DrawBitmap(iconBitmap, iconRect, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                    iconBitmap->Release();
+                    textLeft += iconSize + iconGap;  // 文字起始位置右移
+                }
+            }
+
+            // 2.6: 关闭按钮占位（预留右侧空间）
+            if (state->closable) {
+                textRight -= (closeBtnSize + closeBtnMargin);
+            }
+
             if (!title.empty() && g_dwrite_factory) {
                 IDWriteTextFormat* fmt = nullptr;
+                // 2.2: 从 state 读取字体名称和字号
                 g_dwrite_factory->CreateTextFormat(
-                    L"Segoe UI Emoji",   // 支持彩色 Emoji；中文字符由 DWrite 自动 Fallback
+                    state->fontName.c_str(),
                     nullptr,
                     DWRITE_FONT_WEIGHT_NORMAL,
                     DWRITE_FONT_STYLE_NORMAL,
                     DWRITE_FONT_STRETCH_NORMAL,
-                    13.0f,
+                    state->fontSize,
                     L"zh-CN",
                     &fmt
                 );
@@ -3598,18 +3744,18 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
                     fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-                    // 选中: Element UI 主蓝 #409EFF；未选中: 常规文字色 #606266
-                    D2D1_COLOR_F textColor = isSelected
-                        ? D2D1::ColorF(0x409EFF)
-                        : D2D1::ColorF(0x606266);
+                    // 2.2: 从 state 读取文字颜色
+                    UINT32 textArgb = isSelected ? state->selectedTextColor : state->unselectedTextColor;
+                    D2D1_COLOR_F textColor = ColorFromUInt32(textArgb);
+                    textColor.a *= opacity;  // 禁用时半透明
 
                     ID2D1SolidColorBrush* textBrush = nullptr;
                     dcRT->CreateSolidColorBrush(textColor, &textBrush);
 
-                    // 文字区域：底部留 2px 给选中指示条
+                    // 2.2: 使用 paddingH/paddingV 计算文字绘制区域
                     D2D1_RECT_F textRect = D2D1::RectF(
-                        2.0f, 0.0f,
-                        (FLOAT)(w - 2), (FLOAT)(h - (isSelected ? 2.0f : 0.0f))
+                        textLeft, (float)state->paddingV,
+                        textRight, (FLOAT)(h - (isSelected ? 2.0f : 0.0f) - state->paddingV)
                     );
 
                     // D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT: 关键 —— 彩色 Emoji 渲染
@@ -3627,10 +3773,49 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
                 }
             }
 
-            // ── 5. 选中指示条（底部 2px 蓝线，Element UI 风格）──
+            // ── 2.6: 关闭按钮绘制 ──
+            if (state->closable) {
+                float btnX = (float)w - closeBtnSize - closeBtnMargin;
+                float btnY = ((float)h - closeBtnSize) / 2.0f;
+                bool isCloseHovered = (state->hoveredCloseTabIndex == tabIdx);
+
+                // 悬停时绘制红色背景圆角矩形
+                if (isCloseHovered) {
+                    ID2D1SolidColorBrush* closeBgBrush = nullptr;
+                    D2D1_COLOR_F closeBgColor = D2D1::ColorF(0xF56C6C);  // Element UI danger 红色
+                    closeBgColor.a = opacity;
+                    dcRT->CreateSolidColorBrush(closeBgColor, &closeBgBrush);
+                    D2D1_ROUNDED_RECT closeRoundedRect = D2D1::RoundedRect(
+                        D2D1::RectF(btnX - 2, btnY - 2, btnX + closeBtnSize + 2, btnY + closeBtnSize + 2),
+                        3.0f, 3.0f);
+                    dcRT->FillRoundedRectangle(closeRoundedRect, closeBgBrush);
+                    closeBgBrush->Release();
+                }
+
+                // 绘制 × 符号
+                ID2D1SolidColorBrush* closeBrush = nullptr;
+                D2D1_COLOR_F closeColor = isCloseHovered
+                    ? D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity)   // 悬停时白色
+                    : D2D1::ColorF(0.6f, 0.6f, 0.6f, opacity);  // 默认灰色
+                dcRT->CreateSolidColorBrush(closeColor, &closeBrush);
+                float crossMargin = 4.0f;
+                dcRT->DrawLine(
+                    D2D1::Point2F(btnX + crossMargin, btnY + crossMargin),
+                    D2D1::Point2F(btnX + closeBtnSize - crossMargin, btnY + closeBtnSize - crossMargin),
+                    closeBrush, 1.2f);
+                dcRT->DrawLine(
+                    D2D1::Point2F(btnX + closeBtnSize - crossMargin, btnY + crossMargin),
+                    D2D1::Point2F(btnX + crossMargin, btnY + closeBtnSize - crossMargin),
+                    closeBrush, 1.2f);
+                closeBrush->Release();
+            }
+
+            // ── 5. 选中指示条（2.3: 从 state 读取颜色）──
             if (isSelected) {
+                D2D1_COLOR_F indicatorColor = ColorFromUInt32(state->indicatorColor);
+                indicatorColor.a *= opacity;
                 ID2D1SolidColorBrush* lineBrush = nullptr;
-                dcRT->CreateSolidColorBrush(D2D1::ColorF(0x409EFF), &lineBrush);
+                dcRT->CreateSolidColorBrush(indicatorColor, &lineBrush);
                 D2D1_RECT_F lineRect = D2D1::RectF(0.0f, (FLOAT)(h - 2), (FLOAT)w, (FLOAT)h);
                 dcRT->FillRectangle(lineRect, lineBrush);
                 lineBrush->Release();
@@ -3728,12 +3913,50 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
     state->currentIndex = -1;
     state->callback = nullptr;
 
+    // 外观字段默认值
+    state->tabWidth = 120;
+    state->tabHeight = 34;
+    state->fontName = L"Segoe UI Emoji";
+    state->fontSize = 13.0f;
+    state->selectedBgColor = 0xFFFFFFFF;
+    state->unselectedBgColor = 0xFFF5F7FA;
+    state->selectedTextColor = 0xFF409EFF;
+    state->unselectedTextColor = 0xFF606266;
+    state->indicatorColor = 0xFF409EFF;
+    state->paddingH = 2;
+    state->paddingV = 0;
+
+    // 交互字段默认值
+    state->closable = false;
+    state->closeCallback = nullptr;
+    state->rightClickCallback = nullptr;
+    state->dblClickCallback = nullptr;
+    state->draggable = false;
+
+    // 布局字段默认值
+    state->tabPosition = 0;
+    state->tabAlignment = 0;
+    state->scrollable = false;
+    state->scrollOffset = 0;
+
+    // 绘制辅助字段默认值
+    state->hoveredCloseTabIndex = -1;
+
+    // 拖拽状态字段默认值
+    state->isDragging = false;
+    state->dragStartIndex = -1;
+    state->dragTargetIndex = -1;
+    state->dragStartPoint = { 0, 0 };
+
     // 保存到全局映射表
     g_tab_controls[hTabControl] = state;
 
     // 子类化父窗口以接收 WM_NOTIFY 消息
     // 注意：WM_NOTIFY 消息是发送给父窗口的，不是发送给 TabControl 的
     SetWindowSubclass(hParent, TabControlParentSubclassProc, (UINT_PTR)hTabControl, (DWORD_PTR)hTabControl);
+
+    // 子类化 TabControl 自身以处理鼠标事件（右键、双击、拖拽）
+    SetWindowSubclass(hTabControl, TabControlSubclassProc, 0, (DWORD_PTR)hTabControl);
 
     return hTabControl;
 }
@@ -3809,7 +4032,10 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
     pageInfo.index = index;
     pageInfo.title = title;
     pageInfo.hContentWindow = hContentWindow;
-    pageInfo.visible = false;
+    pageInfo.visible = true;   // 默认在标签栏中可见
+    pageInfo.enabled = true;
+    // iconData 默认为空（std::vector 默认构造）
+    pageInfo.contentBgColor = 0xFFFFFFFF;
 
     state->pages.push_back(pageInfo);
 
@@ -3947,6 +4173,9 @@ void __stdcall DestroyTabControl(HWND hTabControl) {
 
     // 清理父窗口的子类化
     RemoveWindowSubclass(state->hParent, TabControlParentSubclassProc, (UINT_PTR)hTabControl);
+
+    // 清理 TabControl 自身的子类化
+    RemoveWindowSubclass(hTabControl, TabControlSubclassProc, 0);
 
     for (auto& page : state->pages) {
         if (page.hContentWindow && IsWindow(page.hContentWindow)) {
@@ -9761,6 +9990,925 @@ __declspec(dllexport) int __stdcall EnableTabControl(
     return 0;
 }
 
+
+// ========== TabControl 外观函数 ==========
+
+// 设置标签页固定尺寸
+__declspec(dllexport) int __stdcall SetTabItemSize(HWND hTab, int width, int height) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+    if (width <= 0 || height <= 0) return -1;
+
+    TabControlState* state = it->second;
+    state->tabWidth = width;
+    state->tabHeight = height;
+
+    // TCM_SETITEMSIZE: LOWORD=宽度, HIWORD=高度（无论水平还是垂直模式都一样传）
+    SendMessage(hTab, TCM_SETITEMSIZE, 0, MAKELPARAM(width, height));
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 设置标签页字体（fontName 为 UTF-8 编码）
+__declspec(dllexport) int __stdcall SetTabFont(HWND hTab, const unsigned char* fontName, int fontNameLen, float fontSize) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+    if (!fontName || fontNameLen <= 0) return -1;
+    if (fontSize <= 0) return -1;
+
+    TabControlState* state = it->second;
+    state->fontName = Utf8ToWide(fontName, fontNameLen);
+    state->fontSize = fontSize;
+
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 设置标签页颜色（选中/未选中的背景色和文字色）
+__declspec(dllexport) int __stdcall SetTabColors(HWND hTab, UINT32 selectedBg, UINT32 unselectedBg, UINT32 selectedText, UINT32 unselectedText) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->selectedBgColor = selectedBg;
+    state->unselectedBgColor = unselectedBg;
+    state->selectedTextColor = selectedText;
+    state->unselectedTextColor = unselectedText;
+
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 设置选中标签页底部指示条颜色
+__declspec(dllexport) int __stdcall SetTabIndicatorColor(HWND hTab, UINT32 color) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->indicatorColor = color;
+
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 设置标签页内边距
+__declspec(dllexport) int __stdcall SetTabPadding(HWND hTab, int horizontal, int vertical) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+    if (horizontal < 0 || vertical < 0) return -1;
+
+    TabControlState* state = it->second;
+    state->paddingH = horizontal;
+    state->paddingV = vertical;
+
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// ========== TabControl 单个标签页控制函数 ==========
+
+// 辅助函数：根据 pages 数组中的 visible 状态重建 Win32 Tab Control 的标签项
+// pages 数组保存所有页面（包括隐藏的），Win32 Tab Control 只显示可见的
+static void RebuildTabItems(TabControlState* state) {
+    if (!state || !state->hTabControl) return;
+
+    // 删除 Win32 Tab Control 中的所有标签项
+    TabCtrl_DeleteAllItems(state->hTabControl);
+
+    // 重新插入可见的标签项
+    int visibleIdx = 0;
+    for (size_t i = 0; i < state->pages.size(); i++) {
+        if (state->pages[i].visible) {
+            TCITEMW tci = {};
+            tci.mask = TCIF_TEXT;
+            tci.pszText = (LPWSTR)state->pages[i].title.c_str();
+            TabCtrl_InsertItem(state->hTabControl, visibleIdx, &tci);
+            visibleIdx++;
+        }
+    }
+
+    // 恢复选中状态：将 currentIndex（pages 数组索引）映射到 Win32 可见索引
+    if (state->currentIndex >= 0 && state->currentIndex < (int)state->pages.size()
+        && state->pages[state->currentIndex].visible) {
+        int visIdx = 0;
+        for (int i = 0; i < state->currentIndex; i++) {
+            if (state->pages[i].visible) visIdx++;
+        }
+        TabCtrl_SetCurSel(state->hTabControl, visIdx);
+    }
+
+    InvalidateRect(state->hTabControl, NULL, TRUE);
+}
+
+// 辅助函数：将 Win32 Tab Control 的可见索引转换为 pages 数组索引
+static int VisibleIndexToPageIndex(TabControlState* state, int visibleIdx) {
+    if (!state || visibleIdx < 0) return -1;
+    int count = 0;
+    for (size_t i = 0; i < state->pages.size(); i++) {
+        if (state->pages[i].visible) {
+            if (count == visibleIdx) return (int)i;
+            count++;
+        }
+    }
+    return -1;
+}
+
+// 启用/禁用单个标签页
+__declspec(dllexport) int __stdcall EnableTabItem(HWND hTab, int index, int enabled) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    if (index < 0 || index >= (int)state->pages.size()) return -1;
+
+    state->pages[index].enabled = (enabled != 0);
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 获取单个标签页的启用状态
+__declspec(dllexport) int __stdcall GetTabItemEnabled(HWND hTab, int index) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    if (index < 0 || index >= (int)state->pages.size()) return -1;
+
+    return state->pages[index].enabled ? 1 : 0;
+}
+
+// 显示/隐藏单个标签页
+__declspec(dllexport) int __stdcall ShowTabItem(HWND hTab, int index, int visible) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    if (index < 0 || index >= (int)state->pages.size()) return -1;
+
+    bool newVisible = (visible != 0);
+    if (state->pages[index].visible == newVisible) return 0;  // 状态未变
+
+    state->pages[index].visible = newVisible;
+
+    // 如果隐藏的是当前选中页，自动切换到下一个可见页
+    if (!newVisible && index == state->currentIndex) {
+        int newCurrent = -1;
+        // 先向后找
+        for (int i = index + 1; i < (int)state->pages.size(); i++) {
+            if (state->pages[i].visible) { newCurrent = i; break; }
+        }
+        // 再向前找
+        if (newCurrent < 0) {
+            for (int i = index - 1; i >= 0; i--) {
+                if (state->pages[i].visible) { newCurrent = i; break; }
+            }
+        }
+        state->currentIndex = newCurrent;
+        UpdateTabLayout(state);
+
+        if (state->callback && newCurrent >= 0) {
+            state->callback(hTab, newCurrent);
+        }
+    }
+
+    // 隐藏标签页的内容窗口
+    if (!newVisible && state->pages[index].hContentWindow && IsWindow(state->pages[index].hContentWindow)) {
+        ShowWindow(state->pages[index].hContentWindow, SW_HIDE);
+    }
+
+    // 重建 Win32 Tab Control 的标签项
+    RebuildTabItems(state);
+    return 0;
+}
+
+// 设置标签页图标（PNG 字节数据）
+__declspec(dllexport) int __stdcall SetTabItemIcon(HWND hTab, int index, const unsigned char* iconBytes, int iconLen) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    if (index < 0 || index >= (int)state->pages.size()) return -1;
+
+    if (!iconBytes || iconLen <= 0) {
+        // 清除图标
+        state->pages[index].iconData.clear();
+    } else {
+        // 存储 PNG 字节数据
+        state->pages[index].iconData.assign(iconBytes, iconBytes + iconLen);
+    }
+
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 辅助函数：将 ARGB 颜色转换为 COLORREF (BGR) 并设置内容窗口背景画刷
+static void ApplyContentBgColor(HWND hContentWindow, UINT32 argbColor) {
+    if (!hContentWindow || !IsWindow(hContentWindow)) return;
+
+    // 更新 D2D 渲染的背景色（WindowState::client_bg_color）
+    auto win_it = g_windows.find(hContentWindow);
+    if (win_it != g_windows.end() && win_it->second) {
+        win_it->second->client_bg_color = argbColor;
+    }
+
+    // 强制重绘（包括子控件）
+    RedrawWindow(hContentWindow, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+}
+
+// 设置指定标签页的内容区域背景色
+__declspec(dllexport) int __stdcall SetTabContentBgColor(HWND hTab, int index, UINT32 color) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    if (index < 0 || index >= (int)state->pages.size()) return -1;
+
+    state->pages[index].contentBgColor = color;
+    ApplyContentBgColor(state->pages[index].hContentWindow, color);
+    return 0;
+}
+
+// 设置所有标签页的内容区域背景色
+__declspec(dllexport) int __stdcall SetTabContentBgColorAll(HWND hTab, UINT32 color) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    for (size_t i = 0; i < state->pages.size(); i++) {
+        state->pages[i].contentBgColor = color;
+        ApplyContentBgColor(state->pages[i].hContentWindow, color);
+    }
+    return 0;
+}
+
+// ========== TabControl 子类化过程（处理 TabControl 自身的鼠标事件）==========
+// 处理右键点击、双击、拖拽、关闭按钮点击和悬停
+LRESULT CALLBACK TabControlSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    auto it = g_tab_controls.find(hwnd);
+    if (it == g_tab_controls.end()) {
+        return DefSubclassProc(hwnd, msg, wparam, lparam);
+    }
+
+    TabControlState* state = it->second;
+
+    switch (msg) {
+
+    // ── 关闭按钮悬停跟踪 ──
+    case WM_MOUSEMOVE: {
+        if (state->closable) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            TCHITTESTINFO hti = {};
+            hti.pt = pt;
+            int visibleIdx = TabCtrl_HitTest(hwnd, &hti);
+            int pageIdx = VisibleIndexToPageIndex(state, visibleIdx);
+
+            int newHoveredClose = -1;
+            if (pageIdx >= 0 && pageIdx < (int)state->pages.size()) {
+                // 获取该标签页的矩形区域
+                RECT tabRect = {};
+                TabCtrl_GetItemRect(hwnd, visibleIdx, &tabRect);
+                int w = tabRect.right - tabRect.left;
+                int h = tabRect.bottom - tabRect.top;
+                float closeBtnSize = 16.0f;
+                float closeBtnMargin = 4.0f;
+                // 关闭按钮区域（相对于标签页矩形）
+                float btnX = (float)tabRect.left + (float)w - closeBtnSize - closeBtnMargin;
+                float btnY = (float)tabRect.top + ((float)h - closeBtnSize) / 2.0f;
+                if (pt.x >= (int)(btnX - 2) && pt.x <= (int)(btnX + closeBtnSize + 2) &&
+                    pt.y >= (int)(btnY - 2) && pt.y <= (int)(btnY + closeBtnSize + 2)) {
+                    newHoveredClose = pageIdx;
+                }
+            }
+
+            if (newHoveredClose != state->hoveredCloseTabIndex) {
+                state->hoveredCloseTabIndex = newHoveredClose;
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+
+            // 确保鼠标离开时能收到 WM_MOUSELEAVE
+            TRACKMOUSEEVENT tme = {};
+            tme.cbSize = sizeof(tme);
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            TrackMouseEvent(&tme);
+        }
+
+        // ── 拖拽移动 ──
+        if (state->isDragging && state->draggable) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            TCHITTESTINFO hti = {};
+            hti.pt = pt;
+            int visibleIdx = TabCtrl_HitTest(hwnd, &hti);
+            int targetPageIdx = VisibleIndexToPageIndex(state, visibleIdx);
+            if (targetPageIdx >= 0) {
+                state->dragTargetIndex = targetPageIdx;
+            }
+            // 绘制拖拽指示线
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        break;
+    }
+
+    case WM_MOUSELEAVE: {
+        if (state->hoveredCloseTabIndex != -1) {
+            state->hoveredCloseTabIndex = -1;
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        break;
+    }
+
+    // ── 关闭按钮点击 + 拖拽开始 ──
+    case WM_LBUTTONDOWN: {
+        POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+
+        // 先检测是否点击了关闭按钮（优先于拖拽）
+        bool clickedCloseBtn = false;
+        if (state->closable) {
+            TCHITTESTINFO hti = {};
+            hti.pt = pt;
+            int visibleIdx = TabCtrl_HitTest(hwnd, &hti);
+            int pageIdx = VisibleIndexToPageIndex(state, visibleIdx);
+            if (pageIdx >= 0 && pageIdx < (int)state->pages.size()) {
+                RECT tabRect = {};
+                TabCtrl_GetItemRect(hwnd, visibleIdx, &tabRect);
+                int tw = tabRect.right - tabRect.left;
+                int th = tabRect.bottom - tabRect.top;
+                float closeBtnSize = 16.0f;
+                float closeBtnMargin = 4.0f;
+                float btnX = (float)tabRect.left + (float)tw - closeBtnSize - closeBtnMargin;
+                float btnY = (float)tabRect.top + ((float)th - closeBtnSize) / 2.0f;
+                if (pt.x >= (int)(btnX - 2) && pt.x <= (int)(btnX + closeBtnSize + 2) &&
+                    pt.y >= (int)(btnY - 2) && pt.y <= (int)(btnY + closeBtnSize + 2)) {
+                    clickedCloseBtn = true;
+                    // 立即触发关闭回调
+                    if (state->closeCallback) {
+                        state->closeCallback(hwnd, pageIdx);
+                    }
+                    return 0;
+                }
+            }
+        }
+
+        // 拖拽开始（仅在未点击关闭按钮时）
+        if (!clickedCloseBtn && state->draggable) {
+            TCHITTESTINFO hti = {};
+            hti.pt = pt;
+            int visibleIdx = TabCtrl_HitTest(hwnd, &hti);
+            int pageIdx = VisibleIndexToPageIndex(state, visibleIdx);
+            if (pageIdx >= 0) {
+                state->isDragging = true;
+                state->dragStartIndex = pageIdx;
+                state->dragTargetIndex = pageIdx;
+                state->dragStartPoint = pt;
+                SetCapture(hwnd);
+            }
+        }
+        break;
+    }
+
+    case WM_LBUTTONUP: {
+        POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+
+        // ── 拖拽完成 ──
+        if (state->isDragging && state->draggable) {
+            ReleaseCapture();
+            state->isDragging = false;
+
+            int fromIdx = state->dragStartIndex;
+            int toIdx = state->dragTargetIndex;
+
+            if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx &&
+                fromIdx < (int)state->pages.size() && toIdx < (int)state->pages.size()) {
+                // 移动 pages 数组中的元素
+                TabPageInfo movedPage = state->pages[fromIdx];
+                state->pages.erase(state->pages.begin() + fromIdx);
+                if (toIdx > fromIdx) toIdx--;  // 删除后索引调整
+                state->pages.insert(state->pages.begin() + toIdx, movedPage);
+
+                // 更新所有页的 index 字段
+                for (int i = 0; i < (int)state->pages.size(); i++) {
+                    state->pages[i].index = i;
+                }
+
+                // 保持拖拽页为选中状态
+                state->currentIndex = toIdx;
+
+                // 重建 Win32 Tab Control 的标签
+                TabCtrl_DeleteAllItems(hwnd);
+                int visIdx = 0;
+                for (size_t i = 0; i < state->pages.size(); i++) {
+                    if (state->pages[i].visible) {
+                        std::string utf8Title;
+                        int len = WideCharToMultiByte(CP_UTF8, 0, state->pages[i].title.c_str(), -1, nullptr, 0, nullptr, nullptr);
+                        if (len > 0) {
+                            utf8Title.resize(len - 1);
+                            WideCharToMultiByte(CP_UTF8, 0, state->pages[i].title.c_str(), -1, &utf8Title[0], len, nullptr, nullptr);
+                        }
+                        TCITEMW tci = {};
+                        tci.mask = TCIF_TEXT;
+                        tci.pszText = (LPWSTR)state->pages[i].title.c_str();
+                        TabCtrl_InsertItem(hwnd, visIdx, &tci);
+                        visIdx++;
+                    }
+                }
+
+                // 设置选中状态
+                if (state->currentIndex >= 0 && state->currentIndex < (int)state->pages.size()
+                    && state->pages[state->currentIndex].visible) {
+                    int selVisIdx = 0;
+                    for (int i = 0; i < state->currentIndex; i++) {
+                        if (state->pages[i].visible) selVisIdx++;
+                    }
+                    TabCtrl_SetCurSel(hwnd, selVisIdx);
+                }
+
+                UpdateTabLayout(state);
+            }
+
+            state->dragStartIndex = -1;
+            state->dragTargetIndex = -1;
+            InvalidateRect(hwnd, NULL, TRUE);
+            return 0;
+        }
+
+        // ── 关闭按钮点击检测 ──
+        if (state->closable) {
+            TCHITTESTINFO hti = {};
+            hti.pt = pt;
+            int visibleIdx = TabCtrl_HitTest(hwnd, &hti);
+            int pageIdx = VisibleIndexToPageIndex(state, visibleIdx);
+
+            if (pageIdx >= 0 && pageIdx < (int)state->pages.size()) {
+                RECT tabRect = {};
+                TabCtrl_GetItemRect(hwnd, visibleIdx, &tabRect);
+                int w = tabRect.right - tabRect.left;
+                int h = tabRect.bottom - tabRect.top;
+                float closeBtnSize = 16.0f;
+                float closeBtnMargin = 4.0f;
+                float btnX = (float)tabRect.left + (float)w - closeBtnSize - closeBtnMargin;
+                float btnY = (float)tabRect.top + ((float)h - closeBtnSize) / 2.0f;
+
+                if (pt.x >= (int)(btnX - 2) && pt.x <= (int)(btnX + closeBtnSize + 2) &&
+                    pt.y >= (int)(btnY - 2) && pt.y <= (int)(btnY + closeBtnSize + 2)) {
+                    // 点击了关闭按钮，触发回调
+                    if (state->closeCallback) {
+                        state->closeCallback(hwnd, pageIdx);
+                    }
+                    return 0;  // 不传递给默认处理，避免切换标签
+                }
+            }
+        }
+        break;
+    }
+
+    // ── 右键点击 ──
+    case WM_RBUTTONUP: {
+        if (state->rightClickCallback) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            TCHITTESTINFO hti = {};
+            hti.pt = pt;
+            int visibleIdx = TabCtrl_HitTest(hwnd, &hti);
+            int pageIdx = VisibleIndexToPageIndex(state, visibleIdx);
+
+            if (pageIdx >= 0) {
+                // 转换为屏幕坐标
+                POINT screenPt = pt;
+                ClientToScreen(hwnd, &screenPt);
+                state->rightClickCallback(hwnd, pageIdx, screenPt.x, screenPt.y);
+                return 0;
+            }
+        }
+        break;
+    }
+
+    // ── 双击 ──
+    case WM_LBUTTONDBLCLK: {
+        if (state->dblClickCallback) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            TCHITTESTINFO hti = {};
+            hti.pt = pt;
+            int visibleIdx = TabCtrl_HitTest(hwnd, &hti);
+            int pageIdx = VisibleIndexToPageIndex(state, visibleIdx);
+
+            if (pageIdx >= 0) {
+                state->dblClickCallback(hwnd, pageIdx);
+                return 0;
+            }
+        }
+        break;
+    }
+
+    case WM_PAINT: {
+        // 拖拽时绘制插入位置指示线
+        if (state->isDragging && state->draggable && state->dragTargetIndex >= 0) {
+            // 先让默认绘制完成
+            LRESULT result = DefSubclassProc(hwnd, msg, wparam, lparam);
+
+            // 在默认绘制之上绘制指示线
+            HDC hdc = GetDC(hwnd);
+            if (hdc) {
+                // 找到目标位置的可见索引
+                int targetVisIdx = 0;
+                for (int i = 0; i < state->dragTargetIndex && i < (int)state->pages.size(); i++) {
+                    if (state->pages[i].visible) targetVisIdx++;
+                }
+
+                RECT tabRect = {};
+                int tabCount = TabCtrl_GetItemCount(hwnd);
+                int lineX = 0;
+                if (targetVisIdx < tabCount) {
+                    TabCtrl_GetItemRect(hwnd, targetVisIdx, &tabRect);
+                    lineX = tabRect.left;
+                } else if (tabCount > 0) {
+                    TabCtrl_GetItemRect(hwnd, tabCount - 1, &tabRect);
+                    lineX = tabRect.right;
+                }
+
+                // 绘制 2px 宽的蓝色指示线
+                HPEN hPen = CreatePen(PS_SOLID, 2, RGB(64, 158, 255));  // #409EFF
+                HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+                MoveToEx(hdc, lineX, tabRect.top, NULL);
+                LineTo(hdc, lineX, tabRect.bottom);
+                SelectObject(hdc, hOldPen);
+                DeleteObject(hPen);
+
+                ReleaseDC(hwnd, hdc);
+            }
+            return result;
+        }
+        break;
+    }
+
+    case WM_NCDESTROY: {
+        RemoveWindowSubclass(hwnd, TabControlSubclassProc, uIdSubclass);
+        break;
+    }
+    }
+
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// ========== TabControl 交互增强函数 ==========
+
+// 设置标签页是否显示关闭按钮
+__declspec(dllexport) int __stdcall SetTabClosable(HWND hTab, int closable) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->closable = (closable != 0);
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 设置标签页关闭回调
+__declspec(dllexport) int __stdcall SetTabCloseCallback(HWND hTab, TAB_CLOSE_CALLBACK callback) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->closeCallback = callback;
+    return 0;
+}
+
+// 设置标签页右键点击回调
+__declspec(dllexport) int __stdcall SetTabRightClickCallback(HWND hTab, TAB_RIGHTCLICK_CALLBACK callback) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->rightClickCallback = callback;
+    return 0;
+}
+
+// 设置标签页是否可拖拽排序
+__declspec(dllexport) int __stdcall SetTabDraggable(HWND hTab, int draggable) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->draggable = (draggable != 0);
+    return 0;
+}
+
+// 设置标签页双击回调
+__declspec(dllexport) int __stdcall SetTabDoubleClickCallback(HWND hTab, TAB_DBLCLICK_CALLBACK callback) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->dblClickCallback = callback;
+    return 0;
+}
+
+// ========== 布局与位置函数 ==========
+
+// 设置标签栏位置（0=上, 1=下, 2=左, 3=右）
+__declspec(dllexport) int __stdcall SetTabPosition(HWND hTab, int position) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    if (position < 0 || position > 3) return -1;
+
+    TabControlState* state = it->second;
+    state->tabPosition = position;
+
+    // 获取当前窗口样式
+    LONG style = GetWindowLong(hTab, GWL_STYLE);
+
+    // 清除所有位置相关样式
+    style &= ~(TCS_BOTTOM | TCS_VERTICAL | TCS_RIGHT);
+
+    // 根据位置设置样式
+    switch (position) {
+    case 0: // 上（默认，无需额外样式）
+        break;
+    case 1: // 下
+        style |= TCS_BOTTOM;
+        break;
+    case 2: // 左
+        // TCS_VERTICAL 必须配合 TCS_MULTILINE 才能正常显示垂直标签
+        style |= TCS_VERTICAL | TCS_MULTILINE;
+        break;
+    case 3: // 右
+        style |= TCS_VERTICAL | TCS_RIGHT | TCS_MULTILINE;
+        break;
+    }
+
+    SetWindowLong(hTab, GWL_STYLE, style);
+
+    // 重新设置标签尺寸（确保垂直/水平模式下尺寸正确）
+    SendMessage(hTab, TCM_SETITEMSIZE, 0, MAKELPARAM(state->tabWidth, state->tabHeight));
+
+    // 重新计算内容区域布局
+    UpdateTabLayout(state);
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 设置标签对齐方式（0=左对齐, 1=居中, 2=右对齐）
+__declspec(dllexport) int __stdcall SetTabAlignment(HWND hTab, int align) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    if (align < 0 || align > 2) return -1;
+
+    TabControlState* state = it->second;
+    state->tabAlignment = align;
+
+    // 触发重绘，实际对齐效果在 WM_DRAWITEM 中根据 tabAlignment 调整
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 设置标签栏是否可滚动（1=可滚动/单行, 0=不可滚动/多行）
+__declspec(dllexport) int __stdcall SetTabScrollable(HWND hTab, int scrollable) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    state->scrollable = (scrollable != 0);
+    state->scrollOffset = 0;
+
+    // 获取当前窗口样式
+    LONG style = GetWindowLong(hTab, GWL_STYLE);
+
+    if (state->scrollable) {
+        // 可滚动模式：移除 TCS_MULTILINE，Win32 Tab Control 自带单行滚动箭头
+        style &= ~TCS_MULTILINE;
+    } else {
+        // 不可滚动模式：添加 TCS_MULTILINE，使用多行标签行为
+        style |= TCS_MULTILINE;
+    }
+
+    SetWindowLong(hTab, GWL_STYLE, style);
+
+    // 重新计算布局
+    UpdateTabLayout(state);
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+
+// ========== 批量操作函数 ==========
+
+// 清空所有标签页
+__declspec(dllexport) int __stdcall RemoveAllTabs(HWND hTab) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+
+    // 遍历所有页面，销毁内容窗口，清理关联的 WindowState 和 D2D 渲染目标
+    for (auto& page : state->pages) {
+        if (page.hContentWindow && IsWindow(page.hContentWindow)) {
+            auto win_it = g_windows.find(page.hContentWindow);
+            if (win_it != g_windows.end()) {
+                WindowState* win_state = win_it->second;
+                if (win_state->render_target) {
+                    win_state->render_target->Release();
+                }
+                delete win_state;
+                g_windows.erase(win_it);
+            }
+            DestroyWindow(page.hContentWindow);
+        }
+    }
+
+    // 清空 pages 数组，设置 currentIndex = -1
+    state->pages.clear();
+    state->currentIndex = -1;
+
+    // 删除 Win32 Tab Control 中的所有标签项并重绘
+    TabCtrl_DeleteAllItems(hTab);
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
+// 在指定位置插入标签页
+__declspec(dllexport) int __stdcall InsertTabItem(HWND hTab, int index, const unsigned char* title, int titleLen, HWND hContent) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+
+    if (index < 0) return -1;
+
+    // index 超过当前数量时追加到末尾
+    int count = (int)state->pages.size();
+    if (index > count) index = count;
+
+    // 转换标题
+    std::wstring wtitle = Utf8ToWide(title, titleLen);
+
+    // 如果没有提供内容窗口，则创建一个
+    if (!hContent || !IsWindow(hContent)) {
+        if (!g_d2d_factory) {
+            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_d2d_factory);
+        }
+        if (!g_dwrite_factory) {
+            DWriteCreateFactory(
+                DWRITE_FACTORY_TYPE_SHARED,
+                __uuidof(IDWriteFactory),
+                reinterpret_cast<IUnknown**>(&g_dwrite_factory)
+            );
+        }
+
+        static bool tab_content_class_registered = false;
+        if (!tab_content_class_registered) {
+            WNDCLASSW wc = {};
+            wc.lpfnWndProc = TabContentWindowProc;
+            wc.hInstance = GetModuleHandle(nullptr);
+            wc.lpszClassName = TAB_CONTENT_D2D_CLASS;
+            wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+            RegisterClassW(&wc);
+            tab_content_class_registered = true;
+        }
+
+        hContent = CreateWindowExW(
+            0,
+            TAB_CONTENT_D2D_CLASS,
+            L"",
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0, 0, 0, 0,
+            state->hTabControl,
+            nullptr,
+            GetModuleHandle(nullptr),
+            nullptr
+        );
+        if (!hContent) return -1;
+    }
+
+    // 创建新的 TabPageInfo
+    TabPageInfo pageInfo;
+    pageInfo.index = index;
+    pageInfo.title = wtitle;
+    pageInfo.hContentWindow = hContent;
+    pageInfo.visible = true;
+    pageInfo.enabled = true;
+    pageInfo.contentBgColor = 0xFFFFFFFF;
+
+    // 在 pages 数组中插入
+    state->pages.insert(state->pages.begin() + index, pageInfo);
+
+    // 更新后续标签页的 index 字段
+    for (int i = index + 1; i < (int)state->pages.size(); i++) {
+        state->pages[i].index = i;
+    }
+
+    // 如果插入位置 <= currentIndex，则 currentIndex++
+    if (state->currentIndex >= 0 && index <= state->currentIndex) {
+        state->currentIndex++;
+    }
+
+    // 重建 Win32 Tab Control 的标签项（处理 visible 状态）
+    RebuildTabItems(state);
+
+    // 如果是第一个标签页，自动选中
+    if (count == 0) {
+        state->currentIndex = 0;
+        TabCtrl_SetCurSel(hTab, 0);
+        UpdateTabLayout(state);
+        if (state->callback) {
+            state->callback(hTab, 0);
+        }
+    } else {
+        UpdateTabLayout(state);
+    }
+
+    return index;
+}
+
+// 移动标签页位置
+__declspec(dllexport) int __stdcall MoveTabItem(HWND hTab, int fromIndex, int toIndex) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    int count = (int)state->pages.size();
+
+    if (fromIndex < 0 || fromIndex >= count) return -1;
+    if (toIndex < 0 || toIndex >= count) return -1;
+    if (fromIndex == toIndex) return 0;
+
+    // 保存被移动的页面
+    TabPageInfo movedPage = state->pages[fromIndex];
+
+    // 从原位置移除
+    state->pages.erase(state->pages.begin() + fromIndex);
+
+    // 插入到目标位置
+    state->pages.insert(state->pages.begin() + toIndex, movedPage);
+
+    // 更新所有页面的 index 字段
+    for (int i = 0; i < (int)state->pages.size(); i++) {
+        state->pages[i].index = i;
+    }
+
+    // 更新 currentIndex
+    if (state->currentIndex == fromIndex) {
+        // 被移动的标签页是当前选中的
+        state->currentIndex = toIndex;
+    } else if (fromIndex < toIndex) {
+        // 向后移动：fromIndex+1 到 toIndex 之间的元素前移一位
+        if (state->currentIndex > fromIndex && state->currentIndex <= toIndex) {
+            state->currentIndex--;
+        }
+    } else {
+        // 向前移动：toIndex 到 fromIndex-1 之间的元素后移一位
+        if (state->currentIndex >= toIndex && state->currentIndex < fromIndex) {
+            state->currentIndex++;
+        }
+    }
+
+    // 重建 Win32 Tab Control 的标签项
+    RebuildTabItems(state);
+    UpdateTabLayout(state);
+
+    return 0;
+}
+
+// 根据标题查找标签页索引
+__declspec(dllexport) int __stdcall GetTabIndexByTitle(HWND hTab, const unsigned char* titleBytes, int titleLen) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    if (!titleBytes) return -1;
+
+    TabControlState* state = it->second;
+
+    // 将 UTF-8 titleBytes 转换为 std::wstring
+    std::wstring searchTitle = Utf8ToWide(titleBytes, titleLen);
+
+    // 遍历 pages 数组精确匹配（区分大小写）
+    for (size_t i = 0; i < state->pages.size(); i++) {
+        if (state->pages[i].title == searchTitle) {
+            return (int)i;
+        }
+    }
+
+    return -1;
+}
+
+// 获取整个 TabControl 的启用状态
+__declspec(dllexport) int __stdcall GetTabEnabled(HWND hTab) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    return IsWindowEnabled(hTab) ? 1 : 0;
+}
+
+// 判断指定标签页是否为当前选中
+__declspec(dllexport) int __stdcall IsTabItemSelected(HWND hTab, int index) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+
+    TabControlState* state = it->second;
+    if (index < 0 || index >= (int)state->pages.size()) return -1;
+
+    return (state->currentIndex == index) ? 1 : 0;
+}
 
 LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
     auto it = g_groupboxes.find(hwnd);

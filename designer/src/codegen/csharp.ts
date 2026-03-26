@@ -154,6 +154,33 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
     lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
     lines.push(`    static extern IntPtr GetTabContentWindow(IntPtr tabCtrl, int index);`);
     lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabColors(IntPtr hTab, uint selectedBg, uint unselectedBg, uint selectedText, uint unselectedText);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabIndicatorColor(IntPtr hTab, uint color);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabItemSize(IntPtr hTab, int width, int height);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabPadding(IntPtr hTab, int horizontal, int vertical);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabClosable(IntPtr hTab, int closable);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabDraggable(IntPtr hTab, int draggable);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabScrollable(IntPtr hTab, int scrollable);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabPosition(IntPtr hTab, int position);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern int SetTabAlignment(IntPtr hTab, int align);`);
+    lines.push(``);
   }
   if (types.has('datagridview')) {
     lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
@@ -273,6 +300,47 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
         for (let index = 0; index < tabs.length; index += 1) {
           lines.push(`        { byte[] t = ToUtf8("${escapeCs(tabs[index])}"); AddTabItem(${c.name}, t, t.Length, IntPtr.Zero); }`);
           lines.push(`        IntPtr ${c.name}_page_${index} = GetTabContentWindow(${c.name}, ${index});`);
+        }
+        // 新增属性：仅在与默认值不同时生成调用代码
+        {
+          const selBg = (p.selectedBgColor as string) || '#FFFFFF';
+          const unselBg = (p.unselectedBgColor as string) || '#F5F7FA';
+          const selText = (p.selectedTextColor as string) || '#409EFF';
+          const unselText = (p.unselectedTextColor as string) || '#606266';
+          if (selBg !== '#FFFFFF' || unselBg !== '#F5F7FA' || selText !== '#409EFF' || unselText !== '#606266') {
+            lines.push(`        SetTabColors(${c.name}, ${csColor(selBg)}, ${csColor(unselBg)}, ${csColor(selText)}, ${csColor(unselText)});`);
+          }
+          const indColor = (p.indicatorColor as string) || '#409EFF';
+          if (indColor !== '#409EFF') {
+            lines.push(`        SetTabIndicatorColor(${c.name}, ${csColor(indColor)});`);
+          }
+          const tabW = (p.tabItemWidth as number) ?? 120;
+          const tabH = (p.tabItemHeight as number) ?? 34;
+          if (tabW !== 120 || tabH !== 34) {
+            lines.push(`        SetTabItemSize(${c.name}, ${tabW}, ${tabH});`);
+          }
+          const padH = (p.paddingH as number) ?? 2;
+          const padV = (p.paddingV as number) ?? 0;
+          if (padH !== 2 || padV !== 0) {
+            lines.push(`        SetTabPadding(${c.name}, ${padH}, ${padV});`);
+          }
+          if (p.closable) {
+            lines.push(`        SetTabClosable(${c.name}, 1);`);
+          }
+          if (p.draggable) {
+            lines.push(`        SetTabDraggable(${c.name}, 1);`);
+          }
+          if (p.scrollable) {
+            lines.push(`        SetTabScrollable(${c.name}, 1);`);
+          }
+          const tabPos = (p.tabPosition as number) ?? 0;
+          if (tabPos !== 0) {
+            lines.push(`        SetTabPosition(${c.name}, ${tabPos});`);
+          }
+          const tabAlign = (p.tabAlignment as number) ?? 0;
+          if (tabAlign !== 0) {
+            lines.push(`        SetTabAlignment(${c.name}, ${tabAlign});`);
+          }
         }
         break;
       }
