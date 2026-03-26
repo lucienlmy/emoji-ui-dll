@@ -425,7 +425,7 @@ TreeNode* HitTestNode(TreeViewState* state, int x, int y) {
     if (!state) return nullptr;
     
     // 调整坐标（考虑滚动）
-    float adjusted_y = y + state->scroll_pos;
+    float adjusted_y = static_cast<float>(y) + static_cast<float>(state->scroll_pos);
     
     // 遍历可见节点
     for (TreeNode* node : state->visible_nodes) {
@@ -3721,7 +3721,7 @@ bool CalculateDropTarget(TreeViewState* state, int x, int y, TreeNode** target_n
     *as_child = false;
     
     // 调整坐标（考虑滚动）
-    float adjusted_y = y + state->scroll_pos;
+    float adjusted_y = static_cast<float>(y) + static_cast<float>(state->scroll_pos);
     
     // 查找鼠标位置的节点
     TreeNode* hover_node = nullptr;
