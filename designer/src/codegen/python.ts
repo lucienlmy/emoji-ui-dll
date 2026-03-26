@@ -88,6 +88,7 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
   const hasGrid = controls.some(c => c.type === 'datagridview');
   const hasTree = controls.some((c) => c.type === 'treeview' || c.type === 'treeview_sidebar');
   const hasTreeSidebar = controls.some((c) => c.type === 'treeview_sidebar');
+  const hasDtp = controls.some((c) => c.type === 'datetimepicker');
 
   if (hasBtns) {
     lines.push(`dll.create_emoji_button_bytes.argtypes = [c_void_p, ctypes.c_char_p, c_int, ctypes.c_char_p, c_int, c_int, c_int, c_int, c_int, c_uint]`);
@@ -183,6 +184,16 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
     lines.push(`dll.SetTreeViewSelectedForeColor.restype = c_bool`);
     lines.push(`dll.SetTreeViewHoverBgColor.argtypes = [c_void_p, c_uint]`);
     lines.push(`dll.SetTreeViewHoverBgColor.restype = c_bool`);
+  }
+  if (hasDtp) {
+    lines.push(`dll.CreateD2DDateTimePicker.argtypes = [c_void_p, c_int, c_int, c_int, c_int, c_int, c_uint, c_uint, c_uint, ctypes.c_char_p, c_int, c_int, c_int, c_int, c_int]`);
+    lines.push(`dll.CreateD2DDateTimePicker.restype = c_void_p`);
+    lines.push(`dll.SetD2DDateTimePickerDateTime.argtypes = [c_void_p, c_int, c_int, c_int, c_int, c_int, c_int]`);
+    lines.push(`dll.SetD2DDateTimePickerDateTime.restype = None`);
+    lines.push(`dll.EnableD2DDateTimePicker.argtypes = [c_void_p, c_int]`);
+    lines.push(`dll.EnableD2DDateTimePicker.restype = None`);
+    lines.push(`dll.ShowD2DDateTimePicker.argtypes = [c_void_p, c_int]`);
+    lines.push(`dll.ShowD2DDateTimePicker.restype = None`);
   }
 
   lines.push(``);
@@ -403,6 +414,22 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
           lines.push(`dll.SetTreeViewSelectedForeColor(${c.name}, ${pyColor((p.selectedForeColor as string) || '#FFFFFF')})`);
           lines.push(`dll.SetTreeViewHoverBgColor(${c.name}, ${pyColor((p.hoverBgColor as string) || '#F5F7FA')})`);
           lines.push(`dll.SetTreeViewSidebarMode(${c.name}, True)`);
+        }
+        break;
+      }
+      case 'datetimepicker': {
+        lines.push(``);
+        lines.push(`# ${c.name}`);
+        lines.push(`${c.name} = dll.CreateD2DDateTimePicker(${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.precision as number) ?? 4}, ${pyColor((p.fgColor as string) || '#606266')}, ${pyColor((p.bgColor as string) || '#FFFFFF')}, ${pyColor((p.borderColor as string) || '#DCDFE6')}, ${fontVar}, len(${fontVar}), ${(p.fontSize as number) || 14}, ${p.bold ? 1 : 0}, ${p.italic ? 1 : 0}, ${p.underline ? 1 : 0})`);
+        lines.push(`dll.SetD2DDateTimePickerDateTime(${c.name}, ${(p.year as number) ?? 2024}, ${(p.month as number) ?? 6}, ${(p.day as number) ?? 15}, ${(p.hour as number) ?? 0}, ${(p.minute as number) ?? 0}, ${(p.second as number) ?? 0})`);
+        if (p.enabled === false) {
+          lines.push(`dll.EnableD2DDateTimePicker(${c.name}, 0)`);
+        }
+        if (p.visible === false) {
+          lines.push(`dll.ShowD2DDateTimePicker(${c.name}, 0)`);
+        }
+        if (attachToGroup) {
+          lines.push(`dll.AddChildToGroup(${c.parentId}, ${c.name})`);
         }
         break;
       }

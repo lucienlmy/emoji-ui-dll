@@ -222,6 +222,26 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
     lines.push(`    static extern bool SetTreeViewHoverBgColor(IntPtr hwnd, uint color);`);
     lines.push(``);
   }
+  if (types.has('datetimepicker')) {
+    lines.push(`    [UnmanagedFunctionPointer(CallingConvention.StdCall)]`);
+    lines.push(`    delegate void ValueChangedCallback(IntPtr hwnd);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern IntPtr CreateD2DDateTimePicker(IntPtr parent, int x, int y, int w, int h, int initialPrecision, uint fg, uint bg, uint borderColor, byte[] font, int fontLen, int fontSize, int bold, int italic, int underline);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetD2DDateTimePickerDateTime(IntPtr hPicker, int year, int month, int day, int hour, int minute, int second);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetD2DDateTimePickerCallback(IntPtr hPicker, ValueChangedCallback cb);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void EnableD2DDateTimePicker(IntPtr hPicker, int enable);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void ShowD2DDateTimePicker(IntPtr hPicker, int show);`);
+    lines.push(``);
+  }
 
   lines.push(`    // ===== 控件句柄 =====`);
   for (const c of controls) {
@@ -236,6 +256,14 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
   if (types.has('button')) {
     lines.push(`    static ButtonClickCallback _btnCb;`);
     lines.push(``);
+  }
+
+  for (const c of controls) {
+    if (c.type !== 'datetimepicker') continue;
+    const ov = c.props.onValueChanged;
+    if (typeof ov === 'string' && ov.trim()) {
+      lines.push(`    static ValueChangedCallback _dtpCb_${c.name};`);
+    }
   }
 
   lines.push(`    static void Main()`);
@@ -398,6 +426,25 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
         }
         break;
       }
+      case 'datetimepicker': {
+        lines.push(`        font = ToUtf8("${fn}");`);
+        lines.push(`        ${c.name} = CreateD2DDateTimePicker(${parentExpr}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${(p.precision as number) ?? 4}, ${csColor((p.fgColor as string) || '#606266')}, ${csColor((p.bgColor as string) || '#FFFFFF')}, ${csColor((p.borderColor as string) || '#DCDFE6')}, font, font.Length, ${(p.fontSize as number) || 14}, ${p.bold ? 1 : 0}, ${p.italic ? 1 : 0}, ${p.underline ? 1 : 0});`);
+        lines.push(`        SetD2DDateTimePickerDateTime(${c.name}, ${(p.year as number) ?? 2024}, ${(p.month as number) ?? 6}, ${(p.day as number) ?? 15}, ${(p.hour as number) ?? 0}, ${(p.minute as number) ?? 0}, ${(p.second as number) ?? 0});`);
+        if (p.enabled === false) {
+          lines.push(`        EnableD2DDateTimePicker(${c.name}, 0);`);
+        }
+        if (p.visible === false) {
+          lines.push(`        ShowD2DDateTimePicker(${c.name}, 0);`);
+        }
+        const ov = (p.onValueChanged as string) || '';
+        const hname = normalizeControlIdentifier(ov);
+        if (hname) {
+          lines.push(`        _dtpCb_${c.name} = DtpVc_${c.name};`);
+          lines.push(`        SetD2DDateTimePickerCallback(${c.name}, _dtpCb_${c.name});`);
+        }
+        if (attachToGroup) lines.push(`        AddChildToGroup(${c.parentId}, ${c.name});`);
+        break;
+      }
     }
   }
 
@@ -422,6 +469,18 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
       const handlerName = normalizeControlIdentifier((b.props.onClick as string) || '');
       lines.push(`        if (buttonId == ${b.name}) { ${handlerName ? `${handlerName}();` : `/* TODO: ${b.name} 点击处理 */`} }`);
     }
+    lines.push(`    }`);
+  }
+
+  for (const c of controls) {
+    if (c.type !== 'datetimepicker') continue;
+    const ov = (c.props.onValueChanged as string) || '';
+    const hname = normalizeControlIdentifier(ov);
+    if (!hname) continue;
+    lines.push(``);
+    lines.push(`    static void DtpVc_${c.name}(IntPtr hwnd)`);
+    lines.push(`    {`);
+    lines.push(`        ${hname}();`);
     lines.push(`    }`);
   }
 

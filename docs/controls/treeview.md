@@ -8,17 +8,39 @@
 
 ### 侧栏折叠菜单模式
 
-若需要 **左侧缩进 + 右侧 ∨/∧ 箭头**、**Element 式选中条与主色字**、以及 **父级折叠/展开与选中回调** 的细粒度约定，请见 **[侧栏折叠菜单（TreeView 侧栏模式）](./sidebar_menu_treeview.md)**。启用方式：对同一 `CreateTreeView` 句柄调用 **`SetTreeViewSidebarMode(hwnd, true)`**，并配合文档中的颜色/行高/字体/间距与 `MoveTreeViewNode` 等 API。
+若需要 **左侧缩进 + 右侧 ∨/∧ 箭头**、**Element 式选中条与主色字**、以及 **父级折叠/展开与选中回调** 的细粒度约定，请见 **[侧栏折叠菜单（TreeView 侧栏模式）](./sidebar_menu_treeview.md)**。启用方式：对同一 `CreateTreeView` 返回的句柄调用 **`SetTreeViewSidebarMode(hwnd, true)`**，并配合 **行高 / 行间距 / 全局文字色与选中·悬停色 / 字体** 与 **`MoveTreeViewNode`** 等 API（详见下文「侧栏模式与全局样式」及侧栏专文）。
+
+**仓库内易语言示例（Markdown 文档，可复制到 IDE）：**
+
+- `examples/易语言代码/易语言代码文档/侧栏折叠菜单树形框示例.md` — 侧栏样式与完整菜单树  
+- `examples/易语言代码/易语言代码文档/侧栏折叠菜单升级版_方案一分组框.md` — 左侧树 + 右侧多分组框切换  
+- `examples/易语言代码/易语言代码文档/侧栏折叠菜单升级版_方案二TabControl.md` — 左侧树 + 右侧 TabControl  
+
+易语言 **DLL 中文命令名** 以 `examples/易语言代码/易语言代码文档/DLL命令.md` 中「树形框功能」为准。
+
+### 可视化设计器（`designer/`）
+
+仓库根目录下的 **Web/Tauri 可视化设计器** 已支持：
+
+| 工具箱项 | 说明 |
+|---------|------|
+| **树形框** | 普通树；生成代码为 `CreateTreeView` + 节点（设计器内「节点」多行文本，行首两空格表示子级） |
+| **侧栏树形框** | 预设侧栏菜单尺寸与样式属性；生成时在建树之后追加 `SetTreeViewRowHeight` / `SetTreeViewItemSpacing` / `SetTreeViewTextColor` / 选中·悬停色 / `SetTreeViewSidebarMode(..., true)`（易语言/C#/Python 模板路径见 `designer/src/data/controlDefs.ts` 与 `designer/src/codegen/`） |
+
+画布上对「侧栏树形框」会显示简化侧栏预览（行高、选中条等示意），便于与右侧内容区布局对齐。
 
 ## 创建树形框
 
+签名与 `emoji_window/treeview_window.h` 一致：
+
 ```c++
 HWND __stdcall CreateTreeView(
-    HWND hParent,
-    int x, int y, int width, int height,
-    UINT32 bg_color,
-    UINT32 text_color,
-    int context
+    HWND parent,
+    int x, int y,
+    int width, int height,
+    unsigned int bg_color,
+    unsigned int text_color,
+    void* callback_context
 );
 ```
 
@@ -26,14 +48,14 @@ HWND __stdcall CreateTreeView(
 
 | 参数 | 说明 |
 |------|------|
-| `hParent` | 父窗口句柄 |
-| `x, y` | 控件位置 |
-| `width, height` | 控件尺寸 |
-| `bg_color` | 背景色（ARGB格式） |
-| `text_color` | 文本色（ARGB格式） |
-| `context` | 回调上下文（可选，传 0） |
+| `parent` | 父窗口句柄 |
+| `x`, `y` | 控件客户区位置（逻辑单位） |
+| `width`, `height` | 控件尺寸 |
+| `bg_color` | 背景色（ARGB，例如 `0xFFFFFFFF`） |
+| `text_color` | 默认文本色（ARGB） |
+| `callback_context` | 回调上下文指针；无特殊需求时传 `NULL` / 易语言中传 `0` |
 
-**返回值：** 树形框句柄，失败返回 0
+**返回值：** 树形框窗口句柄；失败返回 `NULL`（易语言中与 `0` 比较）
 
 ## 节点管理
 
@@ -220,19 +242,22 @@ BOOL __stdcall SetTreeViewCallback(
 
 ## 树形框特性
 
-- ✅ **Emoji 图标**：完美支持彩色 Emoji 作为节点图标
+- ✅ **Emoji 图标**：支持以 UTF-8 字节集作为节点图标（彩色 Emoji）
 - ✅ **复选框**：可为任意节点添加复选框
-- ✅ **拖放排序**：支持拖动节点重新排列
+- ✅ **拖放排序**：支持拖动节点重新排列（需 `EnableTreeViewDragDrop`）
+- ✅ **侧栏模式**：`SetTreeViewSidebarMode` 开启后右侧 ∨/∧、全局行高/间距/主题色（见侧栏专文）
 - ✅ **键盘导航**：方向键、Home/End、PageUp/Down
 - ✅ **滚轮滚动**：平滑滚动支持
-- ✅ **自定义颜色**：可为每个节点设置独立的前景色和背景色
+- ✅ **自定义颜色**：每节点前景/背景；侧栏模式下另有全局默认字色与选中·悬停色
 - ✅ **层级缩进**：自动计算层级缩进
 - ✅ **展开/折叠动画**：平滑的展开折叠效果
 - ✅ **Element UI 风格**：统一的视觉设计
 
 ## 易语言完整示例
 
-易语言中 DLL 声明可使用中文命令名（与 `examples/易语言代码/易语言代码文档/DLL命令.md` 中「树形框功能」一致）；引号内仍为英文导出名。
+以下为示意代码：若 IDE 中不能直接写 Emoji，请改为 **UTF-8 字节集**（参见《侧栏折叠菜单树形框示例》）。DLL 声明使用中文命令名（与 `examples/易语言代码/易语言代码文档/DLL命令.md` 中「树形框功能」一致）；引号内仍为英文导出名。
+
+**创建树形框** 时参数顺序为：`父窗口, X, Y, 宽, 高, 背景色 ARGB, 文本色 ARGB, 回调上下文`（与上表一致）。
 
 ```
 .版本 2
@@ -436,6 +461,7 @@ BOOL __stdcall SetTreeViewCallback(
 
 ## 相关文档
 
-- [列表框](listbox.md) - 简单的列表显示
-- [DataGridView](datagridview.md) - 表格数据显示
+- [侧栏折叠菜单（TreeView 侧栏模式）](./sidebar_menu_treeview.md) — 侧栏交互与主题 API 详解
+- [列表框](listbox.md) — 简单列表
+- [DataGridView](datagridview.md) — 表格数据
 - [常见问题](../faq.md)

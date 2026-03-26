@@ -333,6 +333,40 @@ export default function ControlRenderer({ control, onTabSelect }: Props) {
         </div>
       );
 
+    case 'datetimepicker': {
+      const prec = (p.precision as number) ?? 4;
+      let sample = '2024-06-15';
+      if (prec >= 2) sample += ' 14';
+      if (prec >= 3) sample += ':30';
+      if (prec >= 4) sample += ':45';
+      return (
+        <div style={{
+          width: '100%', height: '100%',
+          border: `1px solid ${(p.borderColor as string) || '#DCDFE6'}`,
+          borderRadius: 4,
+          background: (p.bgColor as string) || '#fff',
+          color: (p.fgColor as string) || '#606266',
+          padding: '4px 32px 4px 8px',
+          fontSize: (p.fontSize as number) || 14,
+          fontFamily: (p.fontName as string) || 'Microsoft YaHei UI',
+          fontWeight: p.bold ? 'bold' : 'normal',
+          fontStyle: p.italic ? 'italic' : 'normal',
+          textDecoration: p.underline ? 'underline' : 'none',
+          display: 'flex', alignItems: 'center',
+          position: 'relative', userSelect: 'none',
+          opacity: p.enabled === false ? 0.5 : 1,
+          visibility: p.visible === false ? 'hidden' as const : 'visible',
+        }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sample}</span>
+          <span style={{
+            position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+            width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 10, color: '#909399', borderLeft: '1px solid #ebeef5',
+          }}>▼</span>
+        </div>
+      );
+    }
+
     case 'treeview':
     case 'treeview_sidebar': {
       const isSidebar = type === 'treeview_sidebar';

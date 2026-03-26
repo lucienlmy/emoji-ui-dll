@@ -18,6 +18,7 @@ const VALID_CONTROL_TYPES = new Set<ControlType>([
   'datagridview',
   'treeview',
   'treeview_sidebar',
+  'datetimepicker',
 ]);
 
 function isObject(value: unknown): value is Record<string, unknown> {

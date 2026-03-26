@@ -2,7 +2,7 @@ export type ControlType =
   | 'window' | 'button' | 'label' | 'editbox' | 'checkbox'
   | 'progressbar' | 'picturebox' | 'radiobutton' | 'listbox'
   | 'combobox' | 'hotkey' | 'groupbox'   | 'tabcontrol' | 'datagridview'
-  | 'treeview' | 'treeview_sidebar';
+  | 'treeview' | 'treeview_sidebar' | 'datetimepicker';
 
 export interface FontStyle {
   name: string;
