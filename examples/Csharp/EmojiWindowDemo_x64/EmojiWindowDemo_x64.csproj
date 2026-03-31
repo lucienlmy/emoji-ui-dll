@@ -11,8 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 复制 64位 DLL 到输出目录 -->
-    <None Include="..\..\..\x64\Release\emoji_window.dll" Condition="Exists('..\..\..\x64\Release\emoji_window.dll')">
+    <!-- 婢跺秴鍩?64娴?DLL 閸掓媽绶崙铏规窗瑜?-->
+    <None Include="..\..\..\bin\x64\Release\emoji_window.dll" Condition="Exists('..\..\..\bin\x64\Release\emoji_window.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

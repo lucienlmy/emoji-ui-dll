@@ -349,6 +349,7 @@ struct CheckBoxState {
 struct ProgressBarState {
     HWND hwnd;                  // 鎺т欢鍙ユ焺
     HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    HWND groupbox_parent;       // 閫昏緫鐖剁粍妗嗭紙濡傛灉鏄垎缁勬鍐呭瓙鎺т欢锛?
     int id;                     // 鎺т欢ID
     int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
     int current_value;          // 褰撳墠鍊?(0-100)

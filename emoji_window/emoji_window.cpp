@@ -8313,6 +8313,22 @@ __declspec(dllexport) HWND __stdcall CreateProgressBar(
     UINT32 text_color
 ) {
     if (!hParent) return NULL;
+
+    HWND actual_parent = hParent;
+    int actual_x = x;
+    int actual_y = y;
+    HWND groupbox_parent = nullptr;
+    bool is_groupbox_child = false;
+
+    auto groupbox_it = g_groupboxes.find(hParent);
+    if (groupbox_it != g_groupboxes.end()) {
+        is_groupbox_child = true;
+        groupbox_parent = hParent;
+        GroupBoxState* gb_state = groupbox_it->second;
+        actual_parent = gb_state->parent;
+        actual_x = gb_state->x + x + 10;
+        actual_y = gb_state->y + y + 25;
+    }
     
     // 限制初始值范围
     if (initial_value < 0) initial_value = 0;
@@ -8322,14 +8338,14 @@ __declspec(dllexport) HWND __stdcall CreateProgressBar(
     int id = g_next_control_id++;
     
     // 创建静态控件作为容器
-    int tb_offset = GetTitleBarOffset(hParent);
+    int tb_offset = GetTitleBarOffset(actual_parent);
     HWND hProgressBar = CreateWindowExW(
         0,
         L"STATIC",
         L"",
         WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
-        x, y + tb_offset, width, height,
-        hParent,
+        actual_x, actual_y + tb_offset, width, height,
+        actual_parent,
         (HMENU)(INT_PTR)id,
         GetModuleHandle(NULL),
         NULL
@@ -8342,7 +8358,8 @@ __declspec(dllexport) HWND __stdcall CreateProgressBar(
     // 创建状态对象
     ProgressBarState* state = new ProgressBarState();
     state->hwnd = hProgressBar;
-    state->parent = hParent;
+    state->parent = actual_parent;
+    state->groupbox_parent = groupbox_parent;
     state->id = id;
     state->x = x;
     state->y = y;
@@ -8371,6 +8388,13 @@ __declspec(dllexport) HWND __stdcall CreateProgressBar(
     
     // 子类化以自定义绘制
     SetWindowSubclass(hProgressBar, ProgressBarProc, 0, (DWORD_PTR)state);
+
+    if (is_groupbox_child) {
+        AddChildToGroup(groupbox_parent, hProgressBar);
+    }
+
+    // STATIC 控件首帧可能先被系统默认绘制为空白，强制触发一次自绘。
+    RedrawWindow(hProgressBar, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
     
     return hProgressBar;
 }
@@ -8523,8 +8547,22 @@ __declspec(dllexport) void __stdcall SetProgressBarBounds(
     state->y = y;
     state->width = width;
     state->height = height;
-    
-    SetWindowPos(hProgressBar, NULL, x, y, width, height, SWP_NOZORDER);
+
+    int actual_x = x;
+    int actual_y = y;
+    HWND actual_parent = state->parent;
+    if (state->groupbox_parent) {
+        auto groupbox_it = g_groupboxes.find(state->groupbox_parent);
+        if (groupbox_it != g_groupboxes.end()) {
+            GroupBoxState* gb_state = groupbox_it->second;
+            actual_parent = gb_state->parent;
+            actual_x = gb_state->x + x + 10;
+            actual_y = gb_state->y + y + 25;
+        }
+    }
+
+    int tb_offset = GetTitleBarOffset(actual_parent);
+    SetWindowPos(hProgressBar, NULL, actual_x, actual_y + tb_offset, width, height, SWP_NOZORDER);
     InvalidateRect(hProgressBar, NULL, FALSE);
 }
 
@@ -8566,6 +8604,19 @@ __declspec(dllexport) int __stdcall GetProgressBarBounds(
     int* height
 ) {
     if (!hProgressBar) return -1;
+
+    auto it = g_progressbars.find(hProgressBar);
+    if (it != g_progressbars.end()) {
+        ProgressBarState* state = it->second;
+        if (state->groupbox_parent) {
+            if (x) *x = state->x;
+            if (y) *y = state->y;
+            if (width) *width = state->width;
+            if (height) *height = state->height;
+            return 0;
+        }
+    }
+
     RECT rc;
     if (!GetWindowRect(hProgressBar, &rc)) return -1;
 
