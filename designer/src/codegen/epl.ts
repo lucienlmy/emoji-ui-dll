@@ -200,6 +200,9 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
     switch (c.type) {
       case 'button': {
         let emoji = (p.emoji as string) || '';
+        const buttonType = (p.buttonType as number) ?? -1;
+        const buttonStyle = (p.buttonStyle as number) ?? 0;
+        const buttonSize = (p.buttonSize as number) ?? 1;
         let text = (p.text as string) || '按钮';
         if (!emoji) {
           const split = splitLeadingEmoji(text);
@@ -215,6 +218,12 @@ export function generateEpl(win: DesignWindow, controls: DesignControl[]): strin
         } else {
           lines.push(`${c.name} ＝ 创建Emoji按钮_字节集 (${parentExpr}, 0, 0, ${textPtr}, ${textLen}, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${eplColor((p.bgColor as string) || '#409EFF')})`);
         }
+        if (buttonType !== -1) lines.push(`SetButtonType (${c.name}, ${buttonType})`);
+        if (buttonStyle !== 0) lines.push(`SetButtonStyle (${c.name}, ${buttonStyle})`);
+        if (buttonSize !== 1) lines.push(`SetButtonSize (${c.name}, ${buttonSize})`);
+        if (p.round) lines.push(`SetButtonRound (${c.name}, 1)`);
+        if (p.circle) lines.push(`SetButtonCircle (${c.name}, 1)`);
+        if (p.loading) lines.push(`SetButtonLoading (${c.name}, 1)`);
         break;
       }
       case 'label': {

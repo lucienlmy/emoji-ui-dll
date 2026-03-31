@@ -104,8 +104,12 @@ public:
     
     // 鼠标钩子过程（用于检测点击菜单外区域）
     static LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam);
+    static bool ContainsActivePoint(POINT screen_pt);
+    static bool DispatchActiveClick(POINT screen_pt);
 
 private:
+    static SubMenuWindow* FindVisibleSubMenuAtPoint(POINT screen_pt);
+
     // 计算子菜单位置（避免超出屏幕）
     void CalculatePosition(int x, int y, int width_px, int height_px, int& out_x, int& out_y);
     
@@ -167,6 +171,7 @@ private:
     int m_hover_item_for_submenu;                   // 等待显示子菜单的菜单项索引
     
     // Task 4.2: 动画支持
+    DWORD m_ignore_outside_click_until;             // 菜单刚显示时临时忽略外部点击关闭
     bool m_animation_enabled;                       // 是否启用动画
     AnimationType m_animation_type;                 // 动画类型
     bool m_is_animating;                            // 是否正在播放动画

@@ -1,8 +1,93 @@
+import { CSSProperties } from 'react';
 import { DesignControl } from '../types/controls';
+import { hexToRgbComponents } from '../utils/color';
 
 interface Props {
   control: DesignControl;
   onTabSelect?: (index: number) => void;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function mixHex(color: string, target: string, weight: number): string {
+  const source = hexToRgbComponents(color);
+  const goal = hexToRgbComponents(target);
+  const w = clamp(weight, 0, 1);
+  const channel = (from: number, to: number) => Math.round(from + (to - from) * w);
+  return `#${channel(source.r, goal.r).toString(16).padStart(2, '0')}${channel(source.g, goal.g).toString(16).padStart(2, '0')}${channel(source.b, goal.b).toString(16).padStart(2, '0')}`.toUpperCase();
+}
+
+function lightenHex(color: string, weight: number): string {
+  return mixHex(color, '#FFFFFF', weight);
+}
+
+function isLightColor(color: string): boolean {
+  const { r, g, b } = hexToRgbComponents(color);
+  const luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luma >= 0.62;
+}
+
+function resolveButtonPreview(props: Record<string, unknown>, width: number, height: number) {
+  const presetMap: Record<number, string> = {
+    1: '#409EFF',
+    2: '#67C23A',
+    3: '#E6A23C',
+    4: '#F56C6C',
+    5: '#909399',
+  };
+  const type = (props.buttonType as number) ?? -1;
+  const style = (props.buttonStyle as number) ?? 0;
+  const size = (props.buttonSize as number) ?? 1;
+  const round = !!props.round;
+  const circle = !!props.circle;
+  const loading = !!props.loading;
+  const bgColor = ((props.bgColor as string) || '#409EFF').toUpperCase();
+  const fgColor = ((props.fgColor as string) || '#FFFFFF').toUpperCase();
+  const neutralDefault = type === 0 || (type === -1 && ['#FFFFFF', '#F2F2F7', '#F5F7FA'].includes(bgColor));
+  const accent = type > 0 ? presetMap[type] : (neutralDefault ? '#409EFF' : bgColor);
+
+  let background = neutralDefault ? '#FFFFFF' : accent;
+  let color = neutralDefault ? '#606266' : (type === -1 ? fgColor : (isLightColor(accent) ? '#303133' : '#FFFFFF'));
+  let border = neutralDefault ? '1px solid #DCDFE6' : `1px solid ${accent}`;
+  let boxShadow = style === 0 && !neutralDefault ? '0 1px 2px rgba(18, 52, 77, 0.16)' : 'none';
+  let textDecoration: CSSProperties['textDecoration'] = 'none';
+
+  if (style === 1) {
+    background = lightenHex(accent, 0.82);
+    color = accent;
+    border = `1px solid ${accent}`;
+    boxShadow = 'none';
+  } else if (style === 2) {
+    background = 'transparent';
+    color = accent;
+    border = '1px solid transparent';
+    boxShadow = 'none';
+  } else if (style === 3) {
+    background = 'transparent';
+    color = accent;
+    border = '1px solid transparent';
+    boxShadow = 'none';
+    textDecoration = 'underline';
+  }
+
+  const fontSize = size === 0 ? 14 : size === 2 ? 12 : 13;
+  const gap = size === 0 ? 6 : size === 2 ? 4 : 5;
+  const borderRadius = circle ? Math.min(width, height) / 2 : round ? Math.max(6, height / 2) : (size === 0 ? 6 : 4);
+
+  return {
+    loading,
+    circle,
+    background,
+    color,
+    border,
+    boxShadow,
+    textDecoration,
+    fontSize,
+    gap,
+    borderRadius,
+  };
 }
 
 export default function ControlRenderer({ control, onTabSelect }: Props) {
@@ -11,22 +96,40 @@ export default function ControlRenderer({ control, onTabSelect }: Props) {
 
   switch (type) {
     case 'button':
-      return (
-        <div style={{
-          width: '100%', height: '100%',
-          background: (p.bgColor as string) || '#409EFF',
-          color: (p.fgColor as string) || '#fff',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          borderRadius: 4, fontSize: (p.fontSize as number) || 13,
-          fontWeight: p.bold ? 'bold' : 'normal',
-          fontFamily: (p.fontName as string) || 'Microsoft YaHei UI',
-          cursor: 'default', userSelect: 'none', gap: 4,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-        }}>
-          {p.emoji ? <span>{String(p.emoji)}</span> : null}
-          <span>{(p.text as string) || '按钮'}</span>
-        </div>
-      );
+      {
+        const preview = resolveButtonPreview(p, width, height);
+        const showIcon = preview.loading || !!p.emoji;
+        const showText = !preview.circle || !showIcon;
+        return (
+          <div style={{
+            width: '100%', height: '100%',
+            background: preview.background,
+            color: preview.color,
+            border: preview.border,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: preview.borderRadius, fontSize: preview.fontSize,
+            fontWeight: p.bold ? 'bold' : 'normal',
+            fontFamily: (p.fontName as string) || 'Microsoft YaHei UI',
+            cursor: 'default', userSelect: 'none', gap: preview.gap,
+            boxShadow: preview.boxShadow,
+            textDecoration: preview.textDecoration,
+            boxSizing: 'border-box',
+          }}>
+            {preview.loading ? (
+              <span style={{
+                width: preview.fontSize,
+                height: preview.fontSize,
+                borderRadius: '50%',
+                border: `2px solid ${lightenHex(preview.color, 0.7)}`,
+                borderTopColor: preview.color,
+                display: 'inline-block',
+                boxSizing: 'border-box',
+              }} />
+            ) : (p.emoji ? <span>{String(p.emoji)}</span> : null)}
+            {showText ? <span>{(p.text as string) || '鎸夐挳'}</span> : null}
+          </div>
+        );
+      }
 
     case 'label':
       return (

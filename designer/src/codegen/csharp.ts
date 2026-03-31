@@ -88,6 +88,24 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
     lines.push(`    static extern int create_emoji_button_bytes(IntPtr parent, byte[] emoji, int emojiLen, byte[] text, int textLen, int x, int y, int w, int h, uint bgColor);`);
     lines.push(``);
     lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetButtonType(int buttonId, int type);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetButtonStyle(int buttonId, int style);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetButtonSize(int buttonId, int size);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetButtonRound(int buttonId, int round);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetButtonCircle(int buttonId, int circle);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
+    lines.push(`    static extern void SetButtonLoading(int buttonId, int loading);`);
+    lines.push(``);
+    lines.push(`    [DllImport(DLL, CallingConvention = CallingConvention.StdCall)]`);
     lines.push(`    static extern void set_button_click_callback(ButtonClickCallback cb);`);
     lines.push(``);
   }
@@ -290,10 +308,19 @@ export function generateCSharp(win: DesignWindow, controls: DesignControl[]): st
     switch (c.type) {
       case 'button': {
         const emoji = (p.emoji as string) || '';
+        const buttonType = (p.buttonType as number) ?? -1;
+        const buttonStyle = (p.buttonStyle as number) ?? 0;
+        const buttonSize = (p.buttonSize as number) ?? 1;
         const text = (p.text as string) || '按钮';
         lines.push(`        byte[] emoji_${c.name} = ${emoji ? `ToUtf8("${escapeCs(emoji)}")` : 'new byte[0]'};`);
         lines.push(`        byte[] text_${c.name} = ToUtf8("${escapeCs(text)}");`);
         lines.push(`        ${c.name} = create_emoji_button_bytes(${parentExpr}, emoji_${c.name}, emoji_${c.name}.Length, text_${c.name}, text_${c.name}.Length, ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${csColor((p.bgColor as string) || '#409EFF')});`);
+        if (buttonType !== -1) lines.push(`        SetButtonType(${c.name}, ${buttonType});`);
+        if (buttonStyle !== 0) lines.push(`        SetButtonStyle(${c.name}, ${buttonStyle});`);
+        if (buttonSize !== 1) lines.push(`        SetButtonSize(${c.name}, ${buttonSize});`);
+        if (p.round) lines.push(`        SetButtonRound(${c.name}, 1);`);
+        if (p.circle) lines.push(`        SetButtonCircle(${c.name}, 1);`);
+        if (p.loading) lines.push(`        SetButtonLoading(${c.name}, 1);`);
         if (attachToGroup) lines.push(`        AddChildToGroup(${c.parentId}, ${c.name});`);
         break;
       }

@@ -436,6 +436,9 @@ float __stdcall GetTreeViewRowHeight(HWND hwnd);
 bool __stdcall SetTreeViewItemSpacing(HWND hwnd, float spacing);
 float __stdcall GetTreeViewItemSpacing(HWND hwnd);
 
+bool __stdcall SetTreeViewBackgroundColor(HWND hwnd, unsigned int argb);
+unsigned int __stdcall GetTreeViewBackgroundColor(HWND hwnd);
+
 bool __stdcall SetTreeViewTextColor(HWND hwnd, unsigned int argb);
 unsigned int __stdcall GetTreeViewTextColor(HWND hwnd);
 

@@ -17,6 +17,25 @@ EXPORTS
     SetButtonBounds
     GetButtonBackgroundColor
     SetButtonBackgroundColor
+    GetButtonTextColor
+    SetButtonTextColor
+    GetButtonBorderColor
+    SetButtonBorderColor
+    GetButtonHoverColors
+    SetButtonHoverColors
+    ResetButtonColorOverrides
+    SetButtonType
+    GetButtonType
+    SetButtonStyle
+    GetButtonStyle
+    SetButtonSize
+    GetButtonSize
+    SetButtonRound
+    GetButtonRound
+    SetButtonCircle
+    GetButtonCircle
+    SetButtonLoading
+    GetButtonLoading
     GetButtonVisible
     ShowButton
     GetButtonEnabled
@@ -78,6 +97,7 @@ EXPORTS
     GetEditBoxColor
     GetEditBoxBounds
     GetEditBoxAlignment
+    SetEditBoxAlignment
     GetEditBoxEnabled
     GetEditBoxVisible
     CreateColorEmojiEditBox
@@ -107,12 +127,17 @@ EXPORTS
     SetCheckBoxFont
     GetCheckBoxFont
     SetCheckBoxColor
+    SetCheckBoxCheckColor
+    GetCheckBoxCheckColor
+    SetCheckBoxStyle
+    GetCheckBoxStyle
     GetCheckBoxColor
     CreateProgressBar
     SetProgressValue
     GetProgressValue
     SetProgressIndeterminate
     SetProgressBarColor
+    SetProgressBarTextColor
     SetProgressBarCallback
     EnableProgressBar
     ShowProgressBar
@@ -147,6 +172,41 @@ EXPORTS
     GetRadioButtonFont
     SetRadioButtonColor
     GetRadioButtonColor
+    SetRadioButtonDotColor
+    GetRadioButtonDotColor
+    SetRadioButtonStyle
+    GetRadioButtonStyle
+    CreateSlider
+    GetSliderValue
+    SetSliderValue
+    SetSliderRange
+    SetSliderStep
+    SetSliderShowStops
+    SetSliderCallback
+    EnableSlider
+    ShowSlider
+    SetSliderBounds
+    SetSliderColors
+    GetSliderColors
+    CreateSwitch
+    GetSwitchState
+    SetSwitchState
+    SetSwitchText
+    SetSwitchColors
+    SetSwitchTextColors
+    GetSwitchColors
+    SetSwitchCallback
+    EnableSwitch
+    ShowSwitch
+    SetSwitchBounds
+    CreateTooltip
+    SetTooltipText
+    ShowTooltipForControl
+    HideTooltip
+    DestroyTooltip
+    ShowNotification
+    SetNotificationCallback
+    CloseNotification
     CreateListBox
     AddListItem
     RemoveListItem
@@ -159,6 +219,8 @@ EXPORTS
     EnableListBox
     ShowListBox
     SetListBoxBounds
+    SetListBoxColors
+    GetListBoxColors
     SetListItemText
     CreateComboBox
     AddComboItem
@@ -174,6 +236,8 @@ EXPORTS
     EnableComboBox
     ShowComboBox
     SetComboBoxBounds
+    SetComboBoxColors
+    GetComboBoxColors
     CreateHotKeyControl
     GetHotKey
     SetHotKey
@@ -182,6 +246,8 @@ EXPORTS
     EnableHotKeyControl
     ShowHotKeyControl
     SetHotKeyControlBounds
+    SetHotKeyColors
+    GetHotKeyColors
     CreateGroupBox
     AddChildToGroup
     RemoveChildFromGroup
@@ -190,11 +256,16 @@ EXPORTS
     ShowGroupBox
     SetGroupBoxBounds
     SetGroupBoxCallback
+    CreatePanel
     GetGroupBoxTitle
     GetGroupBoxBounds
     GetGroupBoxVisible
     GetGroupBoxEnabled
     GetGroupBoxColor
+    SetGroupBoxTitleColor
+    GetGroupBoxTitleColor
+    SetGroupBoxStyle
+    GetGroupBoxStyle
     GetTabTitle
     SetTabTitle
     GetTabControlBounds
@@ -226,6 +297,8 @@ EXPORTS
     EnableD2DComboBox
     ShowD2DComboBox
     SetD2DComboBoxBounds
+    SetD2DComboBoxColors
+    GetD2DComboBoxColors
     CreateD2DDateTimePicker
     GetD2DDateTimePickerPrecision
     SetD2DDateTimePickerPrecision
@@ -235,22 +308,31 @@ EXPORTS
     EnableD2DDateTimePicker
     ShowD2DDateTimePicker
     SetD2DDateTimePickerBounds
+    SetD2DDateTimePickerColors
+    GetD2DDateTimePickerColors
     CreateDataGridView
     DataGrid_AddTextColumn
     DataGrid_AddCheckBoxColumn
     DataGrid_AddButtonColumn
     DataGrid_AddLinkColumn
     DataGrid_AddImageColumn
+    DataGrid_AddComboBoxColumn
+    DataGrid_AddTagColumn
     DataGrid_RemoveColumn
     DataGrid_ClearColumns
     DataGrid_GetColumnCount
     DataGrid_SetColumnWidth
+    DataGrid_SetColumnHeaderText
+    DataGrid_GetColumnHeaderText
     DataGrid_AddRow
     DataGrid_RemoveRow
     DataGrid_ClearRows
     DataGrid_GetRowCount
     DataGrid_SetCellText
     DataGrid_GetCellText
+    DataGrid_SetCellImageFromFile
+    DataGrid_SetCellImageFromMemory
+    DataGrid_ClearCellImage
     DataGrid_SetCellChecked
     DataGrid_GetCellChecked
     DataGrid_SetCellStyle
@@ -266,6 +348,10 @@ EXPORTS
     DataGrid_SetShowGridLines
     DataGrid_SetDefaultRowHeight
     DataGrid_SetHeaderHeight
+    DataGrid_SetDoubleClickEnabled
+    DataGrid_SetHeaderMultiline
+    DataGrid_SetHeaderStyle
+    DataGrid_SetColumnComboItems
     DataGrid_SetCellClickCallback
     DataGrid_SetCellDoubleClickCallback
     DataGrid_SetCellValueChangedCallback
@@ -275,6 +361,8 @@ EXPORTS
     DataGrid_Show
     DataGrid_SetBounds
     DataGrid_Refresh
+    DataGrid_SetColors
+    DataGrid_GetColors
     DataGrid_SetColumnHeaderAlignment
     DataGrid_SetColumnCellAlignment
     DataGrid_ExportCSV
@@ -350,6 +438,8 @@ EXPORTS
     GetTreeViewRowHeight
     SetTreeViewItemSpacing
     GetTreeViewItemSpacing
+    SetTreeViewBackgroundColor
+    GetTreeViewBackgroundColor
     SetTreeViewTextColor
     GetTreeViewTextColor
     SetTreeViewSelectedBgColor
@@ -366,6 +456,8 @@ EXPORTS
     SetTabColors
     SetTabIndicatorColor
     SetTabPadding
+    RedrawTabControl
+    SetTabHeaderStyle
     EnableTabItem
     GetTabItemEnabled
     ShowTabItem

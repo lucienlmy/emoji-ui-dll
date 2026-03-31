@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <windows.h>
 #include <commctrl.h>
@@ -6,8 +6,8 @@
 #include <dwrite.h>
 #include <uxtheme.h>
 #include <wincodec.h>  // WIC (Windows Imaging Component)
-#include <richedit.h>  // RichEdit控件（支持彩色emoji）
-#include <dwmapi.h>    // DWM (Desktop Window Manager) - 自定义标题栏
+#include <richedit.h>  // RichEdit鎺т欢锛堟敮鎸佸僵鑹瞖moji锛?
+#include <dwmapi.h>    // DWM (Desktop Window Manager) - 鑷畾涔夋爣棰樻爮
 #include <string>
 #include <vector>
 #include <map>
@@ -16,105 +16,109 @@
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
-#pragma comment(lib, "windowscodecs.lib")  // WIC库
-#pragma comment(lib, "dwmapi.lib")         // DWM库
+#pragma comment(lib, "windowscodecs.lib")  // WIC搴?
+#pragma comment(lib, "dwmapi.lib")         // DWM搴?
 
 // Button click callback type (stdcall)
-// 参数: button_id - 按钮ID, parent_hwnd - 父窗口句柄
+// 鍙傛暟: button_id - 鎸夐挳ID, parent_hwnd - 鐖剁獥鍙ｅ彞鏌?
 typedef void (__stdcall *ButtonClickCallback)(int button_id, HWND parent_hwnd);
 
 // Message box callback type (confirmed: 1=OK, 0=Cancel)
 typedef void (__stdcall *MessageBoxCallback)(int confirmed);
 
-// Tab 切换回调函数类型 (stdcall 调用约定)
+// Tab 鍒囨崲鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *TAB_CALLBACK)(HWND hTabControl, int selectedIndex);
 
-// 获取父窗口的标题栏偏移量（如果有自定义标题栏）
+// 鑾峰彇鐖剁獥鍙ｇ殑鏍囬鏍忓亸绉婚噺锛堝鏋滄湁鑷畾涔夋爣棰樻爮锛?
 int GetTitleBarOffset(HWND hParent);
 
-// Tab 关闭回调函数类型 (stdcall 调用约定)
+// Tab 鍏抽棴鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *TAB_CLOSE_CALLBACK)(HWND hTabControl, int index);
 
-// Tab 右键点击回调函数类型 (stdcall 调用约定)
+// Tab 鍙抽敭鐐瑰嚮鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *TAB_RIGHTCLICK_CALLBACK)(HWND hTabControl, int index, int x, int y);
 
-// Tab 双击回调函数类型 (stdcall 调用约定)
+// Tab 鍙屽嚮鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *TAB_DBLCLICK_CALLBACK)(HWND hTabControl, int index);
 
-// 窗口大小改变回调函数类型 (stdcall 调用约定)
+// 绐楀彛澶у皬鏀瑰彉鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *WindowResizeCallback)(HWND hwnd, int width, int height);
 
-// 自绘窗口关闭回调函数类型 (stdcall 调用约定)
-// hwnd: 被关闭的窗口句柄（此时 HWND 已失效，仅用于识别是哪个窗口）
+// 鑷粯绐楀彛鍏抽棴鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
+// hwnd: 琚叧闂殑绐楀彛鍙ユ焺锛堟鏃?HWND 宸插け鏁堬紝浠呯敤浜庤瘑鍒槸鍝釜绐楀彛锛?
 typedef void (__stdcall *WindowCloseCallback)(HWND hwnd);
 
-// 菜单项点击回调函数类型 (stdcall 调用约定)
-// menu_id: 顶级菜单ID（如 #菜单_主题设置 / #菜单_测试菜单）
-// item_id: 被点击的菜单项ID（子项ID或顶级ID）
+// 鑿滃崟椤圭偣鍑诲洖璋冨嚱鏁扮被鍨?(stdcall 璋冪敤绾﹀畾)
+// menu_id: 椤剁骇鑿滃崟ID锛堝 #鑿滃崟_涓婚璁剧疆 / #鑿滃崟_娴嬭瘯鑿滃崟锛?
+// item_id: 琚偣鍑荤殑鑿滃崟椤笽D锛堝瓙椤笽D鎴栭《绾D锛?
 typedef void (__stdcall *MenuItemClickCallback)(int menu_id, int item_id);
 
-// 前向声明子菜单窗口类
+// 鍓嶅悜澹版槑瀛愯彍鍗曠獥鍙ｇ被
 class SubMenuWindow;
 
-// 编辑框按键回调 (stdcall)：hEdit 句柄, key_code 虚拟键码, key_down 1=按下 0=松开, shift/ctrl/alt 修饰键是否按下(0/1)
+// 缂栬緫妗嗘寜閿洖璋?(stdcall)锛歨Edit 鍙ユ焺, key_code 铏氭嫙閿爜, key_down 1=鎸変笅 0=鏉惧紑, shift/ctrl/alt 淇グ閿槸鍚︽寜涓?0/1)
 typedef void (__stdcall *EditBoxKeyCallback)(HWND hEdit, int key_code, int key_down, int shift, int ctrl, int alt);
 
-// 复选框回调函数类型 (stdcall 调用约定)
+// 澶嶉€夋鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *CheckBoxCallback)(HWND hCheckBox, BOOL checked);
 
-// 进度条回调函数类型 (stdcall 调用约定)
+// 杩涘害鏉″洖璋冨嚱鏁扮被鍨?(stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *ProgressBarCallback)(HWND hProgressBar, int value);
 
-// 图片缩放模式
+// 鍥剧墖缂╂斁妯″紡
 enum ImageScaleMode {
-    SCALE_NONE = 0,         // 不缩放
-    SCALE_STRETCH = 1,      // 拉伸填充
-    SCALE_FIT = 2,          // 等比缩放适应
-    SCALE_CENTER = 3        // 居中显示
+    SCALE_NONE = 0,         // 涓嶇缉鏀?
+    SCALE_STRETCH = 1,      // 鎷変几濉厖
+    SCALE_FIT = 2,          // 绛夋瘮缂╂斁閫傚簲
+    SCALE_CENTER = 3        // 灞呬腑鏄剧ず
 };
 
-// 图片框回调函数类型 (stdcall 调用约定)
+// 鍥剧墖妗嗗洖璋冨嚱鏁扮被鍨?(stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *PictureBoxCallback)(HWND hPictureBox);
 
-// 单选按钮回调函数类型 (stdcall 调用约定)
+// 鍗曢€夋寜閽洖璋冨嚱鏁扮被鍨?(stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *RadioButtonCallback)(HWND hRadioButton, int group_id, BOOL checked);
 
-// 列表框回调函数类型 (stdcall 调用约定)
+typedef void (__stdcall *SliderCallback)(HWND hSlider, int value);
+typedef void (__stdcall *SwitchCallback)(HWND hSwitch, BOOL checked);
+typedef void (__stdcall *NotificationCallback)(HWND hNotification, int event_type);
+
+// 鍒楄〃妗嗗洖璋冨嚱鏁扮被鍨?(stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *ListBoxCallback)(HWND hListBox, int index);
 
-// 组合框回调函数类型 (stdcall 调用约定)
+// 缁勫悎妗嗗洖璋冨嚱鏁扮被鍨?(stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *ComboBoxCallback)(HWND hComboBox, int index);
 
-// 热键控件回调函数类型 (stdcall 调用约定)
+// 鐑敭鎺т欢鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *HotKeyCallback)(HWND hHotKey, int vk_code, int modifiers);
 
-// ========== 通用事件回调类型 (需求 8.1-8.10) ==========
+// ========== 閫氱敤浜嬩欢鍥炶皟绫诲瀷 (闇€姹?8.1-8.10) ==========
 
-// 鼠标进入/离开回调 (hwnd)
+// 榧犳爣杩涘叆/绂诲紑鍥炶皟 (hwnd)
 typedef void (__stdcall *MouseEnterCallback)(HWND hwnd);
 typedef void (__stdcall *MouseLeaveCallback)(HWND hwnd);
 
-// 双击回调 (hwnd, x, y)
+// 鍙屽嚮鍥炶皟 (hwnd, x, y)
 typedef void (__stdcall *DoubleClickCallback)(HWND hwnd, int x, int y);
 
-// 右键点击回调 (hwnd, x, y)
+// 鍙抽敭鐐瑰嚮鍥炶皟 (hwnd, x, y)
 typedef void (__stdcall *RightClickCallback)(HWND hwnd, int x, int y);
 
-// 焦点回调 (hwnd)
+// 鐒︾偣鍥炶皟 (hwnd)
 typedef void (__stdcall *FocusCallback)(HWND hwnd);
 typedef void (__stdcall *BlurCallback)(HWND hwnd);
 
-// 键盘回调 (hwnd, vk_code, shift, ctrl, alt)
+// 閿洏鍥炶皟 (hwnd, vk_code, shift, ctrl, alt)
 typedef void (__stdcall *KeyDownCallback)(HWND hwnd, int vk_code, int shift, int ctrl, int alt);
 typedef void (__stdcall *KeyUpCallback)(HWND hwnd, int vk_code, int shift, int ctrl, int alt);
 
-// 字符输入回调 (hwnd, char_code) - Unicode字符
+// 瀛楃杈撳叆鍥炶皟 (hwnd, char_code) - Unicode瀛楃
 typedef void (__stdcall *CharCallback)(HWND hwnd, int char_code);
 
-// 值改变回调 (hwnd)
+// 鍊兼敼鍙樺洖璋?(hwnd)
 typedef void (__stdcall *ValueChangedCallback)(HWND hwnd);
 
-// 通用事件回调集合
+// 閫氱敤浜嬩欢鍥炶皟闆嗗悎
 struct EventCallbacks {
     MouseEnterCallback on_mouse_enter;
     MouseLeaveCallback on_mouse_leave;
@@ -134,366 +138,555 @@ struct EventCallbacks {
         on_char(nullptr), on_value_changed(nullptr) {}
 };
 
-// 文本对齐方式
+// 鏂囨湰瀵归綈鏂瑰紡
 enum TextAlignment {
     ALIGN_LEFT = 0,
     ALIGN_CENTER = 1,
     ALIGN_RIGHT = 2
 };
 
-// 字体样式结构
+enum CheckBoxVisualStyle {
+    CHECKBOX_STYLE_DEFAULT = 0,
+    CHECKBOX_STYLE_FILL = 1,
+    CHECKBOX_STYLE_BUTTON = 2,
+    CHECKBOX_STYLE_CARD = 3
+};
+
+enum RadioVisualStyle {
+    RADIO_STYLE_DEFAULT = 0,
+    RADIO_STYLE_BORDER = 1,
+    RADIO_STYLE_BUTTON = 2
+};
+
+enum ButtonVisualType {
+    BUTTON_TYPE_AUTO = -1,
+    BUTTON_TYPE_DEFAULT = 0,
+    BUTTON_TYPE_PRIMARY = 1,
+    BUTTON_TYPE_SUCCESS = 2,
+    BUTTON_TYPE_WARNING = 3,
+    BUTTON_TYPE_DANGER = 4,
+    BUTTON_TYPE_INFO = 5
+};
+
+enum ButtonVisualStyle {
+    BUTTON_STYLE_SOLID = 0,
+    BUTTON_STYLE_PLAIN = 1,
+    BUTTON_STYLE_TEXT = 2,
+    BUTTON_STYLE_LINK = 3
+};
+
+enum ButtonVisualSize {
+    BUTTON_SIZE_LARGE = 0,
+    BUTTON_SIZE_DEFAULT = 1,
+    BUTTON_SIZE_SMALL = 2
+};
+
+enum PopupPlacement {
+    POPUP_TOP = 0,
+    POPUP_TOP_START = 1,
+    POPUP_TOP_END = 2,
+    POPUP_BOTTOM = 3,
+    POPUP_BOTTOM_START = 4,
+    POPUP_BOTTOM_END = 5,
+    POPUP_LEFT = 6,
+    POPUP_LEFT_START = 7,
+    POPUP_LEFT_END = 8,
+    POPUP_RIGHT = 9,
+    POPUP_RIGHT_START = 10,
+    POPUP_RIGHT_END = 11
+};
+
+enum NotificationPosition {
+    NOTIFY_TOP_RIGHT = 0,
+    NOTIFY_TOP_LEFT = 1,
+    NOTIFY_BOTTOM_RIGHT = 2,
+    NOTIFY_BOTTOM_LEFT = 3
+};
+
+enum NotificationType {
+    NOTIFY_INFO = 0,
+    NOTIFY_SUCCESS = 1,
+    NOTIFY_WARNING = 2,
+    NOTIFY_ERROR = 3
+};
+
+enum TooltipThemeMode {
+    TOOLTIP_THEME_DARK = 0,
+    TOOLTIP_THEME_LIGHT = 1,
+    TOOLTIP_THEME_CUSTOM = 2
+};
+
+enum TooltipTriggerMode {
+    TOOLTIP_TRIGGER_HOVER = 0,
+    TOOLTIP_TRIGGER_CLICK = 1
+};
+
+enum GroupBoxVisualStyle {
+    GROUPBOX_STYLE_OUTLINE = 0,
+    GROUPBOX_STYLE_CARD = 1,
+    GROUPBOX_STYLE_PLAIN = 2,
+    GROUPBOX_STYLE_HEADER_BAR = 3
+};
+
+enum TabHeaderVisualStyle {
+    TAB_HEADER_STYLE_LINE = 0,
+    TAB_HEADER_STYLE_CARD = 1,
+    TAB_HEADER_STYLE_CARD_PLAIN = 2,
+    TAB_HEADER_STYLE_SEGMENTED = 3
+};
+
+enum DataGridHeaderStyle {
+    DGHEADER_STYLE_PLAIN = 0,
+    DGHEADER_STYLE_FILLED = 1,
+    DGHEADER_STYLE_DARK = 2,
+    DGHEADER_STYLE_BORDERED = 3
+};
+
+// 瀛椾綋鏍峰紡缁撴瀯
 struct FontStyle {
-    std::wstring font_name;     // 字体名称
-    int font_size;              // 字体大小
-    bool bold;                  // 粗体
-    bool italic;                // 斜体
-    bool underline;             // 下划线
+    std::wstring font_name;     // 瀛椾綋鍚嶇О
+    int font_size;              // 瀛椾綋澶у皬
+    bool bold;                  // 绮椾綋
+    bool italic;                // 鏂滀綋
+    bool underline;             // 涓嬪垝绾?
 };
 
-// 编辑框状态
+// 缂栬緫妗嗙姸鎬?
 struct EditBoxState {
-    HWND hwnd;                  // 编辑框句柄
+    HWND hwnd;                  // 缂栬緫妗嗗彞鏌?
     HWND parent;                // 父窗口句柄
     int id;                     // 控件ID
-    UINT32 fg_color;            // 前景色 (ARGB)
-    UINT32 bg_color;            // 背景色 (ARGB)
-    FontStyle font;             // 字体样式
-    TextAlignment alignment;    // 文字对齐
-    bool multiline;             // 多行模式
-    bool readonly;              // 只读模式
-    bool password;              // 密码框
-    bool has_border;            // 是否有边框
-    bool vertical_center;       // 文本垂直居中（仅单行有效）
-    HBRUSH bg_brush;            // 背景画刷（避免每次创建）
-    EditBoxKeyCallback key_callback;  // 按键按下/松开回调，可为 NULL
-    EventCallbacks events;      // 通用事件回调
+    UINT32 fg_color;            // 鍓嶆櫙鑹?(ARGB)
+    UINT32 bg_color;            // 鑳屾櫙鑹?(ARGB)
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    TextAlignment alignment;    // 鏂囧瓧瀵归綈
+    bool multiline;             // 澶氳妯″紡
+    bool readonly;              // 鍙妯″紡
+    bool password;              // 瀵嗙爜妗?
+    bool has_border;            // 鏄惁鏈夎竟妗?
+    bool vertical_center;       // 鏂囨湰鍨傜洿灞呬腑锛堜粎鍗曡鏈夋晥锛?
+    HBRUSH bg_brush;            // 鑳屾櫙鐢诲埛锛堥伩鍏嶆瘡娆″垱寤猴級
+    EditBoxKeyCallback key_callback;  // 鎸夐敭鎸変笅/鏉惧紑鍥炶皟锛屽彲涓?NULL
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// D2D自定义绘制编辑框状态（支持彩色emoji）
+// D2D鑷畾涔夌粯鍒剁紪杈戞鐘舵€侊紙鏀寔褰╄壊emoji锛?
 struct D2DEditBoxState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    std::wstring text;          // 文本内容
-    int cursor_pos;             // 光标位置（字符索引）
-    int selection_start;        // 选择起始位置（-1表示无选择）
-    int selection_end;          // 选择结束位置
-    bool has_focus;             // 是否有焦点
-    bool cursor_visible;        // 光标是否可见（闪烁）
-    UINT_PTR cursor_timer;      // 光标闪烁定时器
-    int scroll_offset_x;        // 水平滚动偏移（单行）
-    int scroll_offset_y;        // 垂直滚动偏移（多行）
-    bool is_composing;          // 是否正在输入法组合
-    std::wstring composition_text; // 输入法组合文本
-    UINT32 fg_color;            // 前景色
-    UINT32 bg_color;            // 背景色
-    UINT32 selection_color;     // 选择背景色
-    UINT32 border_color;        // 边框颜色
-    FontStyle font;             // 字体样式
-    TextAlignment alignment;    // 文字对齐
-    bool multiline;             // 多行模式
-    bool readonly;              // 只读模式
-    bool password;              // 密码框
-    bool has_border;            // 是否有边框
-    bool vertical_center;       // 文本垂直居中（仅单行有效）
-    bool enabled;               // 启用状态
-    ID2D1HwndRenderTarget* render_target; // D2D渲染目标
-    IDWriteFactory* dwrite_factory;       // DirectWrite工厂
-    EditBoxKeyCallback key_callback;      // 按键回调
-    EventCallbacks events;                // 通用事件回调
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    std::wstring text;          // 鏂囨湰鍐呭
+    int cursor_pos;             // 鍏夋爣浣嶇疆锛堝瓧绗︾储寮曪級
+    int selection_start;        // 閫夋嫨璧峰浣嶇疆锛?1琛ㄧず鏃犻€夋嫨锛?
+    int selection_end;          // 閫夋嫨缁撴潫浣嶇疆
+    bool has_focus;             // 鏄惁鏈夌劍鐐?
+    bool cursor_visible;        // 鍏夋爣鏄惁鍙锛堥棯鐑侊級
+    UINT_PTR cursor_timer;      // 鍏夋爣闂儊瀹氭椂鍣?
+    int scroll_offset_x;        // 姘村钩婊氬姩鍋忕Щ锛堝崟琛岋級
+    int scroll_offset_y;        // 鍨傜洿婊氬姩鍋忕Щ锛堝琛岋級
+    bool is_composing;          // 鏄惁姝ｅ湪杈撳叆娉曠粍鍚?
+    std::wstring composition_text; // 杈撳叆娉曠粍鍚堟枃鏈?
+    UINT32 fg_color;            // 鍓嶆櫙鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 selection_color;     // 閫夋嫨鑳屾櫙鑹?
+    UINT32 border_color;        // 杈规棰滆壊
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    TextAlignment alignment;    // 鏂囧瓧瀵归綈
+    bool multiline;             // 澶氳妯″紡
+    bool readonly;              // 鍙妯″紡
+    bool password;              // 瀵嗙爜妗?
+    bool has_border;            // 鏄惁鏈夎竟妗?
+    bool vertical_center;       // 鏂囨湰鍨傜洿灞呬腑锛堜粎鍗曡鏈夋晥锛?
+    bool enabled;               // 鍚敤鐘舵€?
+    bool scrollbar_dragging;    // 鍨傜洿婊氬姩鏉℃嫋鍔ㄤ腑
+    int scrollbar_drag_offset;  // 婊氬姩鏉″唴閮ㄦ嫋鍔ㄥ亸绉?
+    bool selecting_with_mouse;  // 榧犳爣姝ｅ湪鎷栨嫿閫夋嫨鏂囨湰
+    ID2D1HwndRenderTarget* render_target; // D2D娓叉煋鐩爣
+    IDWriteFactory* dwrite_factory;       // DirectWrite宸ュ巶
+    EditBoxKeyCallback key_callback;      // 鎸夐敭鍥炶皟
+    EventCallbacks events;                // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 标签状态
+// 鏍囩鐘舵€?
 struct LabelState {
-    HWND hwnd;                  // 标签句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    std::wstring text;          // 文本内容
-    UINT32 fg_color;            // 前景色 (ARGB)
-    UINT32 bg_color;            // 背景色 (ARGB)
-    FontStyle font;             // 字体样式
-    TextAlignment alignment;    // 文字对齐
-    HBRUSH bg_brush;            // 背景画刷（避免每次创建）
-    bool word_wrap;             // 是否换行显示
-    bool parent_drawn = false;  // 是否改为父窗口统一绘制
-    bool visible = true;        // 父绘制模式下的可见状态
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 鏍囩鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    std::wstring text;          // 鏂囨湰鍐呭
+    UINT32 fg_color;            // 鍓嶆櫙鑹?(ARGB)
+    UINT32 bg_color;            // 鑳屾櫙鑹?(ARGB)
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    TextAlignment alignment;    // 鏂囧瓧瀵归綈
+    HBRUSH bg_brush;            // 鑳屾櫙鐢诲埛锛堥伩鍏嶆瘡娆″垱寤猴級
+    bool word_wrap;             // 鏄惁鎹㈣鏄剧ず
+    bool parent_drawn = false;  // 鏄惁鏀逛负鐖剁獥鍙ｇ粺涓€缁樺埗
+    bool visible = true;        // 鐖剁粯鍒舵ā寮忎笅鐨勫彲瑙佺姸鎬?
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 复选框状态
+// 澶嶉€夋鐘舵€?
 struct CheckBoxState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    std::wstring text;          // 显示文本
-    bool checked;               // 选中状态
-    bool enabled;               // 启用状态
-    bool hovered;               // 悬停状态
-    bool pressed;               // 按下状态
-    UINT32 fg_color;            // 前景色
-    UINT32 bg_color;            // 背景色
-    UINT32 check_color;         // 勾选标记颜色
-    FontStyle font;             // 字体样式
-    CheckBoxCallback callback;  // 回调函数
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    std::wstring text;          // 鏄剧ず鏂囨湰
+    bool checked;               // 閫変腑鐘舵€?
+    bool enabled;               // 鍚敤鐘舵€?
+    bool hovered;               // 鎮仠鐘舵€?
+    bool pressed;               // 鎸変笅鐘舵€?
+    UINT32 fg_color;            // 鍓嶆櫙鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 check_color;         // 鍕鹃€夋爣璁伴鑹?
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    CheckBoxCallback callback;  // 鍥炶皟鍑芥暟
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 进度条状态
+// 杩涘害鏉＄姸鎬?
 struct ProgressBarState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    int current_value;          // 当前值 (0-100)
-    int target_value;           // 目标值 (0-100)
-    float animation_value;      // 动画中间值 (用于平滑过渡)
-    bool indeterminate;         // 不确定模式
-    float indeterminate_pos;    // 不确定模式动画位置 (0.0-1.0)
-    bool enabled;               // 启用状态
-    UINT32 fg_color;            // 前景色 (进度条颜色)
-    UINT32 bg_color;            // 背景色
-    UINT32 border_color;        // 边框颜色
-    UINT32 text_color;          // 文本颜色
-    bool show_text;             // 是否显示百分比文本
-    FontStyle font;             // 字体样式
-    ProgressBarCallback callback; // 回调函数
-    UINT_PTR timer_id;          // 动画定时器ID
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    int current_value;          // 褰撳墠鍊?(0-100)
+    int target_value;           // 鐩爣鍊?(0-100)
+    float animation_value;      // 鍔ㄧ敾涓棿鍊?(鐢ㄤ簬骞虫粦杩囨浮)
+    bool indeterminate;         // 涓嶇‘瀹氭ā寮?
+    float indeterminate_pos;    // 涓嶇‘瀹氭ā寮忓姩鐢讳綅缃?(0.0-1.0)
+    bool enabled;               // 鍚敤鐘舵€?
+    UINT32 fg_color;            // 鍓嶆櫙鑹?(杩涘害鏉￠鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 border_color;        // 杈规棰滆壊
+    UINT32 text_color;          // 鏂囨湰棰滆壊
+    bool show_text;             // 鏄惁鏄剧ず鐧惧垎姣旀枃鏈?
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    ProgressBarCallback callback; // 鍥炶皟鍑芥暟
+    UINT_PTR timer_id;          // 鍔ㄧ敾瀹氭椂鍣↖D
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 图片框状态
+// 鍥剧墖妗嗙姸鎬?
 struct PictureBoxState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    ID2D1Bitmap* bitmap;        // D2D1位图
-    IWICBitmapSource* wic_source; // WIC位图源
-    ImageScaleMode scale_mode;  // 缩放模式
-    float opacity;              // 透明度 (0.0 - 1.0)
-    UINT32 bg_color;            // 背景色
-    bool enabled;               // 启用状态
-    PictureBoxCallback callback; // 回调函数
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    ID2D1Bitmap* bitmap;        // D2D1浣嶅浘
+    IWICBitmapSource* wic_source; // WIC浣嶅浘婧?
+    ImageScaleMode scale_mode;  // 缂╂斁妯″紡
+    float opacity;              // 閫忔槑搴?(0.0 - 1.0)
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    bool enabled;               // 鍚敤鐘舵€?
+    PictureBoxCallback callback; // 鍥炶皟鍑芥暟
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 单选按钮状态
+// 鍗曢€夋寜閽姸鎬?
 struct RadioButtonState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int group_id;               // 分组ID，同组互斥
-    int x, y, width, height;    // 位置和尺寸
-    std::wstring text;          // 显示文本
-    bool checked;               // 选中状态
-    bool enabled;               // 启用状态
-    bool hovered;               // 悬停状态
-    bool pressed;               // 按下状态
-    UINT32 fg_color;            // 前景色
-    UINT32 bg_color;            // 背景色
-    UINT32 dot_color;           // 圆点颜色
-    FontStyle font;             // 字体样式
-    RadioButtonCallback callback; // 回调函数
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int group_id;               // 鍒嗙粍ID锛屽悓缁勪簰鏂?
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    std::wstring text;          // 鏄剧ず鏂囨湰
+    bool checked;               // 閫変腑鐘舵€?
+    bool enabled;               // 鍚敤鐘舵€?
+    bool hovered;               // 鎮仠鐘舵€?
+    bool pressed;               // 鎸変笅鐘舵€?
+    UINT32 fg_color;            // 鍓嶆櫙鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 dot_color;           // 鍦嗙偣棰滆壊
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    RadioButtonCallback callback; // 鍥炶皟鍑芥暟
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 列表框项目
+struct SliderState {
+    HWND hwnd;
+    HWND parent;
+    int id;
+    int x, y, width, height;
+    int min_value;
+    int max_value;
+    int value;
+    int step;
+    bool dragging;
+    bool enabled;
+    bool hovered;
+    bool show_stops;
+    UINT32 bg_color;
+    UINT32 active_color;
+    UINT32 button_color;
+    SliderCallback callback;
+    EventCallbacks events;
+};
+
+struct SwitchState {
+    HWND hwnd;
+    HWND parent;
+    int id;
+    int x, y, width, height;
+    bool checked;
+    bool enabled;
+    bool hovered;
+    bool pressed;
+    UINT32 active_color;
+    UINT32 inactive_color;
+    UINT32 active_text_color;
+    UINT32 inactive_text_color;
+    std::wstring active_text;
+    std::wstring inactive_text;
+    FontStyle font;
+    SwitchCallback callback;
+    EventCallbacks events;
+};
+
+struct TooltipState {
+    HWND hwnd;
+    HWND owner;
+    HWND target;
+    HWND bound_target;
+    std::wstring text;
+    int placement;
+    UINT32 bg_color;
+    UINT32 fg_color;
+    UINT32 border_color;
+    std::wstring font_name;
+    float font_size;
+    int theme_mode;
+    int trigger_mode;
+    int max_width;
+    int padding_x;
+    int padding_y;
+    bool visible;
+};
+
+struct NotificationState {
+    HWND hwnd;
+    HWND owner;
+    std::wstring title;
+    std::wstring message;
+    int type;
+    int position;
+    int duration_ms;
+    UINT_PTR timer_id;
+    bool visible;
+    bool hover_close;
+    NotificationCallback callback;
+};
+
+// 鍒楄〃妗嗛」鐩?
 struct ListBoxItem {
-    std::wstring text;          // 项目文本
-    int id;                     // 项目ID
-    void* user_data;            // 用户自定义数据
+    std::wstring text;          // 椤圭洰鏂囨湰
+    int id;                     // 椤圭洰ID
+    void* user_data;            // 鐢ㄦ埛鑷畾涔夋暟鎹?
 };
 
-// 列表框状态
+// 鍒楄〃妗嗙姸鎬?
 struct ListBoxState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    std::vector<ListBoxItem> items; // 所有项目
-    int selected_index;         // 当前选中项 (-1表示无选中)
-    int hovered_index;          // 悬停项 (-1表示无悬停)
-    int scroll_offset;          // 滚动偏移量（像素）
-    int item_height;            // 项目高度
-    bool multi_select;          // 多选模式
-    std::vector<int> selected_indices; // 多选时的选中项
-    bool enabled;               // 启用状态
-    UINT32 fg_color;            // 前景色
-    UINT32 bg_color;            // 背景色
-    UINT32 select_color;        // 选中背景色
-    UINT32 hover_color;         // 悬停背景色
-    FontStyle font;             // 字体样式
-    ListBoxCallback callback;   // 回调函数
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    std::vector<ListBoxItem> items; // 鎵€鏈夐」鐩?
+    int selected_index;         // 褰撳墠閫変腑椤?(-1琛ㄧず鏃犻€変腑)
+    int hovered_index;          // 鎮仠椤?(-1琛ㄧず鏃犳偓鍋?
+    int scroll_offset;          // 婊氬姩鍋忕Щ閲忥紙鍍忕礌锛?
+    int item_height;            // 椤圭洰楂樺害
+    bool multi_select;          // 澶氶€夋ā寮?
+    std::vector<int> selected_indices; // 澶氶€夋椂鐨勯€変腑椤?
+    bool scrollbar_dragging;    // 婊氬姩鏉℃嫋鍔ㄤ腑
+    int scrollbar_drag_offset;  // 婊氬潡鍐呴儴鐨勬嫋鍔ㄥ亸绉?
+    bool enabled;               // 鍚敤鐘舵€?
+    UINT32 fg_color;            // 鍓嶆櫙鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 select_color;        // 閫変腑鑳屾櫙鑹?
+    UINT32 hover_color;         // 鎮仠鑳屾櫙鑹?
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    ListBoxCallback callback;   // 鍥炶皟鍑芥暟
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 组合框状态
+// 缁勫悎妗嗙姸鎬?
 struct ComboBoxState {
-    HWND hwnd;                  // 主控件句柄
-    HWND parent;                // 父窗口句柄
-    HWND edit_hwnd;             // 编辑框句柄
-    HWND dropdown_hwnd;         // 下拉列表窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    std::vector<std::wstring> items; // 下拉项目
-    int selected_index;         // 当前选中项 (-1表示无选中)
-    int hovered_index;          // 悬停项 (-1表示无悬停)
-    int scroll_offset;          // 滚动偏移量（像素）
-    bool dropdown_visible;      // 下拉列表是否可见
-    bool readonly;              // 只读模式
-    bool enabled;               // 启用状态
-    bool button_hovered;        // 下拉按钮悬停状态
-    bool button_pressed;        // 下拉按钮按下状态
-    int item_height;            // 表项高度
-    UINT32 fg_color;            // 前景色
-    UINT32 bg_color;            // 背景色
-    UINT32 select_color;        // 选中背景色
-    UINT32 hover_color;         // 悬停背景色
-    FontStyle font;             // 字体样式
-    ComboBoxCallback callback;  // 回调函数
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 涓绘帶浠跺彞鏌?
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    HWND edit_hwnd;             // 缂栬緫妗嗗彞鏌?
+    HWND dropdown_hwnd;         // 涓嬫媺鍒楄〃绐楀彛鍙ユ焺
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    std::vector<std::wstring> items; // 涓嬫媺椤圭洰
+    int selected_index;         // 褰撳墠閫変腑椤?(-1琛ㄧず鏃犻€変腑)
+    int hovered_index;          // 鎮仠椤?(-1琛ㄧず鏃犳偓鍋?
+    int scroll_offset;          // 婊氬姩鍋忕Щ閲忥紙鍍忕礌锛?
+    bool dropdown_visible;      // 涓嬫媺鍒楄〃鏄惁鍙
+    bool readonly;              // 鍙妯″紡
+    bool enabled;               // 鍚敤鐘舵€?
+    bool button_hovered;        // 涓嬫媺鎸夐挳鎮仠鐘舵€?
+    bool button_pressed;        // 涓嬫媺鎸夐挳鎸変笅鐘舵€?
+    int item_height;            // 琛ㄩ」楂樺害
+    UINT32 fg_color;            // 鍓嶆櫙鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 select_color;        // 閫変腑鑳屾櫙鑹?
+    UINT32 hover_color;         // 鎮仠鑳屾櫙鑹?
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    ComboBoxCallback callback;  // 鍥炶皟鍑芥暟
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
 
-// D2D组合框状态（完全自定义，支持彩色emoji）
+// D2D缁勫悎妗嗙姸鎬侊紙瀹屽叏鑷畾涔夛紝鏀寔褰╄壊emoji锛?
 struct D2DComboBoxState {
-    HWND hwnd;                      // 主控件句柄
-    HWND parent;                    // 父窗口句柄
-    HWND edit_hwnd;                 // D2D编辑框句柄
-    HWND dropdown_hwnd;             // 下拉列表窗口句柄
-    int id;                         // 控件ID
-    int x, y, width, height;        // 位置和尺寸
+    HWND hwnd;                      // 涓绘帶浠跺彞鏌?
+    HWND parent;                    // 鐖剁獥鍙ｅ彞鏌?
+    HWND edit_hwnd;                 // D2D缂栬緫妗嗗彞鏌?
+    HWND dropdown_hwnd;             // 涓嬫媺鍒楄〃绐楀彛鍙ユ焺
+    int id;                         // 鎺т欢ID
+    int x, y, width, height;        // 浣嶇疆鍜屽昂瀵?
     
-    std::vector<std::wstring> items; // 下拉项目
-    int selected_index;             // 当前选中项 (-1表示无选中)
-    int hovered_index;              // 悬停项 (-1表示无悬停)
-    int scroll_offset;              // 滚动偏移量（像素）
+    std::vector<std::wstring> items; // 涓嬫媺椤圭洰
+    int selected_index;             // 褰撳墠閫変腑椤?(-1琛ㄧず鏃犻€変腑)
+    int hovered_index;              // 鎮仠椤?(-1琛ㄧず鏃犳偓鍋?
+    int scroll_offset;              // 婊氬姩鍋忕Щ閲忥紙鍍忕礌锛?
     
-    bool dropdown_visible;          // 下拉列表是否可见
-    bool readonly;                  // 只读模式
-    bool enabled;                   // 启用状态
-    bool button_hovered;            // 下拉按钮悬停状态
-    bool button_pressed;            // 下拉按钮按下状态
+    bool dropdown_visible;          // 涓嬫媺鍒楄〃鏄惁鍙
+    bool readonly;                  // 鍙妯″紡
+    bool enabled;                   // 鍚敤鐘舵€?
+    bool button_hovered;            // 涓嬫媺鎸夐挳鎮仠鐘舵€?
+    bool button_pressed;            // 涓嬫媺鎸夐挳鎸変笅鐘舵€?
     
-    int item_height;                // 表项高度
-    int button_width;               // 下拉按钮宽度（默认30）
-    int max_dropdown_items;         // 下拉列表最多显示项数（默认10）
+    int item_height;                // 琛ㄩ」楂樺害
+    int button_width;               // 涓嬫媺鎸夐挳瀹藉害锛堥粯璁?0锛?
+    int max_dropdown_items;         // 涓嬫媺鍒楄〃鏈€澶氭樉绀洪」鏁帮紙榛樿10锛?
     
-    UINT32 fg_color;                // 前景色
-    UINT32 bg_color;                // 背景色
-    UINT32 select_color;            // 选中背景色
-    UINT32 hover_color;             // 悬停背景色
-    UINT32 border_color;            // 边框颜色
-    UINT32 button_color;            // 按钮颜色
+    UINT32 fg_color;                // 鍓嶆櫙鑹?
+    UINT32 bg_color;                // 鑳屾櫙鑹?
+    UINT32 select_color;            // 閫変腑鑳屾櫙鑹?
+    UINT32 hover_color;             // 鎮仠鑳屾櫙鑹?
+    UINT32 border_color;            // 杈规棰滆壊
+    UINT32 button_color;            // 鎸夐挳棰滆壊
     
-    FontStyle font;                 // 字体样式
-    ComboBoxCallback callback;      // 回调函数
-    EventCallbacks events;          // 通用事件回调
+    FontStyle font;                 // 瀛椾綋鏍峰紡
+    ComboBoxCallback callback;      // 鍥炶皟鍑芥暟
+    EventCallbacks events;          // 閫氱敤浜嬩欢鍥炶皟
 
-    ID2D1HwndRenderTarget* render_target; // D2D渲染目标（用于下拉列表）
-    IDWriteFactory* dwrite_factory;       // DirectWrite工厂
+    ID2D1HwndRenderTarget* render_target; // D2D娓叉煋鐩爣锛堢敤浜庝笅鎷夊垪琛級
+    IDWriteFactory* dwrite_factory;       // DirectWrite宸ュ巶
 };
 
-// D2D 日期时间选择器：显示精度（与 Element DateTimePicker 粒度对应）
+// D2D 鏃ユ湡鏃堕棿閫夋嫨鍣細鏄剧ず绮惧害锛堜笌 Element DateTimePicker 绮掑害瀵瑰簲锛?
 enum DateTimePickerPrecision {
-    DTP_PRECISION_YEAR = 0,      // 仅年
-    DTP_PRECISION_YMD = 1,       // 年月日
-    DTP_PRECISION_YMDH = 2,        // 年月日时
-    DTP_PRECISION_YMDHM = 3,     // 年月日时分
-    DTP_PRECISION_YMDHMS = 4     // 年月日时分秒
+    DTP_PRECISION_YEAR = 0,      // 浠呭勾
+    DTP_PRECISION_YMD = 1,       // 骞存湀鏃?
+    DTP_PRECISION_YMDH = 2,        // 骞存湀鏃ユ椂
+    DTP_PRECISION_YMDHM = 3,     // 骞存湀鏃ユ椂鍒?
+    DTP_PRECISION_YMDHMS = 4     // 骞存湀鏃ユ椂鍒嗙
 };
 
-// 热键控件状态
+// 鐑敭鎺т欢鐘舵€?
 struct HotKeyState {
     HWND hwnd;                  // 控件句柄
     HWND parent;                // 父窗口句柄
+    HWND input_hwnd;            // 隐藏输入子控件
     int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    int vk_code;                // 虚拟键码
-    int modifiers;              // 修饰键 (Ctrl=1, Shift=2, Alt=4)
-    std::wstring display_text;  // 显示文本
-    bool capturing;             // 是否正在捕获
-    bool has_focus;             // 是否有焦点
-    bool enabled;               // 启用状态
-    UINT32 fg_color;            // 前景色
-    UINT32 bg_color;            // 背景色
-    UINT32 border_color;        // 边框颜色
-    FontStyle font;             // 字体样式
-    HotKeyCallback callback;    // 回调函数
-    EventCallbacks events;      // 通用事件回调
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    int vk_code;                // 铏氭嫙閿爜
+    int modifiers;              // 淇グ閿?(Ctrl=1, Shift=2, Alt=4)
+    std::wstring display_text;  // 鏄剧ず鏂囨湰
+    bool capturing;             // 鏄惁姝ｅ湪鎹曡幏
+    bool has_focus;             // 鏄惁鏈夌劍鐐?
+    bool enabled;               // 鍚敤鐘舵€?
+    UINT32 fg_color;            // 鍓嶆櫙鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 border_color;        // 杈规棰滆壊
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    HotKeyCallback callback;    // 鍥炶皟鍑芥暟
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 分组框回调函数类型 (stdcall 调用约定)
+// 鍒嗙粍妗嗗洖璋冨嚱鏁扮被鍨?(stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *GroupBoxCallback)(HWND hGroupBox);
 
-// ========== DataGridView 回调函数类型 ==========
+// ========== DataGridView 鍥炶皟鍑芥暟绫诲瀷 ==========
 
-// 单元格点击回调 (hGrid, row, col)
+// 鍗曞厓鏍肩偣鍑诲洖璋?(hGrid, row, col)
 typedef void (__stdcall *DataGridCellClickCallback)(HWND hGrid, int row, int col);
 
-// 单元格双击回调 (hGrid, row, col)
+// 鍗曞厓鏍煎弻鍑诲洖璋?(hGrid, row, col)
 typedef void (__stdcall *DataGridCellDoubleClickCallback)(HWND hGrid, int row, int col);
 
-// 单元格值改变回调 (hGrid, row, col)
+// 鍗曞厓鏍煎€兼敼鍙樺洖璋?(hGrid, row, col)
 typedef void (__stdcall *DataGridCellValueChangedCallback)(HWND hGrid, int row, int col);
 
-// 列头点击回调 (hGrid, col)
+// 鍒楀ご鐐瑰嚮鍥炶皟 (hGrid, col)
 typedef void (__stdcall *DataGridColumnHeaderClickCallback)(HWND hGrid, int col);
 
-// 选择改变回调 (hGrid, row, col)
+// 閫夋嫨鏀瑰彉鍥炶皟 (hGrid, row, col)
 typedef void (__stdcall *DataGridSelectionChangedCallback)(HWND hGrid, int row, int col);
 
-// 虚拟模式数据请求回调 (hGrid, row, col, buffer, buffer_size) -> 返回写入的字节数
+// 铏氭嫙妯″紡鏁版嵁璇锋眰鍥炶皟 (hGrid, row, col, buffer, buffer_size) -> 杩斿洖鍐欏叆鐨勫瓧鑺傛暟
 typedef int (__stdcall *DataGridVirtualDataCallback)(HWND hGrid, int row, int col, unsigned char* buffer, int buffer_size);
 
-// ========== DataGridView 枚举和结构 ==========
+// ========== DataGridView 鏋氫妇鍜岀粨鏋?==========
 
-// 列类型
+// 鍒楃被鍨?
+enum DataGridColumnTypeFixed {
+    DGCOL_TEXT = 0,
+    DGCOL_CHECKBOX = 1,
+    DGCOL_BUTTON = 2,
+    DGCOL_LINK = 3,
+    DGCOL_IMAGE = 4,
+    DGCOL_COMBOBOX = 5,
+    DGCOL_TAG = 6
+};
+
+#if 0
 enum DataGridColumnType {
-    DGCOL_TEXT = 0,         // 文本列
-    DGCOL_CHECKBOX = 1,     // 复选框列
-    DGCOL_BUTTON = 2,       // 按钮列
-    DGCOL_LINK = 3,         // 链接列
-    DGCOL_IMAGE = 4         // 图片列
+    DGCOL_TEXT = 0,         // 鏂囨湰鍒?    DGCOL_CHECKBOX = 1,     // 澶嶉€夋鍒?    DGCOL_BUTTON = 2,       // 鎸夐挳鍒?    DGCOL_LINK = 3,         // 閾炬帴鍒?    DGCOL_IMAGE = 4,        // 鍥剧墖鍒?    DGCOL_COMBOBOX = 5,     // 缁勫悎妗嗗垪
+    DGCOL_TAG = 6           // 标签列
 };
 
-// 排序方向
+// 鎺掑簭鏂瑰悜
+#endif
+
+typedef DataGridColumnTypeFixed DataGridColumnType;
+
 enum DataGridSortOrder {
-    DGSORT_NONE = 0,        // 无排序
-    DGSORT_ASC = 1,         // 升序
-    DGSORT_DESC = 2         // 降序
+    DGSORT_NONE = 0,        // 鏃犳帓搴?
+    DGSORT_ASC = 1,         // 鍗囧簭
+    DGSORT_DESC = 2         // 闄嶅簭
 };
 
-// 选择模式
+// 閫夋嫨妯″紡
 enum DataGridSelectionMode {
-    DGSEL_CELL = 0,         // 单元格选择
-    DGSEL_ROW = 1           // 整行选择
+    DGSEL_CELL = 0,         // 鍗曞厓鏍奸€夋嫨
+    DGSEL_ROW = 1           // 鏁磋閫夋嫨
 };
 
-// 单元格样式
+// 鍗曞厓鏍兼牱寮?
 struct DataGridCellStyle {
-    UINT32 fg_color;        // 前景色 (0=使用默认)
-    UINT32 bg_color;        // 背景色 (0=使用默认)
-    bool bold;              // 粗体
-    bool italic;            // 斜体
+    UINT32 fg_color;        // 鍓嶆櫙鑹?(0=浣跨敤榛樿)
+    UINT32 bg_color;        // 鑳屾櫙鑹?(0=浣跨敤榛樿)
+    bool bold;              // 绮椾綋
+    bool italic;            // 鏂滀綋
 };
 
-// 列定义
+// 鍒楀畾涔?
 struct DataGridColumn {
-    std::wstring header_text;   // 列头文本
-    int width;                  // 列宽（像素）
-    int min_width;              // 最小列宽
-    DataGridColumnType type;    // 列类型
-    bool resizable;             // 是否可调整宽度
-    bool sortable;              // 是否可排序
-    DataGridSortOrder sort_order; // 当前排序方向
-    DWRITE_TEXT_ALIGNMENT header_alignment;  // 列头对齐方式
-    DWRITE_TEXT_ALIGNMENT cell_alignment;    // 单元格对齐方式
+    std::wstring header_text;   // 鍒楀ご鏂囨湰
+    int width;                  // 鍒楀锛堝儚绱狅級
+    int min_width;              // 鏈€灏忓垪瀹?
+    DataGridColumnType type;    // 鍒楃被鍨?
+    bool resizable;             // 鏄惁鍙皟鏁村搴?
+    bool sortable;              // 鏄惁鍙帓搴?
+    DataGridSortOrder sort_order; // 褰撳墠鎺掑簭鏂瑰悜
+    DWRITE_TEXT_ALIGNMENT header_alignment;  // 鍒楀ご瀵归綈鏂瑰紡
+    DWRITE_TEXT_ALIGNMENT cell_alignment;    // 鍗曞厓鏍煎榻愭柟寮?
     
-    // 构造函数，设置默认值
+    // 鏋勯€犲嚱鏁帮紝璁剧疆榛樿鍊?
     DataGridColumn() : 
         width(100), min_width(30), type(DGCOL_TEXT), 
         resizable(true), sortable(true), sort_order(DGSORT_NONE),
@@ -501,128 +694,145 @@ struct DataGridColumn {
         cell_alignment(DWRITE_TEXT_ALIGNMENT_LEADING) {}
 };
 
-// 单元格数据
+// 鍗曞厓鏍兼暟鎹?
 struct DataGridCell {
-    std::wstring text;          // 文本内容
-    bool checked;               // 复选框状态 (DGCOL_CHECKBOX)
-    DataGridCellStyle style;    // 单元格样式
+    std::wstring text;          // 鏂囨湰鍐呭
+    bool checked;               // 澶嶉€夋鐘舵€?(DGCOL_CHECKBOX)
+    DataGridCellStyle style;    // 鍗曞厓鏍兼牱寮?
+    std::vector<unsigned char> image_data; // 鍥剧墖鍘熷缂栫爜鏁版嵁锛堢敤浜庣湡 bitmap 鍥剧墖鍒楋級
 };
 
-// 行数据
+// 琛屾暟鎹?
 struct DataGridRow {
-    std::vector<DataGridCell> cells; // 单元格列表
-    int height;                      // 行高（0=使用默认）
+    std::vector<DataGridCell> cells; // 鍗曞厓鏍煎垪琛?
+    int height;                      // 琛岄珮锛?=浣跨敤榛樿锛?
 };
 
-// DataGridView 状态
+// DataGridView 鐘舵€?
 struct DataGridViewState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;   // 位置和尺寸
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;   // 浣嶇疆鍜屽昂瀵?
 
-    // 列和行数据
+    // 鍒楀拰琛屾暟鎹?
     std::vector<DataGridColumn> columns;
     std::vector<DataGridRow> rows;
 
-    // 虚拟模式
-    bool virtual_mode;          // 是否虚拟模式
-    int virtual_row_count;      // 虚拟模式总行数
+    // 铏氭嫙妯″紡
+    bool virtual_mode;          // 鏄惁铏氭嫙妯″紡
+    int virtual_row_count;      // 铏氭嫙妯″紡鎬昏鏁?
 
-    // 选择状态
-    int selected_row;           // 选中行 (-1=无)
-    int selected_col;           // 选中列 (-1=无)
-    DataGridSelectionMode selection_mode; // 选择模式
+    // 閫夋嫨鐘舵€?
+    int selected_row;           // 閫変腑琛?(-1=鏃?
+    int selected_col;           // 閫変腑鍒?(-1=鏃?
+    DataGridSelectionMode selection_mode; // 閫夋嫨妯″紡
 
-    // 编辑状态
-    bool editing;               // 是否正在编辑
-    int edit_row;               // 编辑行
-    int edit_col;               // 编辑列
-    HWND edit_hwnd;             // 编辑框句柄
+    // 缂栬緫鐘舵€?
+    bool editing;               // 鏄惁姝ｅ湪缂栬緫
+    int edit_row;               // 缂栬緫琛?
+    int edit_col;               // 缂栬緫鍒?
+    HWND edit_hwnd;             // 缂栬緫妗嗗彞鏌?
 
-    // 悬停状态
-    int hovered_row;            // 悬停行
-    int hovered_col;            // 悬停列
+    // 鎮仠鐘舵€?
+    int hovered_row;            // 鎮仠琛?
+    int hovered_col;            // 鎮仠鍒?
 
-    // 滚动
-    int scroll_x;               // 水平滚动偏移
-    int scroll_y;               // 垂直滚动偏移
+    // 婊氬姩
+    int scroll_x;               // 姘村钩婊氬姩鍋忕Щ
+    int scroll_y;               // 鍨傜洿婊氬姩鍋忕Щ
 
-    // 列宽调整
-    bool resizing_col;          // 是否正在调整列宽
-    int resize_col_index;       // 正在调整的列索引
-    int resize_start_x;         // 调整起始X坐标
-    int resize_start_width;     // 调整起始列宽
+    // 鍒楀璋冩暣
+    bool resizing_col;          // 鏄惁姝ｅ湪璋冩暣鍒楀
+    int resize_col_index;       // 姝ｅ湪璋冩暣鐨勫垪绱㈠紩
+    int resize_start_x;         // 璋冩暣璧峰X鍧愭爣
+    int resize_start_width;     // 璋冩暣璧峰鍒楀
 
-    // 滚动条拖拽
-    bool scrollbar_v_dragging;  // 是否正在拖拽纵向滚动条
-    bool scrollbar_h_dragging;  // 是否正在拖拽横向滚动条
-    float scrollbar_drag_offset; // 拖拽起始偏移（鼠标相对thumb顶部）
+    // 婊氬姩鏉℃嫋鎷?
+    bool scrollbar_v_dragging;  // 鏄惁姝ｅ湪鎷栨嫿绾靛悜婊氬姩鏉?
+    bool scrollbar_h_dragging;  // 鏄惁姝ｅ湪鎷栨嫿妯悜婊氬姩鏉?
+    float scrollbar_drag_offset; // 鎷栨嫿璧峰鍋忕Щ锛堥紶鏍囩浉瀵箃humb椤堕儴锛?
 
-    // 排序
-    int sort_col;               // 排序列 (-1=无)
-    DataGridSortOrder sort_order; // 排序方向
+    // 鎺掑簭
+    int sort_col;               // 鎺掑簭鍒?(-1=鏃?
+    DataGridSortOrder sort_order; // 鎺掑簭鏂瑰悜
 
-    // 冻结
-    bool freeze_header;         // 冻结首行（列头）
-    bool freeze_first_col;      // 冻结首列
+    // 鍐荤粨
+    bool freeze_header;         // 鍐荤粨棣栬锛堝垪澶达級
+    bool freeze_first_col;      // 鍐荤粨棣栧垪
 
-    // 外观
-    int header_height;          // 列头高度
-    int default_row_height;     // 默认行高
-    bool zebra_stripe;          // 隔行变色
-    bool show_grid_lines;       // 显示网格线
-    bool enabled;               // 启用状态
-    UINT32 fg_color;            // 前景色
-    UINT32 bg_color;            // 背景色
-    UINT32 header_bg_color;     // 列头背景色
-    UINT32 header_fg_color;     // 列头前景色
-    UINT32 grid_line_color;     // 网格线颜色
-    UINT32 select_color;        // 选中背景色
-    UINT32 hover_color;         // 悬停背景色
-    UINT32 zebra_color;         // 隔行变色背景色
-    FontStyle font;             // 字体样式
+    // 澶栬
+    int header_height;          // 鍒楀ご楂樺害
+    int default_row_height;     // 榛樿琛岄珮
+    bool zebra_stripe;          // 闅旇鍙樿壊
+    bool show_grid_lines;       // 鏄剧ず缃戞牸绾?
+    bool enabled;               // 鍚敤鐘舵€?
+    UINT32 fg_color;            // 鍓嶆櫙鑹?
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    UINT32 header_bg_color;     // 鍒楀ご鑳屾櫙鑹?
+    UINT32 header_fg_color;     // 鍒楀ご鍓嶆櫙鑹?
+    UINT32 grid_line_color;     // 缃戞牸绾块鑹?
+    UINT32 select_color;        // 閫変腑鑳屾櫙鑹?
+    UINT32 hover_color;         // 鎮仠鑳屾櫙鑹?
+    UINT32 zebra_color;         // 闅旇鍙樿壊鑳屾櫙鑹?
+    FontStyle font;             // 瀛椾綋鏍峰紡
 
-    // 回调
+    // 鍥炶皟
     DataGridCellClickCallback cell_click_cb;
     DataGridCellDoubleClickCallback cell_dblclick_cb;
     DataGridCellValueChangedCallback cell_value_changed_cb;
     DataGridColumnHeaderClickCallback col_header_click_cb;
     DataGridSelectionChangedCallback selection_changed_cb;
     DataGridVirtualDataCallback virtual_data_cb;
-    EventCallbacks events;      // 通用事件回调
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-// 分组框状态
+// 鍒嗙粍妗嗙姸鎬?
 struct GroupBoxState {
-    HWND hwnd;                  // 控件句柄
-    HWND parent;                // 父窗口句柄
-    int id;                     // 控件ID
-    int x, y, width, height;    // 位置和尺寸
-    std::wstring title;         // 标题文本
-    std::vector<HWND> children; // 子控件列表（单选按钮、复选框等HWND控件）
-    std::vector<int> button_ids; // 按钮ID列表（主窗口上绘制的按钮）
-    bool enabled;               // 启用状态
-    bool visible;               // 可见状态
-    UINT32 border_color;        // 边框颜色
-    UINT32 title_color;         // 标题颜色
-    UINT32 bg_color;            // 背景色
-    FontStyle font;             // 字体样式
-    GroupBoxCallback callback;  // 回调函数
-    EventCallbacks events;      // 通用事件回调
+    HWND hwnd;                  // 鎺т欢鍙ユ焺
+    HWND parent;                // 鐖剁獥鍙ｅ彞鏌?
+    int id;                     // 鎺т欢ID
+    int x, y, width, height;    // 浣嶇疆鍜屽昂瀵?
+    std::wstring title;         // 鏍囬鏂囨湰
+    std::vector<HWND> children; // 瀛愭帶浠跺垪琛紙鍗曢€夋寜閽€佸閫夋绛塇WND鎺т欢锛?
+    std::vector<int> button_ids; // 鎸夐挳ID鍒楄〃锛堜富绐楀彛涓婄粯鍒剁殑鎸夐挳锛?
+    bool enabled;               // 鍚敤鐘舵€?
+    bool visible;               // 鍙鐘舵€?
+    UINT32 border_color;        // 杈规棰滆壊
+    UINT32 title_color;         // 鏍囬棰滆壊
+    UINT32 bg_color;            // 鑳屾櫙鑹?
+    FontStyle font;             // 瀛椾綋鏍峰紡
+    GroupBoxCallback callback;  // 鍥炶皟鍑芥暟
+    EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
+};
+
+struct PanelState {
+    HWND hwnd;
+    HWND parent;
+    int x, y, width, height;
+    UINT32 bg_color;
+    EventCallbacks events;
 };
 
 // Button structure
 struct EmojiButton {
     int id;
+    HWND hwnd = nullptr;
     std::wstring emoji;
     std::wstring text;
     int x, y, width, height;
     UINT32 bg_color;
     bool is_hovered;
     bool is_pressed;
-    bool enabled = true;  // 按钮启用状态
-    bool visible = true;  // 按钮可见状态
+    bool enabled = true;  // 鎸夐挳鍚敤鐘舵€?
+    bool visible = true;  // 鎸夐挳鍙鐘舵€?
+    int visual_type = BUTTON_TYPE_AUTO;
+    int visual_style = BUTTON_STYLE_SOLID;
+    int visual_size = BUTTON_SIZE_DEFAULT;
+    bool round = false;
+    bool circle = false;
+    bool loading = false;
+    int loading_phase = 0;
 
     bool ContainsPoint(int px, int py) const {
         return px >= x && px <= x + width && py >= y && py <= y + height;
@@ -635,68 +845,83 @@ struct WindowState {
     ID2D1HwndRenderTarget* render_target;
     IDWriteFactory* dwrite_factory;
     std::vector<EmojiButton> buttons;
-    // 自定义标题栏支持
-    std::wstring title;           // 窗口标题（用于D2D彩色emoji绘制）
-    UINT32 titlebar_color = 0;    // 标题栏背景色（0=跟随主题）
-    UINT32 client_bg_color = 0;   // 客户区背景色（0=使用 ThemeColor_Background 纯白）
-    int titlebar_height = 30;     // 标题栏高度（像素）
-    bool custom_titlebar = true;  // 是否启用自定义标题栏
-    int hovered_titlebar_button = 0; // 0=无 1=最小化 2=最大化 3=关闭
+    // 鑷畾涔夋爣棰樻爮鏀寔
+    std::wstring title;           // 绐楀彛鏍囬锛堢敤浜嶥2D褰╄壊emoji缁樺埗锛?
+    UINT32 titlebar_color = 0;    // 鏍囬鏍忚儗鏅壊锛?=璺熼殢涓婚锛?
+    UINT32 client_bg_color = 0;   // 瀹㈡埛鍖鸿儗鏅壊锛?=浣跨敤 ThemeColor_Background 绾櫧锛?
+    int titlebar_height = 30;     // 鏍囬鏍忛珮搴︼紙鍍忕礌锛?
+    bool custom_titlebar = true;  // 鏄惁鍚敤鑷畾涔夋爣棰樻爮
+    int hovered_titlebar_button = 0; // 0=鏃?1=鏈€灏忓寲 2=鏈€澶у寲 3=鍏抽棴
     bool titlebar_mouse_tracking = false;
 
-    // ===== 标题栏文字样式字段 =====
-    UINT32 titlebar_text_color = 0;                          // 标题文字颜色（ARGB），0=跟随主题
-    std::wstring titlebar_font_name = L"Segoe UI Emoji";     // 标题字体名称
-    float titlebar_font_size = 13.0f;                        // 标题字号（像素）
-    int titlebar_alignment = 0;                              // 标题对齐方式：0=左，1=中，2=右
+    // ===== 鏍囬鏍忔枃瀛楁牱寮忓瓧娈?=====
+    UINT32 titlebar_text_color = 0;                          // 鏍囬鏂囧瓧棰滆壊锛圓RGB锛夛紝0=璺熼殢涓婚
+    std::wstring titlebar_font_name = L"Segoe UI Emoji";     // 鏍囬瀛椾綋鍚嶇О
+    float titlebar_font_size = 13.0f;                        // 鏍囬瀛楀彿锛堝儚绱狅級
+    int titlebar_alignment = 0;                              // 标题对齐方式
+    EventCallbacks events;                                   // 通用事件回调
 };
 
-// 菜单项状态
+// 鑿滃崟椤圭姸鎬?
 struct MenuItem {
-    int id;                     // 菜单项ID
-    std::wstring text;          // 显示文本
-    std::wstring shortcut;      // 快捷键文本
-    bool enabled = true;        // 是否启用
-    bool checked = false;       // 是否勾选
-    bool separator = false;     // 是否分隔线
-    std::vector<MenuItem> sub_items; // 子菜单项
-    D2D1_RECT_F bounds = {};    // 菜单项边界（用于命中测试）
+    int id;                     // 鑿滃崟椤笽D
+    std::wstring text;          // 鏄剧ず鏂囨湰
+    std::wstring shortcut;      // 蹇嵎閿枃鏈?
+    bool enabled = true;        // 鏄惁鍚敤
+    bool checked = false;       // 鏄惁鍕鹃€?
+    bool separator = false;     // 鏄惁鍒嗛殧绾?
+    std::vector<MenuItem> sub_items; // 瀛愯彍鍗曢」
+    D2D1_RECT_F bounds = {};    // 鑿滃崟椤硅竟鐣岋紙鐢ㄤ簬鍛戒腑娴嬭瘯锛?
 };
 
-// 菜单栏状态
+// 鑿滃崟鏍忕姸鎬?
 struct MenuBarState {
-    HWND hwnd;                      // 所属窗口句柄
-    std::vector<MenuItem> items;    // 菜单项列表
-    int hovered_index = -1;         // 当前悬停的菜单索引
-    int opened_index = -1;          // 当前展开的菜单索引
-    int opened_menu_id = 0;         // 当前展开的顶级菜单ID（用于回调传参）
-    bool visible = true;            // 是否可见
-    UINT32 bg_color = 0;            // 背景色（0=默认）
-    UINT32 fg_color = 0;            // 前景色（0=默认）
-    FontStyle font;                 // 字体样式
+    HWND hwnd;                      // 鎵€灞炵獥鍙ｅ彞鏌?
+    std::vector<MenuItem> items;    // 鑿滃崟椤瑰垪琛?
+    int x = 0;                      // 绘制起点X
+    int y = 0;                      // 绘制起点Y
+    int width = 0;                  // 绘制宽度（0=跟随宿主宽度）
+    int height = 30;                // 菜单栏高度
+    int hovered_index = -1;         // 褰撳墠鎮仠鐨勮彍鍗曠储寮?
+    int opened_index = -1;          // 褰撳墠灞曞紑鐨勮彍鍗曠储寮?
+    int opened_menu_id = 0;         // 褰撳墠灞曞紑鐨勯《绾ц彍鍗旾D锛堢敤浜庡洖璋冧紶鍙傦級
+    bool visible = true;            // 鏄惁鍙
+    UINT32 bg_color = 0;            // 鑳屾櫙鑹诧紙0=榛樿锛?
+    UINT32 fg_color = 0;            // 鍓嶆櫙鑹诧紙0=榛樿锛?
+    FontStyle font;                 // 瀛椾綋鏍峰紡
     MenuItemClickCallback callback; // 菜单项点击回调
+    HWND popup_menu_handle = nullptr; // 当前打开的顶部菜单弹层句柄
     SubMenuWindow* submenu = nullptr; // 子菜单窗口
 };
 
-// 弹出菜单状态
+// 寮瑰嚭鑿滃崟鐘舵€?
 struct PopupMenuState {
-    HWND hwnd = nullptr;            // 弹出菜单窗口句柄
-    HWND owner_hwnd;                // 关联窗口句柄
-    ID2D1HwndRenderTarget* render_target = nullptr; // D2D渲染目标
-    IDWriteFactory* dwrite_factory = nullptr;       // DirectWrite工厂
-    std::vector<MenuItem> items;    // 菜单项列表
-    int hovered_index = -1;         // 当前悬停的菜单索引
-    bool visible = false;           // 是否可见
-    int x = 0;                      // 显示位置X
-    int y = 0;                      // 显示位置Y
-    int width = 0;                  // 菜单宽度
-    int height = 0;                 // 菜单高度
-    int item_height = 0;            // 菜单项高度
-    UINT32 bg_color = 0;            // 背景色（0=默认）
-    UINT32 fg_color = 0;            // 前景色（0=默认）
-    UINT32 hover_color = 0;         // 悬停背景色
-    FontStyle font;                 // 字体样式
+    HWND handle_key = nullptr;      // 閫昏緫鑿滃崟鍙ユ焺锛圕reateEmojiPopupMenu 杩斿洖鍊硷級
+    HWND hwnd = nullptr;            // 寮瑰嚭鑿滃崟绐楀彛鍙ユ焺
+    HWND owner_hwnd;                // 鍏宠仈绐楀彛鍙ユ焺
+    ID2D1HwndRenderTarget* render_target = nullptr; // D2D娓叉煋鐩爣
+    IDWriteFactory* dwrite_factory = nullptr;       // DirectWrite宸ュ巶
+    std::vector<MenuItem> items;    // 鑿滃崟椤瑰垪琛?
+    int hovered_index = -1;         // 褰撳墠鎮仠鐨勮彍鍗曠储寮?
+    bool visible = false;           // 鏄惁鍙
+    int x = 0;                      // 鏄剧ず浣嶇疆X
+    int y = 0;                      // 鏄剧ず浣嶇疆Y
+    int width = 0;                  // 鑿滃崟瀹藉害
+    int height = 0;                 // 鑿滃崟楂樺害
+    int item_height = 0;            // 鑿滃崟椤归珮搴?
+    UINT32 bg_color = 0;            // 鑳屾櫙鑹诧紙0=榛樿锛?
+    UINT32 fg_color = 0;            // 鍓嶆櫙鑹诧紙0=榛樿锛?
+    UINT32 hover_color = 0;         // 鎮仠鑳屾櫙鑹?
+    FontStyle font;                 // 瀛椾綋鏍峰紡
     MenuItemClickCallback callback; // 菜单项点击回调
+    int callback_menu_id = 0;       // 回调中的 menu_id
+    bool auto_destroy = false;      // 窗口销毁后是否释放逻辑菜单状态
+    HWND owner_menubar = nullptr;   // 顶部菜单宿主
+    SubMenuWindow* submenu = nullptr; // 当前展开的二级菜单
+    HWND child_popup_handle = nullptr; // 当前展开的二级弹出菜单句柄
+    HWND parent_popup_handle = nullptr; // 父级弹出菜单窗口句柄
+    int submenu_owner_index = -1;   // 二级菜单对应的父项索引
+    DWORD ignore_initial_button_up_until = 0; // 刚弹出时忽略触发弹出的那次鼠标抬起
 };
 
 // Message box button type
@@ -718,115 +943,119 @@ struct MsgBoxState {
     MessageBoxCallback callback;
     EmojiButton ok_button;
     EmojiButton cancel_button;
+    bool close_hovered;
     bool result;
 };
 
-// Tab 页信息结构
+// Tab 椤典俊鎭粨鏋?
 struct TabPageInfo {
-    int index;                      // Tab 索引
-    std::wstring title;             // Tab 标题
-    HWND hContentWindow;            // 内容容器窗口句柄
-    bool visible;                   // 是否可见
-    bool enabled;                   // 是否启用（默认 true）
-    std::vector<unsigned char> iconData; // 图标 PNG 字节数据（默认空）
-    UINT32 contentBgColor;          // 内容区域背景色（默认 0xFFFFFFFF 白色）
+    int index;                      // Tab 绱㈠紩
+    std::wstring title;             // Tab 鏍囬
+    HWND hContentWindow;            // 鍐呭瀹瑰櫒绐楀彛鍙ユ焺
+    bool visible;                   // 鏄惁鍙
+    bool enabled;                   // 鏄惁鍚敤锛堥粯璁?true锛?
+    std::vector<unsigned char> iconData; // 鍥炬爣 PNG 瀛楄妭鏁版嵁锛堥粯璁ょ┖锛?
+    UINT32 contentBgColor;          // 鍐呭鍖哄煙鑳屾櫙鑹诧紙榛樿 0xFFFFFFFF 鐧借壊锛?
 };
 
-// TabControl 状态管理
+// TabControl 鐘舵€佺鐞?
 struct TabControlState {
-    HWND hTabControl;               // Tab Control 句柄
+    HWND hTabControl;               // Tab Control 鍙ユ焺
     HWND hParent;                   // 父窗口句柄
     std::vector<TabPageInfo> pages; // 所有 Tab 页信息
-    int currentIndex;               // 当前选中的 Tab 索引
-    TAB_CALLBACK callback;          // 切换回调函数
+    TAB_CALLBACK callback;          // Tab 切换回调
+    int currentIndex;               // 当前选中 Tab 索引
 
-    // ===== 外观字段 =====
-    int tabWidth;                   // 标签宽度（默认 120）
-    int tabHeight;                  // 标签高度（默认 34）
-    std::wstring fontName;          // 字体名称（默认 L"Segoe UI Emoji"）
-    float fontSize;                 // 字号（默认 13.0f）
-    UINT32 selectedBgColor;         // 选中背景色（默认 0xFFFFFFFF 白色）
-    UINT32 unselectedBgColor;       // 未选中背景色（默认 0xFFF5F7FA 浅灰）
-    UINT32 selectedTextColor;       // 选中文字色（默认 0xFF409EFF 蓝色）
-    UINT32 unselectedTextColor;     // 未选中文字色（默认 0xFF606266 深灰）
-    UINT32 indicatorColor;          // 选中指示条颜色（默认 0xFF409EFF）
-    int paddingH;                   // 水平内边距（默认 2）
-    int paddingV;                   // 垂直内边距（默认 0）
+    // ===== 澶栬瀛楁 =====
+    int tabWidth;                   // 鏍囩瀹藉害锛堥粯璁?120锛?
+    int tabHeight;                  // 鏍囩楂樺害锛堥粯璁?34锛?
+    std::wstring fontName;          // 瀛椾綋鍚嶇О锛堥粯璁?L"Segoe UI Emoji"锛?
+    float fontSize;                 // 瀛楀彿锛堥粯璁?13.0f锛?
+    UINT32 selectedBgColor;         // 閫変腑鑳屾櫙鑹诧紙榛樿 0xFFFFFFFF 鐧借壊锛?
+    UINT32 unselectedBgColor;       // 鏈€変腑鑳屾櫙鑹诧紙榛樿 0xFFF5F7FA 娴呯伆锛?
+    UINT32 selectedTextColor;       // 閫変腑鏂囧瓧鑹诧紙榛樿 0xFF409EFF 钃濊壊锛?
+    UINT32 unselectedTextColor;     // 鏈€変腑鏂囧瓧鑹诧紙榛樿 0xFF606266 娣辩伆锛?
+    UINT32 indicatorColor;          // 閫変腑鎸囩ず鏉￠鑹诧紙榛樿 0xFF409EFF锛?
+    int paddingH;                   // 姘村钩鍐呰竟璺濓紙榛樿 2锛?
+    int paddingV;                   // 鍨傜洿鍐呰竟璺濓紙榛樿 0锛?
 
-    // ===== 交互字段 =====
-    bool closable;                  // 是否显示关闭按钮（默认 false）
-    TAB_CLOSE_CALLBACK closeCallback;       // 关闭回调（默认 nullptr）
-    TAB_RIGHTCLICK_CALLBACK rightClickCallback; // 右键回调（默认 nullptr）
-    TAB_DBLCLICK_CALLBACK dblClickCallback;     // 双击回调（默认 nullptr）
-    bool draggable;                 // 是否可拖拽排序（默认 false）
+    // ===== 浜や簰瀛楁 =====
+    bool closable;                  // 鏄惁鏄剧ず鍏抽棴鎸夐挳锛堥粯璁?false锛?
+    TAB_CLOSE_CALLBACK closeCallback;       // 鍏抽棴鍥炶皟锛堥粯璁?nullptr锛?
+    TAB_RIGHTCLICK_CALLBACK rightClickCallback; // 鍙抽敭鍥炶皟锛堥粯璁?nullptr锛?
+    TAB_DBLCLICK_CALLBACK dblClickCallback;     // 鍙屽嚮鍥炶皟锛堥粯璁?nullptr锛?
+    EventCallbacks events;          // 通用事件回调
+    bool draggable;                 // 鏄惁鍙嫋鎷芥帓搴忥紙榛樿 false锛?
 
-    // ===== 布局字段 =====
-    int tabPosition;                // 标签栏位置：0=上 1=下 2=左 3=右（默认 0）
-    int tabAlignment;               // 标签对齐：0=左 1=居中 2=右（默认 0）
-    bool scrollable;                // 是否可滚动（默认 false）
-    int scrollOffset;               // 滚动偏移量（默认 0）
+    // ===== 甯冨眬瀛楁 =====
+    int tabPosition;                // 鏍囩鏍忎綅缃細0=涓?1=涓?2=宸?3=鍙筹紙榛樿 0锛?
+    int tabAlignment;               // 鏍囩瀵归綈锛?=宸?1=灞呬腑 2=鍙筹紙榛樿 0锛?
+    bool scrollable;                // 鏄惁鍙粴鍔紙榛樿 false锛?
+    int scrollOffset;               // 婊氬姩鍋忕Щ閲忥紙榛樿 0锛?
 
-    // ===== 拖拽状态字段 =====
-    bool isDragging;                // 是否正在拖拽
-    int dragStartIndex;             // 拖拽起始标签页索引（pages 数组索引）
-    int dragTargetIndex;            // 拖拽目标插入位置索引（pages 数组索引）
-    POINT dragStartPoint;           // 拖拽起始鼠标位置
+    // ===== 鎷栨嫿鐘舵€佸瓧娈?=====
+    bool isDragging;                // 鏄惁姝ｅ湪鎷栨嫿
+    int dragStartIndex;             // 鎷栨嫿璧峰鏍囩椤电储寮曪紙pages 鏁扮粍绱㈠紩锛?
+    int dragTargetIndex;            // 鎷栨嫿鐩爣鎻掑叆浣嶇疆绱㈠紩锛坧ages 鏁扮粍绱㈠紩锛?
+    POINT dragStartPoint;           // 鎷栨嫿璧峰榧犳爣浣嶇疆
 
-    // ===== 绘制辅助字段 =====
-    int hoveredCloseTabIndex;       // 鼠标悬停的关闭按钮所在标签页索引（-1=无）
+    // ===== 缁樺埗杈呭姪瀛楁 =====
+    int hoveredCloseTabIndex;       // 榧犳爣鎮仠鐨勫叧闂寜閽墍鍦ㄦ爣绛鹃〉绱㈠紩锛?1=鏃狅級
+    int hoveredTabIndex;            // 鼠标悬停的标签页索引
+    bool layoutBatchInProgress;     // Tab 批处理布局中
 };
 
-// ========== 主题系统 (需求 11.1-11.10) ==========
+// ========== 涓婚绯荤粺 (闇€姹?11.1-11.10) ==========
 
-// 主题颜色
+// 涓婚棰滆壊
 struct ThemeColors {
-    UINT32 primary;             // 主色 (默认 #409EFF)
-    UINT32 success;             // 成功色 (默认 #67C23A)
-    UINT32 warning;             // 警告色 (默认 #E6A23C)
-    UINT32 danger;              // 危险色 (默认 #F56C6C)
-    UINT32 info;                // 信息色 (默认 #909399)
-    UINT32 text_primary;        // 主要文本色 (默认 #303133)
-    UINT32 text_regular;        // 常规文本色 (默认 #606266)
-    UINT32 text_secondary;      // 次要文本色 (默认 #909399)
-    UINT32 text_placeholder;    // 占位文本色 (默认 #C0C4CC)
-    UINT32 border_base;         // 基础边框色 (默认 #DCDFE6)
-    UINT32 border_light;        // 浅色边框色 (默认 #E4E7ED)
-    UINT32 border_lighter;      // 更浅边框色 (默认 #EBEEF5)
-    UINT32 border_extra_light;  // 极浅边框色 (默认 #F2F6FC)
-    UINT32 background;          // 背景色 (默认 #FFFFFF)
-    UINT32 background_light;    // 浅色背景 (默认 #F5F7FA)
+    UINT32 primary;             // 涓昏壊 (榛樿 #409EFF)
+    UINT32 success;             // 鎴愬姛鑹?(榛樿 #67C23A)
+    UINT32 warning;             // 璀﹀憡鑹?(榛樿 #E6A23C)
+    UINT32 danger;              // 鍗遍櫓鑹?(榛樿 #F56C6C)
+    UINT32 info;                // 淇℃伅鑹?(榛樿 #909399)
+    UINT32 text_primary;        // 涓昏鏂囨湰鑹?(榛樿 #303133)
+    UINT32 text_regular;        // 甯歌鏂囨湰鑹?(榛樿 #606266)
+    UINT32 text_secondary;      // 娆¤鏂囨湰鑹?(榛樿 #909399)
+    UINT32 text_placeholder;    // 鍗犱綅鏂囨湰鑹?(榛樿 #C0C4CC)
+    UINT32 border_base;         // 鍩虹杈规鑹?(榛樿 #DCDFE6)
+    UINT32 border_light;        // 娴呰壊杈规鑹?(榛樿 #E4E7ED)
+    UINT32 border_lighter;      // 鏇存祬杈规鑹?(榛樿 #EBEEF5)
+    UINT32 border_extra_light;  // 鏋佹祬杈规鑹?(榛樿 #F2F6FC)
+    UINT32 background;          // 鑳屾櫙鑹?(榛樿 #FFFFFF)
+    UINT32 background_light;    // 娴呰壊鑳屾櫙 (榛樿 #F5F7FA)
 };
 
-// 主题字体
+// 涓婚瀛椾綋
 struct ThemeFonts {
-    std::wstring title_font;    // 标题字体 (默认 "Microsoft YaHei UI")
-    std::wstring body_font;     // 正文字体 (默认 "Microsoft YaHei UI")
-    std::wstring mono_font;     // 等宽字体 (默认 "Consolas")
-    int title_size;             // 标题字号 (默认 16)
-    int body_size;              // 正文字号 (默认 14)
-    int small_size;             // 小号字号 (默认 12)
+    std::wstring title_font;    // 鏍囬瀛椾綋 (榛樿 "Microsoft YaHei UI")
+    std::wstring body_font;     // 姝ｆ枃瀛椾綋 (榛樿 "Microsoft YaHei UI")
+    std::wstring mono_font;     // 绛夊瀛椾綋 (榛樿 "Consolas")
+    int title_size;             // 鏍囬瀛楀彿 (榛樿 16)
+    int body_size;              // 姝ｆ枃瀛楀彿 (榛樿 14)
+    int small_size;             // 灏忓彿瀛楀彿 (榛樿 12)
 };
 
-// 主题尺寸
+// 涓婚灏哄
 struct ThemeSizes {
-    float border_radius;        // 圆角半径 (默认 4.0f)
-    float border_width;         // 边框宽度 (默认 1.0f)
-    int control_height;         // 控件高度 (默认 32)
-    int spacing_small;          // 小间距 (默认 8)
-    int spacing_medium;         // 中间距 (默认 16)
-    int spacing_large;          // 大间距 (默认 24)
+    float border_radius;        // 鍦嗚鍗婂緞 (榛樿 4.0f)
+    float border_width;         // 杈规瀹藉害 (榛樿 1.0f)
+    int control_height;         // 鎺т欢楂樺害 (榛樿 32)
+    int spacing_small;          // 灏忛棿璺?(榛樿 8)
+    int spacing_medium;         // 涓棿璺?(榛樿 16)
+    int spacing_large;          // 澶ч棿璺?(榛樿 24)
 };
 
-// 主题结构
+// 涓婚缁撴瀯
 struct Theme {
-    std::wstring name;          // 主题名称
-    bool dark_mode;             // 是否暗色模式
-    ThemeColors colors;         // 颜色
-    ThemeFonts fonts;           // 字体
-    ThemeSizes sizes;           // 尺寸
+    std::wstring name;          // 涓婚鍚嶇О
+    bool dark_mode;             // 鏄惁鏆楄壊妯″紡
+    ThemeColors colors;         // 棰滆壊
+    ThemeFonts fonts;           // 瀛椾綋
+    ThemeSizes sizes;           // 灏哄
 };
 
-// 主题回调函数类型 (stdcall 调用约定)
+// 涓婚鍥炶皟鍑芥暟绫诲瀷 (stdcall 璋冪敤绾﹀畾)
 typedef void (__stdcall *ThemeChangedCallback)(const char* theme_name);
 
 extern Theme* g_current_theme;
@@ -834,17 +1063,17 @@ extern Theme g_light_theme;
 extern Theme g_dark_theme;
 extern ThemeChangedCallback g_theme_changed_callback;
 
-// 主题辅助函数（C++内部使用，不导出）
-// 注意：这些函数不在 extern "C" 块中声明，在 cpp 中直接定义
+// 涓婚杈呭姪鍑芥暟锛圕++鍐呴儴浣跨敤锛屼笉瀵煎嚭锛?
+// 娉ㄦ剰锛氳繖浜涘嚱鏁颁笉鍦?extern "C" 鍧椾腑澹版槑锛屽湪 cpp 涓洿鎺ュ畾涔?
 
-// ========== 布局管理器 ==========
+// ========== 甯冨眬绠＄悊鍣?==========
 
 enum LayoutType {
     LAYOUT_NONE = 0,
-    LAYOUT_FLOW_HORIZONTAL = 1,     // 水平流式布局
-    LAYOUT_FLOW_VERTICAL = 2,       // 垂直流式布局
-    LAYOUT_GRID = 3,                // 网格布局
-    LAYOUT_DOCK = 4                 // 停靠布局
+    LAYOUT_FLOW_HORIZONTAL = 1,     // 姘村钩娴佸紡甯冨眬
+    LAYOUT_FLOW_VERTICAL = 2,       // 鍨傜洿娴佸紡甯冨眬
+    LAYOUT_GRID = 3,                // 缃戞牸甯冨眬
+    LAYOUT_DOCK = 4                 // 鍋滈潬甯冨眬
 };
 
 enum DockPosition {
@@ -864,14 +1093,14 @@ struct LayoutProperties {
     DockPosition dock = DOCK_NONE;
     bool stretch_horizontal = false;
     bool stretch_vertical = false;
-    int order = 0;  // 控件在布局中的顺序
+    int order = 0;  // 鎺т欢鍦ㄥ竷灞€涓殑椤哄簭
 };
 
-// 布局控件项：可以是HWND控件或Emoji按钮ID
+// 甯冨眬鎺т欢椤癸細鍙互鏄疕WND鎺т欢鎴朎moji鎸夐挳ID
 struct LayoutItem {
-    HWND hwnd = nullptr;       // HWND控件句柄（如果是HWND控件）
-    int button_id = 0;         // Emoji按钮ID（如果是Emoji按钮）
-    bool is_button = false;    // true=Emoji按钮, false=HWND控件
+    HWND hwnd = nullptr;       // HWND鎺т欢鍙ユ焺锛堝鏋滄槸HWND鎺т欢锛?
+    int button_id = 0;         // Emoji鎸夐挳ID锛堝鏋滄槸Emoji鎸夐挳锛?
+    bool is_button = false;    // true=Emoji鎸夐挳, false=HWND鎺т欢
 
     bool operator==(const LayoutItem& other) const {
         if (is_button != other.is_button) return false;
@@ -890,10 +1119,10 @@ struct LayoutManager {
     int padding_right = 0;
     int padding_bottom = 0;
     std::map<HWND, LayoutProperties> control_props;
-    std::vector<HWND> control_order;  // 按添加顺序排列的HWND控件列表
-    // Emoji按钮布局支持
-    std::vector<LayoutItem> item_order;  // 统一顺序列表（HWND + Emoji按钮）
-    std::map<int, LayoutProperties> button_props;  // Emoji按钮ID -> 布局属性
+    std::vector<HWND> control_order;  // 鎸夋坊鍔犻『搴忔帓鍒楃殑HWND鎺т欢鍒楄〃
+    // Emoji鎸夐挳甯冨眬鏀寔
+    std::vector<LayoutItem> item_order;  // 缁熶竴椤哄簭鍒楄〃锛圚WND + Emoji鎸夐挳锛?
+    std::map<int, LayoutProperties> button_props;  // Emoji鎸夐挳ID -> 甯冨眬灞炴€?
 };
 
 extern std::map<HWND, LayoutManager*> g_layout_managers;
@@ -908,16 +1137,22 @@ extern std::map<HWND, CheckBoxState*> g_checkboxes;
 extern std::map<HWND, ProgressBarState*> g_progressbars;
 extern std::map<HWND, PictureBoxState*> g_pictureboxes;
 extern std::map<HWND, RadioButtonState*> g_radiobuttons;
-extern std::map<int, std::vector<HWND>> g_radio_groups;  // 分组管理
+extern std::map<HWND, SliderState*> g_sliders;
+extern std::map<HWND, SwitchState*> g_switches;
+extern std::map<HWND, TooltipState*> g_tooltips;
+extern std::map<HWND, NotificationState*> g_notifications;
+extern std::map<int, std::vector<HWND>> g_radio_groups;  // 鍒嗙粍绠＄悊
 extern std::map<HWND, ListBoxState*> g_listboxes;
 extern std::map<HWND, ComboBoxState*> g_comboboxes;
 extern std::map<HWND, D2DComboBoxState*> g_d2d_comboboxes;
 extern std::map<HWND, HotKeyState*> g_hotkeys;
 extern std::map<HWND, GroupBoxState*> g_groupboxes;
+extern std::map<HWND, PanelState*> g_panels;
 extern std::map<HWND, DataGridViewState*> g_datagrids;
 extern std::map<HWND, MenuBarState*> g_menu_bars;
 extern std::map<HWND, PopupMenuState*> g_popup_menus;
 extern std::map<HWND, HWND> g_control_menu_bindings;
+extern std::map<HWND, std::map<int, HWND>> g_button_popup_menu_bindings;
 extern ButtonClickCallback g_button_callback;
 extern WindowResizeCallback g_window_resize_callback;
 extern WindowCloseCallback g_window_close_callback;
@@ -942,72 +1177,95 @@ extern "C" {
 
     __declspec(dllexport) void __stdcall set_button_click_callback(ButtonClickCallback callback);
     
-    // ========== 按钮属性命令 ==========
+    // ========== 鎸夐挳灞炴€у懡浠?==========
     
-    // 获取按钮文本 (UTF-8编码，两次调用模式)
+    // 鑾峰彇鎸夐挳鏂囨湰 (UTF-8缂栫爜锛屼袱娆¤皟鐢ㄦā寮?
     __declspec(dllexport) int __stdcall GetButtonText(int button_id, unsigned char* buffer, int buffer_size);
     
-    // 设置按钮文本 (UTF-8编码)
+    // 璁剧疆鎸夐挳鏂囨湰 (UTF-8缂栫爜)
     __declspec(dllexport) void __stdcall SetButtonText(int button_id, const unsigned char* text, int text_len);
     
-    // 获取按钮Emoji (UTF-8编码，两次调用模式)
+    // 鑾峰彇鎸夐挳Emoji (UTF-8缂栫爜锛屼袱娆¤皟鐢ㄦā寮?
     __declspec(dllexport) int __stdcall GetButtonEmoji(int button_id, unsigned char* buffer, int buffer_size);
     
-    // 设置按钮Emoji (UTF-8编码)
+    // 璁剧疆鎸夐挳Emoji (UTF-8缂栫爜)
     __declspec(dllexport) void __stdcall SetButtonEmoji(int button_id, const unsigned char* emoji, int emoji_len);
     
-    // 获取按钮位置和大小
+    // 鑾峰彇鎸夐挳浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) int __stdcall GetButtonBounds(int button_id, int* x, int* y, int* width, int* height);
     
-    // 设置按钮位置和大小
+    // 璁剧疆鎸夐挳浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) void __stdcall SetButtonBounds(int button_id, int x, int y, int width, int height);
     
-    // 获取按钮背景色 (ARGB格式)
+    // 鑾峰彇鎸夐挳鑳屾櫙鑹?(ARGB鏍煎紡)
     __declspec(dllexport) UINT32 __stdcall GetButtonBackgroundColor(int button_id);
     
-    // 设置按钮背景色 (ARGB格式)
+    // 璁剧疆鎸夐挳鑳屾櫙鑹?(ARGB鏍煎紡)
     __declspec(dllexport) void __stdcall SetButtonBackgroundColor(int button_id, UINT32 color);
-    
-    // 获取按钮可视状态
+    __declspec(dllexport) UINT32 __stdcall GetButtonTextColor(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonTextColor(int button_id, UINT32 color);
+    __declspec(dllexport) UINT32 __stdcall GetButtonBorderColor(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonBorderColor(int button_id, UINT32 color);
+    __declspec(dllexport) int __stdcall GetButtonHoverColors(int button_id, UINT32* bg_color, UINT32* border_color, UINT32* text_color);
+    __declspec(dllexport) void __stdcall SetButtonHoverColors(int button_id, UINT32 bg_color, UINT32 border_color, UINT32 text_color);
+    __declspec(dllexport) void __stdcall ResetButtonColorOverrides(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonType(int button_id, int type);
+    __declspec(dllexport) int __stdcall GetButtonType(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonStyle(int button_id, int style);
+    __declspec(dllexport) int __stdcall GetButtonStyle(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonSize(int button_id, int size);
+    __declspec(dllexport) int __stdcall GetButtonSize(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonRound(int button_id, BOOL round);
+    __declspec(dllexport) BOOL __stdcall GetButtonRound(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonCircle(int button_id, BOOL circle);
+    __declspec(dllexport) BOOL __stdcall GetButtonCircle(int button_id);
+    __declspec(dllexport) void __stdcall SetButtonLoading(int button_id, BOOL loading);
+    __declspec(dllexport) BOOL __stdcall GetButtonLoading(int button_id);
+
+    // 鑾峰彇鎸夐挳鍙鐘舵€?
     __declspec(dllexport) BOOL __stdcall GetButtonVisible(int button_id);
     
-    // 显示/隐藏按钮
+    // 鏄剧ず/闅愯棌鎸夐挳
     __declspec(dllexport) void __stdcall ShowButton(int button_id, BOOL visible);
     
-    // 获取按钮启用状态
+    // 鑾峰彇鎸夐挳鍚敤鐘舵€?
     __declspec(dllexport) BOOL __stdcall GetButtonEnabled(int button_id);
     
-    // 启用按钮 (已存在)
+    // 鍚敤鎸夐挳 (宸插瓨鍦?
     __declspec(dllexport) void __stdcall EnableButton(HWND parent_hwnd, int button_id, BOOL enable);
     
-    // 禁用按钮 (已存在)
+    // 绂佺敤鎸夐挳 (宸插瓨鍦?
     __declspec(dllexport) void __stdcall DisableButton(HWND parent_hwnd, int button_id);
     
-    // ========== 窗口属性命令 ==========
+    // ========== 绐楀彛灞炴€у懡浠?==========
     
-    // 获取窗口标题 (UTF-8编码，两次调用模式)
+    // 鑾峰彇绐楀彛鏍囬 (UTF-8缂栫爜锛屼袱娆¤皟鐢ㄦā寮?
     __declspec(dllexport) int __stdcall GetWindowTitle(HWND hwnd, unsigned char* buffer, int buffer_size);
     
-    // 获取窗口位置和大小
+    // 鑾峰彇绐楀彛浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) int __stdcall GetWindowBounds(HWND hwnd, int* x, int* y, int* width, int* height);
     
-    // 设置窗口位置和大小
+    // 璁剧疆绐楀彛浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) void __stdcall SetWindowBounds(HWND hwnd, int x, int y, int width, int height);
     
-    // 获取窗口可视状态
+    // 鑾峰彇绐楀彛鍙鐘舵€?
     __declspec(dllexport) int __stdcall GetWindowVisible(HWND hwnd);
     
-    // 显示或隐藏窗口
+    // 鏄剧ず鎴栭殣钘忕獥鍙?
     __declspec(dllexport) void __stdcall ShowEmojiWindow(HWND hwnd, int visible);
     
-    // 获取窗口标题栏颜色 (RGB格式)
+    // 鑾峰彇绐楀彛鏍囬鏍忛鑹?(RGB鏍煎紡)
     __declspec(dllexport) UINT32 __stdcall GetWindowTitlebarColor(HWND hwnd);
-    
+    __declspec(dllexport) int __stdcall SetTitleBarTextColor(HWND hwnd, UINT32 color);
+    __declspec(dllexport) UINT32 __stdcall GetTitleBarTextColor(HWND hwnd);
+    __declspec(dllexport) int __stdcall SetTitleBarFont(HWND hwnd, const unsigned char* fontName, int fontNameLen, float fontSize);
+    __declspec(dllexport) int __stdcall SetTitleBarAlignment(HWND hwnd, int alignment);
+
     __declspec(dllexport) void __stdcall set_message_loop_main_window(HWND hwnd);
     __declspec(dllexport) int __stdcall run_message_loop();
     __declspec(dllexport) void __stdcall destroy_window(HWND hwnd);
     __declspec(dllexport) void __stdcall set_window_icon(HWND hwnd, const char* icon_path);
-    // 从字节集设置窗口图标（易语言可插入图片资源后传入 取变量数据地址(字节集) 和 取字节集长度(字节集)）
+    // 浠庡瓧鑺傞泦璁剧疆绐楀彛鍥炬爣锛堟槗璇█鍙彃鍏ュ浘鐗囪祫婧愬悗浼犲叆 鍙栧彉閲忔暟鎹湴鍧€(瀛楄妭闆? 鍜?鍙栧瓧鑺傞泦闀垮害(瀛楄妭闆?锛?
     __declspec(dllexport) void __stdcall set_window_icon_bytes(HWND hwnd, const unsigned char* icon_data, int data_len);
     __declspec(dllexport) void __stdcall set_window_title(HWND hwnd, const char* title_utf8, int title_len);
 
@@ -1034,9 +1292,9 @@ extern "C" {
         MessageBoxCallback callback
     );
 
-    // ========== TabControl 功能 ==========
+    // ========== TabControl 鍔熻兘 ==========
 
-    // 创建 TabControl
+    // 鍒涘缓 TabControl
     __declspec(dllexport) HWND __stdcall CreateTabControl(
         HWND hParent,
         int x,
@@ -1045,59 +1303,63 @@ extern "C" {
         int height
     );
 
-    // 添加 Tab 页
+    // 娣诲姞 Tab 椤?
     __declspec(dllexport) int __stdcall AddTabItem(
         HWND hTabControl,
         const unsigned char* title_bytes,
         int title_len,
-        HWND hContentWindow  // 可选，若为 NULL 则自动创建
+        HWND hContentWindow  // 鍙€夛紝鑻ヤ负 NULL 鍒欒嚜鍔ㄥ垱寤?
     );
 
-    // 移除 Tab 页
+    // 绉婚櫎 Tab 椤?
     __declspec(dllexport) BOOL __stdcall RemoveTabItem(
         HWND hTabControl,
         int index
     );
 
-    // 设置 Tab 切换回调
+    // 璁剧疆 Tab 鍒囨崲鍥炶皟
     __declspec(dllexport) void __stdcall SetTabCallback(
         HWND hTabControl,
         TAB_CALLBACK pCallback
     );
 
-    // 获取当前选中的 Tab 索引
+    // 鑾峰彇褰撳墠閫変腑鐨?Tab 绱㈠紩
     __declspec(dllexport) int __stdcall GetCurrentTabIndex(
         HWND hTabControl
     );
 
-    // 切换到指定 Tab
+    // 鍒囨崲鍒版寚瀹?Tab
     __declspec(dllexport) BOOL __stdcall SelectTab(
         HWND hTabControl,
         int index
     );
 
-    // 获取 Tab 数量
+    // 鑾峰彇 Tab 鏁伴噺
     __declspec(dllexport) int __stdcall GetTabCount(
         HWND hTabControl
     );
 
-    // 获取指定 Tab 的内容窗口句柄
+    // 鑾峰彇鎸囧畾 Tab 鐨勫唴瀹圭獥鍙ｅ彞鏌?
     __declspec(dllexport) HWND __stdcall GetTabContentWindow(
         HWND hTabControl,
         int index
     );
 
-    // 销毁 TabControl（清理资源）
+    // 閿€姣?TabControl锛堟竻鐞嗚祫婧愶級
     __declspec(dllexport) void __stdcall DestroyTabControl(
         HWND hTabControl
     );
 
-    // 手动更新 TabControl 布局（窗口大小改变后调用）
+    // 鎵嬪姩鏇存柊 TabControl 甯冨眬锛堢獥鍙ｅぇ灏忔敼鍙樺悗璋冪敤锛?
     __declspec(dllexport) void __stdcall UpdateTabControlLayout(
         HWND hTabControl
     );
 
-    // 获取指定 Tab 页的标题（UTF-8，两次调用模式）
+    __declspec(dllexport) BOOL __stdcall RedrawTabControl(
+        HWND hTabControl
+    );
+
+    // 鑾峰彇鎸囧畾 Tab 椤电殑鏍囬锛圲TF-8锛屼袱娆¤皟鐢ㄦā寮忥級
     __declspec(dllexport) int __stdcall GetTabTitle(
         HWND hTabControl,
         int index,
@@ -1105,7 +1367,7 @@ extern "C" {
         int bufferSize
     );
 
-    // 设置指定 Tab 页的标题（UTF-8）
+    // 璁剧疆鎸囧畾 Tab 椤电殑鏍囬锛圲TF-8锛?
     __declspec(dllexport) int __stdcall SetTabTitle(
         HWND hTabControl,
         int index,
@@ -1113,7 +1375,7 @@ extern "C" {
         int title_len
     );
 
-    // 获取 TabControl 的位置和大小
+    // 鑾峰彇 TabControl 鐨勪綅缃拰澶у皬
     __declspec(dllexport) int __stdcall GetTabControlBounds(
         HWND hTabControl,
         int* x,
@@ -1122,7 +1384,7 @@ extern "C" {
         int* height
     );
 
-    // 设置 TabControl 的位置和大小
+    // 璁剧疆 TabControl 鐨勪綅缃拰澶у皬
     __declspec(dllexport) int __stdcall SetTabControlBounds(
         HWND hTabControl,
         int x,
@@ -1131,33 +1393,33 @@ extern "C" {
         int height
     );
 
-    // 获取 TabControl 的可视状态（1=可见, 0=不可见, -1=错误）
+    // 鑾峰彇 TabControl 鐨勫彲瑙嗙姸鎬侊紙1=鍙, 0=涓嶅彲瑙? -1=閿欒锛?
     __declspec(dllexport) int __stdcall GetTabControlVisible(
         HWND hTabControl
     );
 
-    // 显示或隐藏 TabControl（visible: 1=显示, 0=隐藏）
+    // 鏄剧ず鎴栭殣钘?TabControl锛坴isible: 1=鏄剧ず, 0=闅愯棌锛?
     __declspec(dllexport) int __stdcall ShowTabControl(
         HWND hTabControl,
         int visible
     );
 
-    // 启用或禁用 TabControl（enabled: 1=启用, 0=禁用）
+    // 鍚敤鎴栫鐢?TabControl锛坋nabled: 1=鍚敤, 0=绂佺敤锛?
     __declspec(dllexport) int __stdcall EnableTabControl(
         HWND hTabControl,
         int enabled
     );
 
-    // ========== TabControl 外观函数 ==========
+    // ========== TabControl 澶栬鍑芥暟 ==========
 
-    // 设置标签页固定尺寸（宽度和高度）
+    // 璁剧疆鏍囩椤靛浐瀹氬昂瀵革紙瀹藉害鍜岄珮搴︼級
     __declspec(dllexport) int __stdcall SetTabItemSize(
         HWND hTab,
         int width,
         int height
     );
 
-    // 设置标签页字体（fontName 为 UTF-8 编码）
+    // 璁剧疆鏍囩椤靛瓧浣擄紙fontName 涓?UTF-8 缂栫爜锛?
     __declspec(dllexport) int __stdcall SetTabFont(
         HWND hTab,
         const unsigned char* fontName,
@@ -1165,7 +1427,7 @@ extern "C" {
         float fontSize
     );
 
-    // 设置标签页颜色（选中/未选中的背景色和文字色，ARGB 格式）
+    // 璁剧疆鏍囩椤甸鑹诧紙閫変腑/鏈€変腑鐨勮儗鏅壊鍜屾枃瀛楄壊锛孉RGB 鏍煎紡锛?
     __declspec(dllexport) int __stdcall SetTabColors(
         HWND hTab,
         UINT32 selectedBg,
@@ -1174,42 +1436,47 @@ extern "C" {
         UINT32 unselectedText
     );
 
-    // 设置选中标签页底部指示条颜色（ARGB 格式）
+    // 璁剧疆閫変腑鏍囩椤靛簳閮ㄦ寚绀烘潯棰滆壊锛圓RGB 鏍煎紡锛?
     __declspec(dllexport) int __stdcall SetTabIndicatorColor(
         HWND hTab,
         UINT32 color
     );
 
-    // 设置标签页内边距（水平和垂直）
+    // 璁剧疆鏍囩椤靛唴杈硅窛锛堟按骞冲拰鍨傜洿锛?
     __declspec(dllexport) int __stdcall SetTabPadding(
         HWND hTab,
         int horizontal,
         int vertical
     );
 
-    // ========== TabControl 单个标签页控制函数 ==========
+    __declspec(dllexport) int __stdcall SetTabHeaderStyle(
+        HWND hTab,
+        int style
+    );
 
-    // 启用/禁用单个标签页（enabled: 1=启用, 0=禁用）
+    // ========== TabControl 鍗曚釜鏍囩椤垫帶鍒跺嚱鏁?==========
+
+    // 鍚敤/绂佺敤鍗曚釜鏍囩椤碉紙enabled: 1=鍚敤, 0=绂佺敤锛?
     __declspec(dllexport) int __stdcall EnableTabItem(
         HWND hTab,
         int index,
         int enabled
     );
 
-    // 获取单个标签页的启用状态（返回 1=启用, 0=禁用, -1=错误）
+    // 鑾峰彇鍗曚釜鏍囩椤电殑鍚敤鐘舵€侊紙杩斿洖 1=鍚敤, 0=绂佺敤, -1=閿欒锛?
     __declspec(dllexport) int __stdcall GetTabItemEnabled(
         HWND hTab,
         int index
     );
 
-    // 显示/隐藏单个标签页（visible: 1=显示, 0=隐藏）
+    // 鏄剧ず/闅愯棌鍗曚釜鏍囩椤碉紙visible: 1=鏄剧ず, 0=闅愯棌锛?
     __declspec(dllexport) int __stdcall ShowTabItem(
         HWND hTab,
         int index,
         int visible
     );
 
-    // 设置标签页图标（PNG 字节数据，iconBytes=NULL 或 iconLen=0 时清除图标）
+    // 璁剧疆鏍囩椤靛浘鏍囷紙PNG 瀛楄妭鏁版嵁锛宨conBytes=NULL 鎴?iconLen=0 鏃舵竻闄ゅ浘鏍囷級
     __declspec(dllexport) int __stdcall SetTabItemIcon(
         HWND hTab,
         int index,
@@ -1217,79 +1484,79 @@ extern "C" {
         int iconLen
     );
 
-    // 设置指定标签页的内容区域背景色（ARGB 格式）
+    // 璁剧疆鎸囧畾鏍囩椤电殑鍐呭鍖哄煙鑳屾櫙鑹诧紙ARGB 鏍煎紡锛?
     __declspec(dllexport) int __stdcall SetTabContentBgColor(
         HWND hTab,
         int index,
         UINT32 color
     );
 
-    // 设置所有标签页的内容区域背景色（ARGB 格式）
+    // 璁剧疆鎵€鏈夋爣绛鹃〉鐨勫唴瀹瑰尯鍩熻儗鏅壊锛圓RGB 鏍煎紡锛?
     __declspec(dllexport) int __stdcall SetTabContentBgColorAll(
         HWND hTab,
         UINT32 color
     );
 
-    // ========== TabControl 交互增强函数 ==========
+    // ========== TabControl 浜や簰澧炲己鍑芥暟 ==========
 
-    // 设置标签页是否显示关闭按钮（closable: 1=显示, 0=隐藏）
+    // 璁剧疆鏍囩椤垫槸鍚︽樉绀哄叧闂寜閽紙closable: 1=鏄剧ず, 0=闅愯棌锛?
     __declspec(dllexport) int __stdcall SetTabClosable(
         HWND hTab,
         int closable
     );
 
-    // 设置标签页关闭回调
+    // 璁剧疆鏍囩椤靛叧闂洖璋?
     __declspec(dllexport) int __stdcall SetTabCloseCallback(
         HWND hTab,
         TAB_CLOSE_CALLBACK callback
     );
 
-    // 设置标签页右键点击回调
+    // 璁剧疆鏍囩椤靛彸閿偣鍑诲洖璋?
     __declspec(dllexport) int __stdcall SetTabRightClickCallback(
         HWND hTab,
         TAB_RIGHTCLICK_CALLBACK callback
     );
 
-    // 设置标签页是否可拖拽排序（draggable: 1=可拖拽, 0=不可拖拽）
+    // 璁剧疆鏍囩椤垫槸鍚﹀彲鎷栨嫿鎺掑簭锛坉raggable: 1=鍙嫋鎷? 0=涓嶅彲鎷栨嫿锛?
     __declspec(dllexport) int __stdcall SetTabDraggable(
         HWND hTab,
         int draggable
     );
 
-    // 设置标签页双击回调
+    // 璁剧疆鏍囩椤靛弻鍑诲洖璋?
     __declspec(dllexport) int __stdcall SetTabDoubleClickCallback(
         HWND hTab,
         TAB_DBLCLICK_CALLBACK callback
     );
 
-    // ========== 布局与位置函数 ==========
+    // ========== 甯冨眬涓庝綅缃嚱鏁?==========
 
-    // 设置标签栏位置（position: 0=上, 1=下, 2=左, 3=右）
+    // 璁剧疆鏍囩鏍忎綅缃紙position: 0=涓? 1=涓? 2=宸? 3=鍙筹級
     __declspec(dllexport) int __stdcall SetTabPosition(
         HWND hTab,
         int position
     );
 
-    // 设置标签对齐方式（align: 0=左对齐, 1=居中, 2=右对齐）
+    // 璁剧疆鏍囩瀵归綈鏂瑰紡锛坅lign: 0=宸﹀榻? 1=灞呬腑, 2=鍙冲榻愶級
     __declspec(dllexport) int __stdcall SetTabAlignment(
         HWND hTab,
         int align
     );
 
-    // 设置标签栏是否可滚动（scrollable: 1=可滚动, 0=不可滚动/多行）
+    // 璁剧疆鏍囩鏍忔槸鍚﹀彲婊氬姩锛坰crollable: 1=鍙粴鍔? 0=涓嶅彲婊氬姩/澶氳锛?
     __declspec(dllexport) int __stdcall SetTabScrollable(
         HWND hTab,
         int scrollable
     );
 
-    // ========== 批量操作函数 ==========
+    // ========== 鎵归噺鎿嶄綔鍑芥暟 ==========
 
-    // 清空所有标签页（销毁内容窗口，清理资源）
+    // 娓呯┖鎵€鏈夋爣绛鹃〉锛堥攢姣佸唴瀹圭獥鍙ｏ紝娓呯悊璧勬簮锛?
     __declspec(dllexport) int __stdcall RemoveAllTabs(
         HWND hTab
     );
 
-    // 在指定位置插入标签页（index < 0 返回 -1，超出范围追加到末尾）
+    // 鍦ㄦ寚瀹氫綅缃彃鍏ユ爣绛鹃〉锛坕ndex < 0 杩斿洖 -1锛岃秴鍑鸿寖鍥磋拷鍔犲埌鏈熬锛?
     __declspec(dllexport) int __stdcall InsertTabItem(
         HWND hTab,
         int index,
@@ -1298,57 +1565,57 @@ extern "C" {
         HWND hContent
     );
 
-    // 移动标签页位置（fromIndex == toIndex 返回 0 不操作）
+    // 绉诲姩鏍囩椤典綅缃紙fromIndex == toIndex 杩斿洖 0 涓嶆搷浣滐級
     __declspec(dllexport) int __stdcall MoveTabItem(
         HWND hTab,
         int fromIndex,
         int toIndex
     );
 
-    // 根据标题查找标签页索引（精确匹配，区分大小写，未找到返回 -1）
+    // 鏍规嵁鏍囬鏌ユ壘鏍囩椤电储寮曪紙绮剧‘鍖归厤锛屽尯鍒嗗ぇ灏忓啓锛屾湭鎵惧埌杩斿洖 -1锛?
     __declspec(dllexport) int __stdcall GetTabIndexByTitle(
         HWND hTab,
         const unsigned char* titleBytes,
         int titleLen
     );
 
-    // 获取整个 TabControl 的启用状态（1=启用, 0=禁用, -1=无效句柄）
+    // 鑾峰彇鏁翠釜 TabControl 鐨勫惎鐢ㄧ姸鎬侊紙1=鍚敤, 0=绂佺敤, -1=鏃犳晥鍙ユ焺锛?
     __declspec(dllexport) int __stdcall GetTabEnabled(
         HWND hTab
     );
 
-    // 判断指定标签页是否为当前选中（1=选中, 0=未选中, -1=错误）
+    // 鍒ゆ柇鎸囧畾鏍囩椤垫槸鍚︿负褰撳墠閫変腑锛?=閫変腑, 0=鏈€変腑, -1=閿欒锛?
     __declspec(dllexport) int __stdcall IsTabItemSelected(
         HWND hTab,
         int index
     );
 
-    // ========== 窗口大小改变回调 ==========
+    // ========== 绐楀彛澶у皬鏀瑰彉鍥炶皟 ==========
 
-    // 设置窗口大小改变回调
+    // 璁剧疆绐楀彛澶у皬鏀瑰彉鍥炶皟
     __declspec(dllexport) void __stdcall SetWindowResizeCallback(
         WindowResizeCallback callback
     );
 
-    // 设置自绘窗口关闭回调
-    // 当自绘窗口被关闭（用户点 X 或代码调用 destroy_window）时触发
+    // 璁剧疆鑷粯绐楀彛鍏抽棴鍥炶皟
+    // 褰撹嚜缁樼獥鍙ｈ鍏抽棴锛堢敤鎴风偣 X 鎴栦唬鐮佽皟鐢?destroy_window锛夋椂瑙﹀彂
     __declspec(dllexport) void __stdcall SetWindowCloseCallback(
         WindowCloseCallback callback
     );
 
-    // ========== 菜单栏 / 右键菜单 ==========
+    // ========== 鑿滃崟鏍?/ 鍙抽敭鑿滃崟 ==========
 
-    // 创建菜单栏（绑定到窗口）
+    // 鍒涘缓鑿滃崟鏍忥紙缁戝畾鍒扮獥鍙ｏ級
     __declspec(dllexport) HWND __stdcall CreateMenuBar(
         HWND hWindow
     );
 
-    // 销毁菜单栏
+    // 閿€姣佽彍鍗曟爮
     __declspec(dllexport) void __stdcall DestroyMenuBar(
         HWND hMenuBar
     );
 
-    // 添加菜单栏项
+    // 娣诲姞鑿滃崟鏍忛」
     __declspec(dllexport) int __stdcall MenuBarAddItem(
         HWND hMenuBar,
         const unsigned char* text_bytes,
@@ -1356,7 +1623,7 @@ extern "C" {
         int item_id
     );
 
-    // 添加菜单栏子项
+    // 娣诲姞鑿滃崟鏍忓瓙椤?
     __declspec(dllexport) int __stdcall MenuBarAddSubItem(
         HWND hMenuBar,
         int parent_item_id,
@@ -1365,19 +1632,19 @@ extern "C" {
         int item_id
     );
 
-    // 设置菜单栏位置和大小
+    // 璁剧疆鑿滃崟鏍忎綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetMenuBarPlacement(
         HWND hMenuBar,
         int x, int y, int width, int height
     );
 
-    // 设置菜单栏回调
+    // 璁剧疆鑿滃崟鏍忓洖璋?
     __declspec(dllexport) void __stdcall SetMenuBarCallback(
         HWND hMenuBar,
         MenuItemClickCallback callback
     );
 
-    // 更新菜单栏子项文本
+    // 鏇存柊鑿滃崟鏍忓瓙椤规枃鏈?
     __declspec(dllexport) BOOL __stdcall MenuBarUpdateSubItemText(
         HWND hMenuBar,
         int parent_item_id,
@@ -1386,17 +1653,17 @@ extern "C" {
         int text_len
     );
 
-    // 创建弹出菜单（右键菜单）
+    // 鍒涘缓寮瑰嚭鑿滃崟锛堝彸閿彍鍗曪級
     __declspec(dllexport) HWND __stdcall CreateEmojiPopupMenu(
         HWND hOwner
     );
 
-    // 销毁弹出菜单
+    // 閿€姣佸脊鍑鸿彍鍗?
     __declspec(dllexport) void __stdcall DestroyEmojiPopupMenu(
         HWND hPopupMenu
     );
 
-    // 添加弹出菜单项
+    // 娣诲姞寮瑰嚭鑿滃崟椤?
     __declspec(dllexport) int __stdcall PopupMenuAddItem(
         HWND hPopupMenu,
         const unsigned char* text_bytes,
@@ -1404,7 +1671,7 @@ extern "C" {
         int item_id
     );
 
-    // 添加弹出菜单子项
+    // 娣诲姞寮瑰嚭鑿滃崟瀛愰」
     __declspec(dllexport) int __stdcall PopupMenuAddSubItem(
         HWND hPopupMenu,
         int parent_item_id,
@@ -1413,28 +1680,33 @@ extern "C" {
         int item_id
     );
 
-    // 绑定控件与弹出菜单
+    // 缁戝畾鎺т欢涓庡脊鍑鸿彍鍗?
     __declspec(dllexport) void __stdcall BindControlMenu(
         HWND hControl,
         HWND hPopupMenu
     );
+    __declspec(dllexport) void __stdcall BindButtonMenu(
+        HWND hParent,
+        int button_id,
+        HWND hPopupMenu
+    );
 
-    // 显示右键菜单
+    // 鏄剧ず鍙抽敭鑿滃崟
     __declspec(dllexport) void __stdcall ShowContextMenu(
         HWND hPopupMenu,
         int x,
         int y
     );
 
-    // 设置弹出菜单回调
+    // 璁剧疆寮瑰嚭鑿滃崟鍥炶皟
     __declspec(dllexport) void __stdcall SetPopupMenuCallback(
         HWND hPopupMenu,
         MenuItemClickCallback callback
     );
 
-    // ========== 编辑框功能 ==========
+    // ========== 缂栬緫妗嗗姛鑳?==========
 
-    // 创建编辑框（vertical_center 仅单行有效）
+    // 鍒涘缓缂栬緫妗嗭紙vertical_center 浠呭崟琛屾湁鏁堬級
     __declspec(dllexport) HWND __stdcall CreateEditBox(
         HWND hParent,
         int x, int y, int width, int height,
@@ -1448,29 +1720,29 @@ extern "C" {
         BOOL bold,
         BOOL italic,
         BOOL underline,
-        int alignment,  // 0=左, 1=中, 2=右
+        int alignment,  // 0=宸? 1=涓? 2=鍙?
         BOOL multiline,
         BOOL readonly,
         BOOL password,
         BOOL has_border,
-        BOOL vertical_center  // 文本垂直居中（仅单行有效）
+        BOOL vertical_center  // 鏂囨湰鍨傜洿灞呬腑锛堜粎鍗曡鏈夋晥锛?
     );
 
-    // 获取编辑框文本
+    // 鑾峰彇缂栬緫妗嗘枃鏈?
     __declspec(dllexport) int __stdcall GetEditBoxText(
         HWND hEdit,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 设置编辑框文本
+    // 璁剧疆缂栬緫妗嗘枃鏈?
     __declspec(dllexport) void __stdcall SetEditBoxText(
         HWND hEdit,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 设置编辑框字体
+    // 璁剧疆缂栬緫妗嗗瓧浣?
     __declspec(dllexport) void __stdcall SetEditBoxFont(
         HWND hEdit,
         const unsigned char* font_name_bytes,
@@ -1481,44 +1753,44 @@ extern "C" {
         BOOL underline
     );
 
-    // 设置编辑框颜色
+    // 璁剧疆缂栬緫妗嗛鑹?
     __declspec(dllexport) void __stdcall SetEditBoxColor(
         HWND hEdit,
         UINT32 fg_color,
         UINT32 bg_color
     );
 
-    // 设置编辑框位置和大小
+    // 璁剧疆缂栬緫妗嗕綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetEditBoxBounds(
         HWND hEdit,
         int x, int y, int width, int height
     );
 
-    // 启用/禁用编辑框
+    // 鍚敤/绂佺敤缂栬緫妗?
     __declspec(dllexport) void __stdcall EnableEditBox(
         HWND hEdit,
         BOOL enable
     );
 
-    // 显示/隐藏编辑框
+    // 鏄剧ず/闅愯棌缂栬緫妗?
     __declspec(dllexport) void __stdcall ShowEditBox(
         HWND hEdit,
         BOOL show
     );
 
-    // 设置编辑框文本是否垂直居中（仅单行编辑框有效）
+    // 璁剧疆缂栬緫妗嗘枃鏈槸鍚﹀瀭鐩村眳涓紙浠呭崟琛岀紪杈戞鏈夋晥锛?
     __declspec(dllexport) void __stdcall SetEditBoxVerticalCenter(
         HWND hEdit,
         BOOL vertical_center
     );
 
-    // 设置编辑框按键回调（key_down: 1=按下 0=松开; shift/ctrl/alt: 0=未按 1=按下）
+    // 璁剧疆缂栬緫妗嗘寜閿洖璋冿紙key_down: 1=鎸変笅 0=鏉惧紑; shift/ctrl/alt: 0=鏈寜 1=鎸変笅锛?
     __declspec(dllexport) void __stdcall SetEditBoxKeyCallback(
         HWND hEdit,
         EditBoxKeyCallback callback
     );
 
-    // 获取编辑框字体信息（返回字体名字节数，-1=错误）
+    // 鑾峰彇缂栬緫妗嗗瓧浣撲俊鎭紙杩斿洖瀛椾綋鍚嶅瓧鑺傛暟锛?1=閿欒锛?
     __declspec(dllexport) int __stdcall GetEditBoxFont(
         HWND hEdit,
         unsigned char* font_name_buffer,
@@ -1529,14 +1801,14 @@ extern "C" {
         int* underline
     );
 
-    // 获取编辑框颜色（返回0=成功，-1=错误）
+    // 鑾峰彇缂栬緫妗嗛鑹诧紙杩斿洖0=鎴愬姛锛?1=閿欒锛?
     __declspec(dllexport) int __stdcall GetEditBoxColor(
         HWND hEdit,
         UINT32* fg_color,
         UINT32* bg_color
     );
 
-    // 获取编辑框位置和大小（返回0=成功，-1=错误）
+    // 鑾峰彇缂栬緫妗嗕綅缃拰澶у皬锛堣繑鍥?=鎴愬姛锛?1=閿欒锛?
     __declspec(dllexport) int __stdcall GetEditBoxBounds(
         HWND hEdit,
         int* x,
@@ -1545,22 +1817,27 @@ extern "C" {
         int* height
     );
 
-    // 获取编辑框对齐方式（0=左, 1=中, 2=右, -1=错误）
+    // 鑾峰彇缂栬緫妗嗗榻愭柟寮忥紙0=宸? 1=涓? 2=鍙? -1=閿欒锛?
     __declspec(dllexport) int __stdcall GetEditBoxAlignment(
         HWND hEdit
     );
 
-    // 获取编辑框启用状态（1=启用, 0=禁用, -1=错误）
+    __declspec(dllexport) void __stdcall SetEditBoxAlignment(
+        HWND hEdit,
+        int alignment
+    );
+
+    // 鑾峰彇缂栬緫妗嗗惎鐢ㄧ姸鎬侊紙1=鍚敤, 0=绂佺敤, -1=閿欒锛?
     __declspec(dllexport) int __stdcall GetEditBoxEnabled(
         HWND hEdit
     );
 
-    // 获取编辑框可视状态（1=可见, 0=不可见, -1=错误）
+    // 鑾峰彇缂栬緫妗嗗彲瑙嗙姸鎬侊紙1=鍙, 0=涓嶅彲瑙? -1=閿欒锛?
     __declspec(dllexport) int __stdcall GetEditBoxVisible(
         HWND hEdit
     );
 
-    // 创建彩色Emoji编辑框（使用RichEdit控件，支持彩色emoji显示）
+    // 鍒涘缓褰╄壊Emoji缂栬緫妗嗭紙浣跨敤RichEdit鎺т欢锛屾敮鎸佸僵鑹瞖moji鏄剧ず锛?
     __declspec(dllexport) HWND __stdcall CreateColorEmojiEditBox(
         HWND hParent,
         int x, int y, int width, int height,
@@ -1574,17 +1851,23 @@ extern "C" {
         BOOL bold,
         BOOL italic,
         BOOL underline,
-        int alignment,  // 0=左, 1=中, 2=右
+        int alignment,  // 0=宸? 1=涓? 2=鍙?
         BOOL multiline,
         BOOL readonly,
         BOOL password,
         BOOL has_border,
-        BOOL vertical_center  // 文本垂直居中（仅单行有效）
+        BOOL vertical_center  // 鏂囨湰鍨傜洿灞呬腑锛堜粎鍗曡鏈夋晥锛?
     );
 
-    // ========== 标签功能 ==========
+    __declspec(dllexport) void __stdcall SetD2DEditBoxColor(
+        HWND hEdit,
+        UINT32 fg_color,
+        UINT32 bg_color
+    );
 
-    // 创建标签
+    // ========== 鏍囩鍔熻兘 ==========  
+
+    // 鍒涘缓鏍囩
     __declspec(dllexport) HWND __stdcall CreateLabel(
         HWND hParent,
         int x, int y, int width, int height,
@@ -1598,25 +1881,25 @@ extern "C" {
         BOOL bold,
         BOOL italic,
         BOOL underline,
-        int alignment,  // 0=左, 1=中, 2=右
-        BOOL word_wrap  // 是否换行显示
+        int alignment,  // 0=宸? 1=涓? 2=鍙?
+        BOOL word_wrap  // 鏄惁鎹㈣鏄剧ず
     );
 
-    // 获取标签文本
+    // 鑾峰彇鏍囩鏂囨湰
     __declspec(dllexport) int __stdcall GetLabelText(
         HWND hLabel,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 设置标签文本
+    // 璁剧疆鏍囩鏂囨湰
     __declspec(dllexport) void __stdcall SetLabelText(
         HWND hLabel,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 设置标签字体
+    // 璁剧疆鏍囩瀛椾綋
     __declspec(dllexport) void __stdcall SetLabelFont(
         HWND hLabel,
         const unsigned char* font_name_bytes,
@@ -1627,32 +1910,32 @@ extern "C" {
         BOOL underline
     );
 
-    // 设置标签颜色
+    // 璁剧疆鏍囩棰滆壊
     __declspec(dllexport) void __stdcall SetLabelColor(
         HWND hLabel,
         UINT32 fg_color,
         UINT32 bg_color
     );
 
-    // 设置标签位置和大小
+    // 璁剧疆鏍囩浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) void __stdcall SetLabelBounds(
         HWND hLabel,
         int x, int y, int width, int height
     );
 
-    // 启用/禁用标签
+    // 鍚敤/绂佺敤鏍囩
     __declspec(dllexport) void __stdcall EnableLabel(
         HWND hLabel,
         BOOL enable
     );
 
-    // 显示/隐藏标签
+    // 鏄剧ず/闅愯棌鏍囩
     __declspec(dllexport) void __stdcall ShowLabel(
         HWND hLabel,
         BOOL show
     );
 
-    // 获取标签字体信息
+    // 鑾峰彇鏍囩瀛椾綋淇℃伅
     __declspec(dllexport) int __stdcall GetLabelFont(
         HWND hLabel,
         unsigned char* font_name_buffer,
@@ -1663,14 +1946,14 @@ extern "C" {
         int* underline
     );
 
-    // 获取标签颜色
+    // 鑾峰彇鏍囩棰滆壊
     __declspec(dllexport) int __stdcall GetLabelColor(
         HWND hLabel,
         UINT32* fg_color,
         UINT32* bg_color
     );
 
-    // 获取标签位置和大小
+    // 鑾峰彇鏍囩浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) int __stdcall GetLabelBounds(
         HWND hLabel,
         int* x,
@@ -1679,24 +1962,24 @@ extern "C" {
         int* height
     );
 
-    // 获取标签对齐方式 (0=左, 1=中, 2=右)
+    // 鑾峰彇鏍囩瀵归綈鏂瑰紡 (0=宸? 1=涓? 2=鍙?
     __declspec(dllexport) int __stdcall GetLabelAlignment(
         HWND hLabel
     );
 
-    // 获取标签启用状态 (1=启用, 0=禁用, -1=错误)
+    // 鑾峰彇鏍囩鍚敤鐘舵€?(1=鍚敤, 0=绂佺敤, -1=閿欒)
     __declspec(dllexport) int __stdcall GetLabelEnabled(
         HWND hLabel
     );
 
-    // 获取标签可视状态 (1=可见, 0=不可见, -1=错误)
+    // 鑾峰彇鏍囩鍙鐘舵€?(1=鍙, 0=涓嶅彲瑙? -1=閿欒)
     __declspec(dllexport) int __stdcall GetLabelVisible(
         HWND hLabel
     );
 
-    // ========== 复选框功能 ==========
+    // ========== 澶嶉€夋鍔熻兘 ==========
 
-    // 创建复选框
+    // 鍒涘缓澶嶉€夋
     __declspec(dllexport) HWND __stdcall CreateCheckBox(
         HWND hParent,
         int x, int y, int width, int height,
@@ -1713,56 +1996,56 @@ extern "C" {
         BOOL underline
     );
 
-    // 获取复选框选中状态
+    // 鑾峰彇澶嶉€夋閫変腑鐘舵€?
     __declspec(dllexport) BOOL __stdcall GetCheckBoxState(
         HWND hCheckBox
     );
 
-    // 设置复选框选中状态
+    // 璁剧疆澶嶉€夋閫変腑鐘舵€?
     __declspec(dllexport) void __stdcall SetCheckBoxState(
         HWND hCheckBox,
         BOOL checked
     );
 
-    // 设置复选框回调
+    // 璁剧疆澶嶉€夋鍥炶皟
     __declspec(dllexport) void __stdcall SetCheckBoxCallback(
         HWND hCheckBox,
         CheckBoxCallback callback
     );
 
-    // 启用/禁用复选框
+    // 鍚敤/绂佺敤澶嶉€夋
     __declspec(dllexport) void __stdcall EnableCheckBox(
         HWND hCheckBox,
         BOOL enable
     );
 
-    // 显示/隐藏复选框
+    // 鏄剧ず/闅愯棌澶嶉€夋
     __declspec(dllexport) void __stdcall ShowCheckBox(
         HWND hCheckBox,
         BOOL show
     );
 
-    // 设置复选框文本
+    // 璁剧疆澶嶉€夋鏂囨湰
     __declspec(dllexport) void __stdcall SetCheckBoxText(
         HWND hCheckBox,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 设置复选框位置和大小
+    // 璁剧疆澶嶉€夋浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) void __stdcall SetCheckBoxBounds(
         HWND hCheckBox,
         int x, int y, int width, int height
     );
 
-    // 获取复选框文本（UTF-8，两次调用模式）
+    // 鑾峰彇澶嶉€夋鏂囨湰锛圲TF-8锛屼袱娆¤皟鐢ㄦā寮忥級
     __declspec(dllexport) int __stdcall GetCheckBoxText(
         HWND hCheckBox,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 设置复选框字体
+    // 璁剧疆澶嶉€夋瀛椾綋
     __declspec(dllexport) void __stdcall SetCheckBoxFont(
         HWND hCheckBox,
         const unsigned char* font_name_bytes,
@@ -1773,7 +2056,7 @@ extern "C" {
         int underline
     );
 
-    // 获取复选框字体信息（两次调用模式，返回字体名UTF-8字节数）
+    // 鑾峰彇澶嶉€夋瀛椾綋淇℃伅锛堜袱娆¤皟鐢ㄦā寮忥紝杩斿洖瀛椾綋鍚峌TF-8瀛楄妭鏁帮級
     __declspec(dllexport) int __stdcall GetCheckBoxFont(
         HWND hCheckBox,
         unsigned char* font_name_buffer,
@@ -1784,95 +2067,119 @@ extern "C" {
         int* underline
     );
 
-    // 设置复选框颜色
+    // 璁剧疆澶嶉€夋棰滆壊
     __declspec(dllexport) void __stdcall SetCheckBoxColor(
         HWND hCheckBox,
         UINT32 fg_color,
         UINT32 bg_color
     );
 
-    // 获取复选框颜色（返回0成功，-1失败）
+    __declspec(dllexport) void __stdcall SetCheckBoxCheckColor(
+        HWND hCheckBox,
+        UINT32 check_color
+    );
+
+    __declspec(dllexport) int __stdcall GetCheckBoxCheckColor(
+        HWND hCheckBox,
+        UINT32* check_color
+    );
+
+    __declspec(dllexport) void __stdcall SetCheckBoxStyle(
+        HWND hCheckBox,
+        int style
+    );
+
+    __declspec(dllexport) int __stdcall GetCheckBoxStyle(
+        HWND hCheckBox
+    );
+
+    // 鑾峰彇澶嶉€夋棰滆壊锛堣繑鍥?鎴愬姛锛?1澶辫触锛?
     __declspec(dllexport) int __stdcall GetCheckBoxColor(
         HWND hCheckBox,
         UINT32* fg_color,
         UINT32* bg_color
     );
 
-    // ========== 进度条功能 ==========
+    // ========== 杩涘害鏉″姛鑳?==========
 
-    // 创建进度条
+    // 鍒涘缓杩涘害鏉?
     __declspec(dllexport) HWND __stdcall CreateProgressBar(
         HWND hParent,
         int x, int y, int width, int height,
-        int initial_value,  // 初始值 (0-100)
+        int initial_value,  // 鍒濆鍊?(0-100)
         UINT32 fg_color,
         UINT32 bg_color,
-        BOOL show_text,     // 是否显示百分比文本
-        UINT32 text_color   // 文本颜色
+        BOOL show_text,     // 鏄惁鏄剧ず鐧惧垎姣旀枃鏈?
+        UINT32 text_color   // 鏂囨湰棰滆壊
     );
 
-    // 设置进度条值 (0-100)
+    // 璁剧疆杩涘害鏉″€?(0-100)
     __declspec(dllexport) void __stdcall SetProgressValue(
         HWND hProgressBar,
         int value
     );
 
-    // 获取进度条值
+    // 鑾峰彇杩涘害鏉″€?
     __declspec(dllexport) int __stdcall GetProgressValue(
         HWND hProgressBar
     );
 
-    // 设置进度条不确定模式
+    // 璁剧疆杩涘害鏉′笉纭畾妯″紡
     __declspec(dllexport) void __stdcall SetProgressIndeterminate(
         HWND hProgressBar,
         BOOL indeterminate
     );
 
-    // 设置进度条颜色
+    // 璁剧疆杩涘害鏉￠鑹?
     __declspec(dllexport) void __stdcall SetProgressBarColor(
         HWND hProgressBar,
         UINT32 fg_color,
         UINT32 bg_color
     );
 
-    // 设置进度条回调
+    __declspec(dllexport) void __stdcall SetProgressBarTextColor(
+        HWND hProgressBar,
+        UINT32 text_color
+    );
+
+    // 璁剧疆杩涘害鏉″洖璋?
     __declspec(dllexport) void __stdcall SetProgressBarCallback(
         HWND hProgressBar,
         ProgressBarCallback callback
     );
 
-    // 启用/禁用进度条
+    // 鍚敤/绂佺敤杩涘害鏉?
     __declspec(dllexport) void __stdcall EnableProgressBar(
         HWND hProgressBar,
         BOOL enable
     );
 
-    // 显示/隐藏进度条
+    // 鏄剧ず/闅愯棌杩涘害鏉?
     __declspec(dllexport) void __stdcall ShowProgressBar(
         HWND hProgressBar,
         BOOL show
     );
 
-    // 设置进度条位置和大小
+    // 璁剧疆杩涘害鏉′綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetProgressBarBounds(
         HWND hProgressBar,
         int x, int y, int width, int height
     );
 
-    // 设置是否显示百分比文本
+    // 璁剧疆鏄惁鏄剧ず鐧惧垎姣旀枃鏈?
     __declspec(dllexport) void __stdcall SetProgressBarShowText(
         HWND hProgressBar,
         BOOL show_text
     );
 
-    // 获取进度条颜色
+    // 鑾峰彇杩涘害鏉￠鑹?
     __declspec(dllexport) int __stdcall GetProgressBarColor(
         HWND hProgressBar,
         UINT32* fg_color,
         UINT32* bg_color
     );
 
-    // 获取进度条位置和大小
+    // 鑾峰彇杩涘害鏉′綅缃拰澶у皬
     __declspec(dllexport) int __stdcall GetProgressBarBounds(
         HWND hProgressBar,
         int* x,
@@ -1881,95 +2188,95 @@ extern "C" {
         int* height
     );
 
-    // 获取进度条启用状态
+    // 鑾峰彇杩涘害鏉″惎鐢ㄧ姸鎬?
     __declspec(dllexport) int __stdcall GetProgressBarEnabled(
         HWND hProgressBar
     );
 
-    // 获取进度条可视状态
+    // 鑾峰彇杩涘害鏉″彲瑙嗙姸鎬?
     __declspec(dllexport) int __stdcall GetProgressBarVisible(
         HWND hProgressBar
     );
 
-    // 获取进度条是否显示百分比文本
+    // 鑾峰彇杩涘害鏉℃槸鍚︽樉绀虹櫨鍒嗘瘮鏂囨湰
     __declspec(dllexport) int __stdcall GetProgressBarShowText(
         HWND hProgressBar
     );
 
-    // ========== 图片框功能 ==========
+    // ========== 鍥剧墖妗嗗姛鑳?==========
 
-    // 创建图片框
+    // 鍒涘缓鍥剧墖妗?
     __declspec(dllexport) HWND __stdcall CreatePictureBox(
         HWND hParent,
         int x, int y, int width, int height,
-        int scale_mode,     // 缩放模式: 0=不缩放, 1=拉伸, 2=等比缩放, 3=居中
+        int scale_mode,     // 缂╂斁妯″紡: 0=涓嶇缉鏀? 1=鎷変几, 2=绛夋瘮缂╂斁, 3=灞呬腑
         UINT32 bg_color
     );
 
-    // 从文件加载图片
+    // 浠庢枃浠跺姞杞藉浘鐗?
     __declspec(dllexport) BOOL __stdcall LoadImageFromFile(
         HWND hPictureBox,
         const unsigned char* file_path_bytes,
         int path_len
     );
 
-    // 从内存加载图片
+    // 浠庡唴瀛樺姞杞藉浘鐗?
     __declspec(dllexport) BOOL __stdcall LoadImageFromMemory(
         HWND hPictureBox,
         const unsigned char* image_data,
         int data_len
     );
 
-    // 清除图片
+    // 娓呴櫎鍥剧墖
     __declspec(dllexport) void __stdcall ClearImage(
         HWND hPictureBox
     );
 
-    // 设置图片透明度
+    // 璁剧疆鍥剧墖閫忔槑搴?
     __declspec(dllexport) void __stdcall SetImageOpacity(
         HWND hPictureBox,
         float opacity  // 0.0 - 1.0
     );
 
-    // 设置图片框回调
+    // 璁剧疆鍥剧墖妗嗗洖璋?
     __declspec(dllexport) void __stdcall SetPictureBoxCallback(
         HWND hPictureBox,
         PictureBoxCallback callback
     );
 
-    // 启用/禁用图片框
+    // 鍚敤/绂佺敤鍥剧墖妗?
     __declspec(dllexport) void __stdcall EnablePictureBox(
         HWND hPictureBox,
         BOOL enable
     );
 
-    // 显示/隐藏图片框
+    // 鏄剧ず/闅愯棌鍥剧墖妗?
     __declspec(dllexport) void __stdcall ShowPictureBox(
         HWND hPictureBox,
         BOOL show
     );
 
-    // 设置图片框位置和大小
+    // 璁剧疆鍥剧墖妗嗕綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetPictureBoxBounds(
         HWND hPictureBox,
         int x, int y, int width, int height
     );
 
-    // 设置图片框缩放模式
+    // 璁剧疆鍥剧墖妗嗙缉鏀炬ā寮?
     __declspec(dllexport) void __stdcall SetPictureBoxScaleMode(
         HWND hPictureBox,
         int scale_mode
     );
 
-    // 设置图片框背景色
+    // 璁剧疆鍥剧墖妗嗚儗鏅壊
     __declspec(dllexport) void __stdcall SetPictureBoxBackgroundColor(
         HWND hPictureBox,
         UINT32 bg_color
     );
 
-    // ========== 单选按钮功能 ==========
+    // ========== 鍗曢€夋寜閽姛鑳?==========
 
-    // 创建单选按钮
+    // 鍒涘缓鍗曢€夋寜閽?
     __declspec(dllexport) HWND __stdcall CreateRadioButton(
         HWND hParent,
         int x, int y, int width, int height,
@@ -1987,56 +2294,56 @@ extern "C" {
         BOOL underline
     );
 
-    // 获取单选按钮选中状态
+    // 鑾峰彇鍗曢€夋寜閽€変腑鐘舵€?
     __declspec(dllexport) BOOL __stdcall GetRadioButtonState(
         HWND hRadioButton
     );
 
-    // 设置单选按钮选中状态
+    // 璁剧疆鍗曢€夋寜閽€変腑鐘舵€?
     __declspec(dllexport) void __stdcall SetRadioButtonState(
         HWND hRadioButton,
         BOOL checked
     );
 
-    // 设置单选按钮回调
+    // 璁剧疆鍗曢€夋寜閽洖璋?
     __declspec(dllexport) void __stdcall SetRadioButtonCallback(
         HWND hRadioButton,
         RadioButtonCallback callback
     );
 
-    // 启用/禁用单选按钮
+    // 鍚敤/绂佺敤鍗曢€夋寜閽?
     __declspec(dllexport) void __stdcall EnableRadioButton(
         HWND hRadioButton,
         BOOL enable
     );
 
-    // 显示/隐藏单选按钮
+    // 鏄剧ず/闅愯棌鍗曢€夋寜閽?
     __declspec(dllexport) void __stdcall ShowRadioButton(
         HWND hRadioButton,
         BOOL show
     );
 
-    // 设置单选按钮文本
+    // 璁剧疆鍗曢€夋寜閽枃鏈?
     __declspec(dllexport) void __stdcall SetRadioButtonText(
         HWND hRadioButton,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 设置单选按钮位置和大小
+    // 璁剧疆鍗曢€夋寜閽綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetRadioButtonBounds(
         HWND hRadioButton,
         int x, int y, int width, int height
     );
 
-    // 获取单选按钮文本（UTF-8，两次调用模式）
+    // 鑾峰彇鍗曢€夋寜閽枃鏈紙UTF-8锛屼袱娆¤皟鐢ㄦā寮忥級
     __declspec(dllexport) int __stdcall GetRadioButtonText(
         HWND hRadioButton,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 设置单选按钮字体
+    // 璁剧疆鍗曢€夋寜閽瓧浣?
     __declspec(dllexport) void __stdcall SetRadioButtonFont(
         HWND hRadioButton,
         const unsigned char* font_name_bytes,
@@ -2047,7 +2354,7 @@ extern "C" {
         int underline
     );
 
-    // 获取单选按钮字体信息（两次调用模式）
+    // 鑾峰彇鍗曢€夋寜閽瓧浣撲俊鎭紙涓ゆ璋冪敤妯″紡锛?
     __declspec(dllexport) int __stdcall GetRadioButtonFont(
         HWND hRadioButton,
         unsigned char* font_name_buffer,
@@ -2058,23 +2365,136 @@ extern "C" {
         int* underline
     );
 
-    // 设置单选按钮颜色
+    // 璁剧疆鍗曢€夋寜閽鑹?
     __declspec(dllexport) void __stdcall SetRadioButtonColor(
         HWND hRadioButton,
         UINT32 fg_color,
         UINT32 bg_color
     );
 
-    // 获取单选按钮颜色（返回0成功，-1失败）
+    // 鑾峰彇鍗曢€夋寜閽鑹诧紙杩斿洖0鎴愬姛锛?1澶辫触锛?
     __declspec(dllexport) int __stdcall GetRadioButtonColor(
         HWND hRadioButton,
         UINT32* fg_color,
         UINT32* bg_color
     );
 
-    // ========== 列表框功能 ==========
+    __declspec(dllexport) void __stdcall SetRadioButtonDotColor(
+        HWND hRadioButton,
+        UINT32 dot_color
+    );
 
-    // 创建列表框
+    __declspec(dllexport) int __stdcall GetRadioButtonDotColor(
+        HWND hRadioButton,
+        UINT32* dot_color
+    );
+
+    __declspec(dllexport) void __stdcall SetRadioButtonStyle(
+        HWND hRadioButton,
+        int style
+    );
+
+    __declspec(dllexport) int __stdcall GetRadioButtonStyle(
+        HWND hRadioButton
+    );
+
+    // ========== Slider ==========
+    __declspec(dllexport) HWND __stdcall CreateSlider(
+        HWND hParent,
+        int x, int y, int width, int height,
+        int min_value,
+        int max_value,
+        int value,
+        int step,
+        UINT32 active_color,
+        UINT32 bg_color
+    );
+
+    __declspec(dllexport) int __stdcall GetSliderValue(HWND hSlider);
+    __declspec(dllexport) void __stdcall SetSliderValue(HWND hSlider, int value);
+    __declspec(dllexport) void __stdcall SetSliderRange(HWND hSlider, int min_value, int max_value);
+    __declspec(dllexport) void __stdcall SetSliderStep(HWND hSlider, int step);
+    __declspec(dllexport) void __stdcall SetSliderShowStops(HWND hSlider, BOOL show_stops);
+    __declspec(dllexport) void __stdcall SetSliderColors(HWND hSlider, UINT32 active_color, UINT32 bg_color, UINT32 button_color);
+    __declspec(dllexport) int __stdcall GetSliderColors(HWND hSlider, UINT32* active_color, UINT32* bg_color, UINT32* button_color);
+    __declspec(dllexport) void __stdcall SetSliderCallback(HWND hSlider, SliderCallback callback);
+    __declspec(dllexport) void __stdcall EnableSlider(HWND hSlider, BOOL enable);
+    __declspec(dllexport) void __stdcall ShowSlider(HWND hSlider, BOOL show);
+    __declspec(dllexport) void __stdcall SetSliderBounds(HWND hSlider, int x, int y, int width, int height);
+
+    // ========== Switch ==========
+    __declspec(dllexport) HWND __stdcall CreateSwitch(
+        HWND hParent,
+        int x, int y, int width, int height,
+        BOOL checked,
+        UINT32 active_color,
+        UINT32 inactive_color,
+        const unsigned char* active_text_bytes,
+        int active_text_len,
+        const unsigned char* inactive_text_bytes,
+        int inactive_text_len
+    );
+
+    __declspec(dllexport) BOOL __stdcall GetSwitchState(HWND hSwitch);
+    __declspec(dllexport) void __stdcall SetSwitchState(HWND hSwitch, BOOL checked);
+    __declspec(dllexport) void __stdcall SetSwitchText(
+        HWND hSwitch,
+        const unsigned char* active_text_bytes,
+        int active_text_len,
+        const unsigned char* inactive_text_bytes,
+        int inactive_text_len
+    );
+    __declspec(dllexport) void __stdcall SetSwitchColors(HWND hSwitch, UINT32 active_color, UINT32 inactive_color);
+    __declspec(dllexport) void __stdcall SetSwitchTextColors(HWND hSwitch, UINT32 active_text_color, UINT32 inactive_text_color);
+    __declspec(dllexport) int __stdcall GetSwitchColors(HWND hSwitch, UINT32* active_color, UINT32* inactive_color, UINT32* active_text_color, UINT32* inactive_text_color);
+    __declspec(dllexport) void __stdcall SetSwitchCallback(HWND hSwitch, SwitchCallback callback);
+    __declspec(dllexport) void __stdcall EnableSwitch(HWND hSwitch, BOOL enable);
+    __declspec(dllexport) void __stdcall ShowSwitch(HWND hSwitch, BOOL show);
+    __declspec(dllexport) void __stdcall SetSwitchBounds(HWND hSwitch, int x, int y, int width, int height);
+
+    // ========== Tooltip ==========
+    __declspec(dllexport) HWND __stdcall CreateTooltip(
+        HWND hOwner,
+        const unsigned char* text_bytes,
+        int text_len,
+        int placement,
+        UINT32 bg_color,
+        UINT32 fg_color
+    );
+
+    __declspec(dllexport) void __stdcall SetTooltipText(
+        HWND hTooltip,
+        const unsigned char* text_bytes,
+        int text_len
+    );
+    __declspec(dllexport) void __stdcall SetTooltipPlacement(HWND hTooltip, int placement);
+    __declspec(dllexport) void __stdcall SetTooltipTheme(HWND hTooltip, int theme_mode);
+    __declspec(dllexport) void __stdcall SetTooltipColors(HWND hTooltip, UINT32 bg_color, UINT32 fg_color, UINT32 border_color);
+    __declspec(dllexport) void __stdcall SetTooltipFont(HWND hTooltip, const unsigned char* font_bytes, int font_len, float font_size);
+    __declspec(dllexport) void __stdcall SetTooltipTrigger(HWND hTooltip, int trigger_mode);
+    __declspec(dllexport) void __stdcall BindTooltipToControl(HWND hTooltip, HWND hTarget);
+    __declspec(dllexport) void __stdcall ShowTooltipForControl(HWND hTooltip, HWND hTarget);
+    __declspec(dllexport) void __stdcall HideTooltip(HWND hTooltip);
+    __declspec(dllexport) void __stdcall DestroyTooltip(HWND hTooltip);
+
+    // ========== Notification ==========
+    __declspec(dllexport) HWND __stdcall ShowNotification(
+        HWND hOwner,
+        const unsigned char* title_bytes,
+        int title_len,
+        const unsigned char* message_bytes,
+        int message_len,
+        int type,
+        int position,
+        int duration_ms
+    );
+
+    __declspec(dllexport) void __stdcall SetNotificationCallback(HWND hNotification, NotificationCallback callback);
+    __declspec(dllexport) void __stdcall CloseNotification(HWND hNotification);
+
+    // ========== 鍒楄〃妗嗗姛鑳?==========
+
+    // 鍒涘缓鍒楄〃妗?
     __declspec(dllexport) HWND __stdcall CreateListBox(
         HWND hParent,
         int x, int y, int width, int height,
@@ -2083,41 +2503,41 @@ extern "C" {
         UINT32 bg_color
     );
 
-    // 添加列表项
+    // 娣诲姞鍒楄〃椤?
     __declspec(dllexport) int __stdcall AddListItem(
         HWND hListBox,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 移除列表项
+    // 绉婚櫎鍒楄〃椤?
     __declspec(dllexport) void __stdcall RemoveListItem(
         HWND hListBox,
         int index
     );
 
-    // 清空列表框
+    // 娓呯┖鍒楄〃妗?
     __declspec(dllexport) void __stdcall ClearListBox(
         HWND hListBox
     );
 
-    // 获取选中项索引
+    // 鑾峰彇閫変腑椤圭储寮?
     __declspec(dllexport) int __stdcall GetSelectedIndex(
         HWND hListBox
     );
 
-    // 设置选中项索引
+    // 璁剧疆閫変腑椤圭储寮?
     __declspec(dllexport) void __stdcall SetSelectedIndex(
         HWND hListBox,
         int index
     );
 
-    // 获取列表项数量
+    // 鑾峰彇鍒楄〃椤规暟閲?
     __declspec(dllexport) int __stdcall GetListItemCount(
         HWND hListBox
     );
 
-    // 获取列表项文本
+    // 鑾峰彇鍒楄〃椤规枃鏈?
     __declspec(dllexport) int __stdcall GetListItemText(
         HWND hListBox,
         int index,
@@ -2125,31 +2545,47 @@ extern "C" {
         int buffer_size
     );
 
-    // 设置列表框回调
+    // 璁剧疆鍒楄〃妗嗗洖璋?
     __declspec(dllexport) void __stdcall SetListBoxCallback(
         HWND hListBox,
         ListBoxCallback callback
     );
 
-    // 启用/禁用列表框
+    // 鍚敤/绂佺敤鍒楄〃妗?
     __declspec(dllexport) void __stdcall EnableListBox(
         HWND hListBox,
         BOOL enable
     );
 
-    // 显示/隐藏列表框
+    // 鏄剧ず/闅愯棌鍒楄〃妗?
     __declspec(dllexport) void __stdcall ShowListBox(
         HWND hListBox,
         BOOL show
     );
 
-    // 设置列表框位置和大小
+    // 璁剧疆鍒楄〃妗嗕綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetListBoxBounds(
         HWND hListBox,
         int x, int y, int width, int height
     );
 
-    // 设置列表项文本
+    __declspec(dllexport) void __stdcall SetListBoxColors(
+        HWND hListBox,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        UINT32 select_color,
+        UINT32 hover_color
+    );
+
+    __declspec(dllexport) int __stdcall GetListBoxColors(
+        HWND hListBox,
+        UINT32* fg_color,
+        UINT32* bg_color,
+        UINT32* select_color,
+        UINT32* hover_color
+    );
+
+    // 璁剧疆鍒楄〃椤规枃鏈?
     __declspec(dllexport) BOOL __stdcall SetListItemText(
         HWND hListBox,
         int index,
@@ -2157,59 +2593,59 @@ extern "C" {
         int text_len
     );
 
-    // ========== 组合框功能 ==========
+    // ========== 缁勫悎妗嗗姛鑳?==========
 
-    // 创建组合框（增强版）
+    // 鍒涘缓缁勫悎妗嗭紙澧炲己鐗堬級
     __declspec(dllexport) HWND __stdcall CreateComboBox(
         HWND hParent,
         int x, int y, int width, int height,
         BOOL readonly,
         UINT32 fg_color,
         UINT32 bg_color,
-        int item_height,                        // 表项高度
-        const unsigned char* font_name_bytes,  // 字体名称
+        int item_height,                        // 琛ㄩ」楂樺害
+        const unsigned char* font_name_bytes,  // 瀛椾綋鍚嶇О
         int font_name_len,
-        int font_size,                          // 字体大小
-        BOOL bold,                              // 粗体
-        BOOL italic,                            // 斜体
-        BOOL underline                          // 下划线
+        int font_size,                          // 瀛椾綋澶у皬
+        BOOL bold,                              // 绮椾綋
+        BOOL italic,                            // 鏂滀綋
+        BOOL underline                          // 涓嬪垝绾?
     );
 
-    // 添加组合框项目
+    // 娣诲姞缁勫悎妗嗛」鐩?
     __declspec(dllexport) int __stdcall AddComboItem(
         HWND hComboBox,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 移除组合框项目
+    // 绉婚櫎缁勫悎妗嗛」鐩?
     __declspec(dllexport) void __stdcall RemoveComboItem(
         HWND hComboBox,
         int index
     );
 
-    // 清空组合框
+    // 娓呯┖缁勫悎妗?
     __declspec(dllexport) void __stdcall ClearComboBox(
         HWND hComboBox
     );
 
-    // 获取组合框选中项索引
+    // 鑾峰彇缁勫悎妗嗛€変腑椤圭储寮?
     __declspec(dllexport) int __stdcall GetComboSelectedIndex(
         HWND hComboBox
     );
 
-    // 设置组合框选中项索引
+    // 璁剧疆缁勫悎妗嗛€変腑椤圭储寮?
     __declspec(dllexport) void __stdcall SetComboSelectedIndex(
         HWND hComboBox,
         int index
     );
 
-    // 获取组合框项目数量
+    // 鑾峰彇缁勫悎妗嗛」鐩暟閲?
     __declspec(dllexport) int __stdcall GetComboItemCount(
         HWND hComboBox
     );
 
-    // 获取组合框项目文本
+    // 鑾峰彇缁勫悎妗嗛」鐩枃鏈?
     __declspec(dllexport) int __stdcall GetComboItemText(
         HWND hComboBox,
         int index,
@@ -2217,47 +2653,63 @@ extern "C" {
         int buffer_size
     );
 
-    // 设置组合框回调
+    // 璁剧疆缁勫悎妗嗗洖璋?
     __declspec(dllexport) void __stdcall SetComboBoxCallback(
         HWND hComboBox,
         ComboBoxCallback callback
     );
 
-    // 启用/禁用组合框
+    // 鍚敤/绂佺敤缁勫悎妗?
     __declspec(dllexport) void __stdcall EnableComboBox(
         HWND hComboBox,
         BOOL enable
     );
 
-    // 显示/隐藏组合框
+    // 鏄剧ず/闅愯棌缁勫悎妗?
     __declspec(dllexport) void __stdcall ShowComboBox(
         HWND hComboBox,
         BOOL show
     );
 
-    // 设置组合框位置和大小
+    // 璁剧疆缁勫悎妗嗕綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetComboBoxBounds(
         HWND hComboBox,
         int x, int y, int width, int height
     );
 
-    // 获取组合框文本
+    // 鑾峰彇缁勫悎妗嗘枃鏈?
     __declspec(dllexport) int __stdcall GetComboBoxText(
         HWND hComboBox,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 设置组合框文本
+    // 璁剧疆缁勫悎妗嗘枃鏈?
     __declspec(dllexport) void __stdcall SetComboBoxText(
         HWND hComboBox,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // ========== D2D组合框功能（支持彩色emoji） ==========
+    __declspec(dllexport) void __stdcall SetComboBoxColors(
+        HWND hComboBox,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        UINT32 select_color,
+        UINT32 hover_color
+    );
 
-    // 创建D2D组合框
+    __declspec(dllexport) int __stdcall GetComboBoxColors(
+        HWND hComboBox,
+        UINT32* fg_color,
+        UINT32* bg_color,
+        UINT32* select_color,
+        UINT32* hover_color
+    );
+
+    // ========== D2D缁勫悎妗嗗姛鑳斤紙鏀寔褰╄壊emoji锛?==========
+
+    // 鍒涘缓D2D缁勫悎妗?
     __declspec(dllexport) HWND __stdcall CreateD2DComboBox(
         HWND hParent,
         int x, int y, int width, int height,
@@ -2273,41 +2725,41 @@ extern "C" {
         BOOL underline
     );
 
-    // 添加D2D组合框项目
+    // 娣诲姞D2D缁勫悎妗嗛」鐩?
     __declspec(dllexport) int __stdcall AddD2DComboItem(
         HWND hComboBox,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 移除D2D组合框项目
+    // 绉婚櫎D2D缁勫悎妗嗛」鐩?
     __declspec(dllexport) void __stdcall RemoveD2DComboItem(
         HWND hComboBox,
         int index
     );
 
-    // 清空D2D组合框
+    // 娓呯┖D2D缁勫悎妗?
     __declspec(dllexport) void __stdcall ClearD2DComboBox(
         HWND hComboBox
     );
 
-    // 获取D2D组合框选中项索引
+    // 鑾峰彇D2D缁勫悎妗嗛€変腑椤圭储寮?
     __declspec(dllexport) int __stdcall GetD2DComboSelectedIndex(
         HWND hComboBox
     );
 
-    // 设置D2D组合框选中项索引
+    // 璁剧疆D2D缁勫悎妗嗛€変腑椤圭储寮?
     __declspec(dllexport) void __stdcall SetD2DComboSelectedIndex(
         HWND hComboBox,
         int index
     );
 
-    // 获取D2D组合框项目数量
+    // 鑾峰彇D2D缁勫悎妗嗛」鐩暟閲?
     __declspec(dllexport) int __stdcall GetD2DComboItemCount(
         HWND hComboBox
     );
 
-    // 获取D2D组合框项目文本
+    // 鑾峰彇D2D缁勫悎妗嗛」鐩枃鏈?
     __declspec(dllexport) int __stdcall GetD2DComboItemText(
         HWND hComboBox,
         int index,
@@ -2315,52 +2767,72 @@ extern "C" {
         int buffer_size
     );
 
-    // 获取D2D组合框编辑框文本
+    // 鑾峰彇D2D缁勫悎妗嗙紪杈戞鏂囨湰
     __declspec(dllexport) int __stdcall GetD2DComboText(
         HWND hComboBox,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 获取D2D组合框选中项文本
+    // 鑾峰彇D2D缁勫悎妗嗛€変腑椤规枃鏈?
     __declspec(dllexport) int __stdcall GetD2DComboSelectedText(
         HWND hComboBox,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 设置D2D组合框编辑框文本
+    // 璁剧疆D2D缁勫悎妗嗙紪杈戞鏂囨湰
     __declspec(dllexport) void __stdcall SetD2DComboText(
         HWND hComboBox,
         const unsigned char* text_bytes,
         int text_len
     );
 
-    // 设置D2D组合框回调
+    // 璁剧疆D2D缁勫悎妗嗗洖璋?
     __declspec(dllexport) void __stdcall SetD2DComboBoxCallback(
         HWND hComboBox,
         ComboBoxCallback callback
     );
 
-    // 启用/禁用D2D组合框
+    // 鍚敤/绂佺敤D2D缁勫悎妗?
     __declspec(dllexport) void __stdcall EnableD2DComboBox(
         HWND hComboBox,
         BOOL enable
     );
 
-    // 显示/隐藏D2D组合框
+    // 鏄剧ず/闅愯棌D2D缁勫悎妗?
     __declspec(dllexport) void __stdcall ShowD2DComboBox(
         HWND hComboBox,
         BOOL show
     );
 
-    // 设置D2D组合框位置和大小
+    // 璁剧疆D2D缁勫悎妗嗕綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetD2DComboBoxBounds(
         HWND hComboBox,
         int x, int y, int width, int height
     );
 
-    // ========== D2D 日期时间选择器（Element 风格弹出层，支持彩色 emoji 显示文本） ==========
+    __declspec(dllexport) void __stdcall SetD2DComboBoxColors(
+        HWND hComboBox,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        UINT32 select_color,
+        UINT32 hover_color,
+        UINT32 border_color,
+        UINT32 button_color
+    );
+
+    __declspec(dllexport) int __stdcall GetD2DComboBoxColors(
+        HWND hComboBox,
+        UINT32* fg_color,
+        UINT32* bg_color,
+        UINT32* select_color,
+        UINT32* hover_color,
+        UINT32* border_color,
+        UINT32* button_color
+    );
+
+    // ========== D2D 鏃ユ湡鏃堕棿閫夋嫨鍣紙Element 椋庢牸寮瑰嚭灞傦紝鏀寔褰╄壊 emoji 鏄剧ず鏂囨湰锛?==========
 
     __declspec(dllexport) HWND __stdcall CreateD2DDateTimePicker(
         HWND hParent,
@@ -2412,10 +2884,24 @@ extern "C" {
         int x, int y, int width, int height
     );
 
+    __declspec(dllexport) void __stdcall SetD2DDateTimePickerColors(
+        HWND hPicker,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        UINT32 border_color
+    );
 
-    // ========== 热键控件功能 ==========
+    __declspec(dllexport) int __stdcall GetD2DDateTimePickerColors(
+        HWND hPicker,
+        UINT32* fg_color,
+        UINT32* bg_color,
+        UINT32* border_color
+    );
 
-    // 创建热键控件
+
+    // ========== 鐑敭鎺т欢鍔熻兘 ==========
+
+    // 鍒涘缓鐑敭鎺т欢
     __declspec(dllexport) HWND __stdcall CreateHotKeyControl(
         HWND hParent,
         int x, int y, int width, int height,
@@ -2423,52 +2909,66 @@ extern "C" {
         UINT32 bg_color
     );
 
-    // 获取热键
+    // 鑾峰彇鐑敭
     __declspec(dllexport) void __stdcall GetHotKey(
         HWND hHotKey,
         int* vk_code,
         int* modifiers
     );
 
-    // 设置热键
+    // 璁剧疆鐑敭
     __declspec(dllexport) void __stdcall SetHotKey(
         HWND hHotKey,
         int vk_code,
         int modifiers
     );
 
-    // 清除热键
+    // 娓呴櫎鐑敭
     __declspec(dllexport) void __stdcall ClearHotKey(
         HWND hHotKey
     );
 
-    // 设置热键回调
+    // 璁剧疆鐑敭鍥炶皟
     __declspec(dllexport) void __stdcall SetHotKeyCallback(
         HWND hHotKey,
         HotKeyCallback callback
     );
 
-    // 启用/禁用热键控件
+    // 鍚敤/绂佺敤鐑敭鎺т欢
     __declspec(dllexport) void __stdcall EnableHotKeyControl(
         HWND hHotKey,
         BOOL enable
     );
 
-    // 显示/隐藏热键控件
+    // 鏄剧ず/闅愯棌鐑敭鎺т欢
     __declspec(dllexport) void __stdcall ShowHotKeyControl(
         HWND hHotKey,
         BOOL show
     );
 
-    // 设置热键控件位置和大小
+    // 璁剧疆鐑敭鎺т欢浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) void __stdcall SetHotKeyControlBounds(
         HWND hHotKey,
         int x, int y, int width, int height
     );
 
-    // ========== 分组框功能 ==========
+    __declspec(dllexport) void __stdcall SetHotKeyColors(
+        HWND hHotKey,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        UINT32 border_color
+    );
 
-    // 创建分组框
+    __declspec(dllexport) int __stdcall GetHotKeyColors(
+        HWND hHotKey,
+        UINT32* fg_color,
+        UINT32* bg_color,
+        UINT32* border_color
+    );
+
+    // ========== 鍒嗙粍妗嗗姛鑳?==========
+
+    // 鍒涘缓鍒嗙粍妗?
     __declspec(dllexport) HWND __stdcall CreateGroupBox(
         HWND hParent,
         int x, int y, int width, int height,
@@ -2484,57 +2984,73 @@ extern "C" {
         BOOL underline
     );
 
-    // 添加子控件到分组框
+    // 娣诲姞瀛愭帶浠跺埌鍒嗙粍妗?
     __declspec(dllexport) void __stdcall AddChildToGroup(
         HWND hGroupBox,
         HWND hChild
     );
 
-    // 从分组框移除子控件
+    // 浠庡垎缁勬绉婚櫎瀛愭帶浠?
     __declspec(dllexport) void __stdcall RemoveChildFromGroup(
         HWND hGroupBox,
         HWND hChild
     );
 
-    // 设置分组框标题
+    // 璁剧疆鍒嗙粍妗嗘爣棰?
     __declspec(dllexport) void __stdcall SetGroupBoxTitle(
         HWND hGroupBox,
         const unsigned char* title_bytes,
         int title_len
     );
 
-    // 启用/禁用分组框
+    // 鍚敤/绂佺敤鍒嗙粍妗?
     __declspec(dllexport) void __stdcall EnableGroupBox(
         HWND hGroupBox,
         BOOL enable
     );
 
-    // 显示/隐藏分组框
+    // 鏄剧ず/闅愯棌鍒嗙粍妗?
     __declspec(dllexport) void __stdcall ShowGroupBox(
         HWND hGroupBox,
         BOOL show
     );
 
-    // 设置分组框位置和大小
+    // 璁剧疆鍒嗙粍妗嗕綅缃拰澶у皬
     __declspec(dllexport) void __stdcall SetGroupBoxBounds(
         HWND hGroupBox,
         int x, int y, int width, int height
     );
 
-    // 设置分组框回调
+    // 璁剧疆鍒嗙粍妗嗗洖璋?
     __declspec(dllexport) void __stdcall SetGroupBoxCallback(
         HWND hGroupBox,
         GroupBoxCallback callback
     );
 
-    // 获取分组框标题
+    __declspec(dllexport) HWND __stdcall CreatePanel(
+        HWND hParent,
+        int x, int y, int width, int height,
+        UINT32 bg_color
+    );
+
+    __declspec(dllexport) void __stdcall SetPanelBackgroundColor(
+        HWND hPanel,
+        UINT32 bg_color
+    );
+
+    __declspec(dllexport) int __stdcall GetPanelBackgroundColor(
+        HWND hPanel,
+        UINT32* bg_color
+    );
+
+    // 鑾峰彇鍒嗙粍妗嗘爣棰?
     __declspec(dllexport) int __stdcall GetGroupBoxTitle(
         HWND hGroupBox,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 获取分组框位置和大小
+    // 鑾峰彇鍒嗙粍妗嗕綅缃拰澶у皬
     __declspec(dllexport) int __stdcall GetGroupBoxBounds(
         HWND hGroupBox,
         int* x,
@@ -2543,26 +3059,45 @@ extern "C" {
         int* height
     );
 
-    // 获取分组框可视状态（1=可见, 0=不可见, -1=错误）
+    // 鑾峰彇鍒嗙粍妗嗗彲瑙嗙姸鎬侊紙1=鍙, 0=涓嶅彲瑙? -1=閿欒锛?
     __declspec(dllexport) int __stdcall GetGroupBoxVisible(
         HWND hGroupBox
     );
 
-    // 获取分组框启用状态（1=启用, 0=禁用, -1=错误）
+    // 鑾峰彇鍒嗙粍妗嗗惎鐢ㄧ姸鎬侊紙1=鍚敤, 0=绂佺敤, -1=閿欒锛?
     __declspec(dllexport) int __stdcall GetGroupBoxEnabled(
         HWND hGroupBox
     );
 
-    // 获取分组框颜色（边框色和背景色，ARGB格式）
+    // 鑾峰彇鍒嗙粍妗嗛鑹诧紙杈规鑹插拰鑳屾櫙鑹诧紝ARGB鏍煎紡锛?
     __declspec(dllexport) int __stdcall GetGroupBoxColor(
         HWND hGroupBox,
         UINT32* border_color,
         UINT32* bg_color
     );
 
-    // ========== DataGridView 功能 ==========
+    __declspec(dllexport) void __stdcall SetGroupBoxTitleColor(
+        HWND hGroupBox,
+        UINT32 title_color
+    );
 
-    // 创建DataGridView
+    __declspec(dllexport) int __stdcall GetGroupBoxTitleColor(
+        HWND hGroupBox,
+        UINT32* title_color
+    );
+
+    __declspec(dllexport) void __stdcall SetGroupBoxStyle(
+        HWND hGroupBox,
+        int style
+    );
+
+    __declspec(dllexport) int __stdcall GetGroupBoxStyle(
+        HWND hGroupBox
+    );
+
+    // ========== DataGridView 鍔熻兘 ==========
+
+    // 鍒涘缓DataGridView
     __declspec(dllexport) HWND __stdcall CreateDataGridView(
         HWND hParent,
         int x, int y, int width, int height,
@@ -2572,9 +3107,9 @@ extern "C" {
         UINT32 bg_color
     );
 
-    // --- 列管理 ---
+    // --- 鍒楃鐞?---
 
-    // 添加文本列
+    // 娣诲姞鏂囨湰鍒?
     __declspec(dllexport) int __stdcall DataGrid_AddTextColumn(
         HWND hGrid,
         const unsigned char* header_bytes,
@@ -2582,7 +3117,7 @@ extern "C" {
         int width
     );
 
-    // 添加复选框列
+    // 娣诲姞澶嶉€夋鍒?
     __declspec(dllexport) int __stdcall DataGrid_AddCheckBoxColumn(
         HWND hGrid,
         const unsigned char* header_bytes,
@@ -2590,7 +3125,7 @@ extern "C" {
         int width
     );
 
-    // 添加按钮列
+    // 娣诲姞鎸夐挳鍒?
     __declspec(dllexport) int __stdcall DataGrid_AddButtonColumn(
         HWND hGrid,
         const unsigned char* header_bytes,
@@ -2598,7 +3133,7 @@ extern "C" {
         int width
     );
 
-    // 添加链接列
+    // 娣诲姞閾炬帴鍒?
     __declspec(dllexport) int __stdcall DataGrid_AddLinkColumn(
         HWND hGrid,
         const unsigned char* header_bytes,
@@ -2606,7 +3141,7 @@ extern "C" {
         int width
     );
 
-    // 添加图片列
+    // 娣诲姞鍥剧墖鍒?
     __declspec(dllexport) int __stdcall DataGrid_AddImageColumn(
         HWND hGrid,
         const unsigned char* header_bytes,
@@ -2614,55 +3149,85 @@ extern "C" {
         int width
     );
 
-    // 移除列
+    __declspec(dllexport) int __stdcall DataGrid_AddComboBoxColumn(
+        HWND hGrid,
+        const unsigned char* header_bytes,
+        int header_len,
+        int width
+    );
+
+    __declspec(dllexport) int __stdcall DataGrid_AddTagColumn(
+        HWND hGrid,
+        const unsigned char* header_bytes,
+        int header_len,
+        int width
+    );
+
+    // 绉婚櫎鍒?
     __declspec(dllexport) void __stdcall DataGrid_RemoveColumn(
         HWND hGrid,
         int col_index
     );
 
-    // 清空所有列
+    // 娓呯┖鎵€鏈夊垪
     __declspec(dllexport) void __stdcall DataGrid_ClearColumns(
         HWND hGrid
     );
 
-    // 获取列数
+    // 鑾峰彇鍒楁暟
     __declspec(dllexport) int __stdcall DataGrid_GetColumnCount(
         HWND hGrid
     );
 
-    // 设置列宽
+    // 璁剧疆鍒楀
     __declspec(dllexport) void __stdcall DataGrid_SetColumnWidth(
         HWND hGrid,
         int col_index,
         int width
     );
 
-    // --- 行管理 ---
+    // 设置列表头文本
+    __declspec(dllexport) void __stdcall DataGrid_SetColumnHeaderText(
+        HWND hGrid,
+        int col_index,
+        const unsigned char* header_bytes,
+        int header_len
+    );
 
-    // 添加行
+    // 获取列表头文本
+    __declspec(dllexport) int __stdcall DataGrid_GetColumnHeaderText(
+        HWND hGrid,
+        int col_index,
+        unsigned char* buffer,
+        int buffer_size
+    );
+
+    // --- 琛岀鐞?---
+
+    // 娣诲姞琛?
     __declspec(dllexport) int __stdcall DataGrid_AddRow(
         HWND hGrid
     );
 
-    // 移除行
+    // 绉婚櫎琛?
     __declspec(dllexport) void __stdcall DataGrid_RemoveRow(
         HWND hGrid,
         int row_index
     );
 
-    // 清空所有行
+    // 娓呯┖鎵€鏈夎
     __declspec(dllexport) void __stdcall DataGrid_ClearRows(
         HWND hGrid
     );
 
-    // 获取行数
+    // 鑾峰彇琛屾暟
     __declspec(dllexport) int __stdcall DataGrid_GetRowCount(
         HWND hGrid
     );
 
-    // --- 单元格操作 ---
+    // --- 鍗曞厓鏍兼搷浣?---
 
-    // 设置单元格文本
+    // 璁剧疆鍗曞厓鏍兼枃鏈?
     __declspec(dllexport) void __stdcall DataGrid_SetCellText(
         HWND hGrid,
         int row, int col,
@@ -2670,7 +3235,7 @@ extern "C" {
         int text_len
     );
 
-    // 获取单元格文本
+    // 鑾峰彇鍗曞厓鏍兼枃鏈?
     __declspec(dllexport) int __stdcall DataGrid_GetCellText(
         HWND hGrid,
         int row, int col,
@@ -2678,20 +3243,42 @@ extern "C" {
         int buffer_size
     );
 
-    // 设置单元格复选框状态
+    // 从文件设置图片单元格
+    __declspec(dllexport) BOOL __stdcall DataGrid_SetCellImageFromFile(
+        HWND hGrid,
+        int row, int col,
+        const unsigned char* file_path_bytes,
+        int path_len
+    );
+
+    // 从内存设置图片单元格
+    __declspec(dllexport) BOOL __stdcall DataGrid_SetCellImageFromMemory(
+        HWND hGrid,
+        int row, int col,
+        const unsigned char* image_data,
+        int data_len
+    );
+
+    // 清除图片单元格
+    __declspec(dllexport) void __stdcall DataGrid_ClearCellImage(
+        HWND hGrid,
+        int row, int col
+    );
+
+    // 璁剧疆鍗曞厓鏍煎閫夋鐘舵€?
     __declspec(dllexport) void __stdcall DataGrid_SetCellChecked(
         HWND hGrid,
         int row, int col,
         BOOL checked
     );
 
-    // 获取单元格复选框状态
+    // 鑾峰彇鍗曞厓鏍煎閫夋鐘舵€?
     __declspec(dllexport) BOOL __stdcall DataGrid_GetCellChecked(
         HWND hGrid,
         int row, int col
     );
 
-    // 设置单元格样式
+    // 璁剧疆鍗曞厓鏍兼牱寮?
     __declspec(dllexport) void __stdcall DataGrid_SetCellStyle(
         HWND hGrid,
         int row, int col,
@@ -2701,201 +3288,245 @@ extern "C" {
         BOOL italic
     );
 
-    // --- 选择和导航 ---
+    // --- 閫夋嫨鍜屽鑸?---
 
-    // 获取选中行
+    // 鑾峰彇閫変腑琛?
     __declspec(dllexport) int __stdcall DataGrid_GetSelectedRow(
         HWND hGrid
     );
 
-    // 获取选中列
+    // 鑾峰彇閫変腑鍒?
     __declspec(dllexport) int __stdcall DataGrid_GetSelectedCol(
         HWND hGrid
     );
 
-    // 设置选中单元格
+    // 璁剧疆閫変腑鍗曞厓鏍?
     __declspec(dllexport) void __stdcall DataGrid_SetSelectedCell(
         HWND hGrid,
         int row, int col
     );
 
-    // 设置选择模式
+    // 璁剧疆閫夋嫨妯″紡
     __declspec(dllexport) void __stdcall DataGrid_SetSelectionMode(
         HWND hGrid,
-        int mode  // 0=单元格, 1=整行
+        int mode  // 0=鍗曞厓鏍? 1=鏁磋
     );
 
-    // --- 排序 ---
+    // --- 鎺掑簭 ---
 
-    // 按列排序
+    // 鎸夊垪鎺掑簭
     __declspec(dllexport) void __stdcall DataGrid_SortByColumn(
         HWND hGrid,
         int col_index,
-        int sort_order  // 0=无, 1=升序, 2=降序
+        int sort_order  // 0=鏃? 1=鍗囧簭, 2=闄嶅簭
     );
 
-    // --- 冻结 ---
+    // --- 鍐荤粨 ---
 
-    // 设置冻结首行
+    // 璁剧疆鍐荤粨棣栬
     __declspec(dllexport) void __stdcall DataGrid_SetFreezeHeader(
         HWND hGrid,
         BOOL freeze
     );
 
-    // 设置冻结首列
+    // 璁剧疆鍐荤粨棣栧垪
     __declspec(dllexport) void __stdcall DataGrid_SetFreezeFirstColumn(
         HWND hGrid,
         BOOL freeze
     );
 
-    // --- 虚拟模式 ---
+    // --- 铏氭嫙妯″紡 ---
 
-    // 设置虚拟模式行数
+    // 璁剧疆铏氭嫙妯″紡琛屾暟
     __declspec(dllexport) void __stdcall DataGrid_SetVirtualRowCount(
         HWND hGrid,
         int row_count
     );
 
-    // 设置虚拟模式数据回调
+    // 璁剧疆铏氭嫙妯″紡鏁版嵁鍥炶皟
     __declspec(dllexport) void __stdcall DataGrid_SetVirtualDataCallback(
         HWND hGrid,
         DataGridVirtualDataCallback callback
     );
 
-    // --- 外观 ---
+    // --- 澶栬 ---
 
-    // 设置显示网格线
+    // 璁剧疆鏄剧ず缃戞牸绾?
     __declspec(dllexport) void __stdcall DataGrid_SetShowGridLines(
         HWND hGrid,
         BOOL show
     );
 
-    // 设置默认行高
+    // 璁剧疆榛樿琛岄珮
     __declspec(dllexport) void __stdcall DataGrid_SetDefaultRowHeight(
         HWND hGrid,
         int height
     );
 
-    // 设置列头高度
+    // 璁剧疆鍒楀ご楂樺害
     __declspec(dllexport) void __stdcall DataGrid_SetHeaderHeight(
         HWND hGrid,
         int height
     );
 
-    // --- 事件回调 ---
+    __declspec(dllexport) void __stdcall DataGrid_SetDoubleClickEnabled(
+        HWND hGrid,
+        BOOL enabled
+    );
 
-    // 设置单元格点击回调
+    __declspec(dllexport) void __stdcall DataGrid_SetHeaderMultiline(
+        HWND hGrid,
+        BOOL enabled
+    );
+
+    __declspec(dllexport) void __stdcall DataGrid_SetHeaderStyle(
+        HWND hGrid,
+        int style
+    );
+
+    __declspec(dllexport) void __stdcall DataGrid_SetColumnComboItems(
+        HWND hGrid,
+        int col_index,
+        const unsigned char* items_bytes,
+        int items_len
+    );
+
+    // --- 浜嬩欢鍥炶皟 ---
+
+    // 璁剧疆鍗曞厓鏍肩偣鍑诲洖璋?
     __declspec(dllexport) void __stdcall DataGrid_SetCellClickCallback(
         HWND hGrid,
         DataGridCellClickCallback callback
     );
 
-    // 设置单元格双击回调
+    // 璁剧疆鍗曞厓鏍煎弻鍑诲洖璋?
     __declspec(dllexport) void __stdcall DataGrid_SetCellDoubleClickCallback(
         HWND hGrid,
         DataGridCellDoubleClickCallback callback
     );
 
-    // 设置单元格值改变回调
+    // 璁剧疆鍗曞厓鏍煎€兼敼鍙樺洖璋?
     __declspec(dllexport) void __stdcall DataGrid_SetCellValueChangedCallback(
         HWND hGrid,
         DataGridCellValueChangedCallback callback
     );
 
-    // 设置列头点击回调
+    // 璁剧疆鍒楀ご鐐瑰嚮鍥炶皟
     __declspec(dllexport) void __stdcall DataGrid_SetColumnHeaderClickCallback(
         HWND hGrid,
         DataGridColumnHeaderClickCallback callback
     );
 
-    // 设置选择改变回调
+    // 璁剧疆閫夋嫨鏀瑰彉鍥炶皟
     __declspec(dllexport) void __stdcall DataGrid_SetSelectionChangedCallback(
         HWND hGrid,
         DataGridSelectionChangedCallback callback
     );
 
-    // --- 其他 ---
+    // --- 鍏朵粬 ---
 
-    // 启用/禁用DataGridView
+    // 鍚敤/绂佺敤DataGridView
     __declspec(dllexport) void __stdcall DataGrid_Enable(
         HWND hGrid,
         BOOL enable
     );
 
-    // 显示/隐藏DataGridView
+    // 鏄剧ず/闅愯棌DataGridView
     __declspec(dllexport) void __stdcall DataGrid_Show(
         HWND hGrid,
         BOOL show
     );
 
-    // 设置DataGridView位置和大小
+    // 璁剧疆DataGridView浣嶇疆鍜屽ぇ灏?
     __declspec(dllexport) void __stdcall DataGrid_SetBounds(
         HWND hGrid,
         int x, int y, int width, int height
     );
 
-    // 刷新DataGridView
+    // 鍒锋柊DataGridView
     __declspec(dllexport) void __stdcall DataGrid_Refresh(
         HWND hGrid
     );
 
-    // 设置列头对齐方式 (0=左对齐, 1=居中, 2=右对齐)
+    __declspec(dllexport) void __stdcall DataGrid_SetColors(
+        HWND hGrid,
+        UINT32 fg_color,
+        UINT32 bg_color,
+        UINT32 header_bg_color,
+        UINT32 header_fg_color,
+        UINT32 select_color,
+        UINT32 hover_color,
+        UINT32 grid_line_color
+    );
+
+    __declspec(dllexport) int __stdcall DataGrid_GetColors(
+        HWND hGrid,
+        UINT32* fg_color,
+        UINT32* bg_color,
+        UINT32* header_bg_color,
+        UINT32* header_fg_color,
+        UINT32* select_color,
+        UINT32* hover_color,
+        UINT32* grid_line_color
+    );
+
+    // 璁剧疆鍒楀ご瀵归綈鏂瑰紡 (0=宸﹀榻? 1=灞呬腑, 2=鍙冲榻?
     __declspec(dllexport) void __stdcall DataGrid_SetColumnHeaderAlignment(
         HWND hGrid,
         int col_index,
         int alignment
     );
 
-    // 设置列单元格对齐方式 (0=左对齐, 1=居中, 2=右对齐)
+    // 璁剧疆鍒楀崟鍏冩牸瀵归綈鏂瑰紡 (0=宸﹀榻? 1=灞呬腑, 2=鍙冲榻?
     __declspec(dllexport) void __stdcall DataGrid_SetColumnCellAlignment(
         HWND hGrid,
         int col_index,
         int alignment
     );
 
-    // 导出CSV
+    // 瀵煎嚭CSV
     __declspec(dllexport) BOOL __stdcall DataGrid_ExportCSV(
         HWND hGrid,
         const unsigned char* file_path_bytes,
         int path_len
     );
 
-    // ========== 通用事件回调设置 (需求 8.1-8.10) ==========
+    // ========== 閫氱敤浜嬩欢鍥炶皟璁剧疆 (闇€姹?8.1-8.10) ==========
 
-    // 设置鼠标进入回调
+    // 璁剧疆榧犳爣杩涘叆鍥炶皟
     __declspec(dllexport) void __stdcall SetMouseEnterCallback(HWND hControl, MouseEnterCallback callback);
 
-    // 设置鼠标离开回调
+    // 璁剧疆榧犳爣绂诲紑鍥炶皟
     __declspec(dllexport) void __stdcall SetMouseLeaveCallback(HWND hControl, MouseLeaveCallback callback);
 
-    // 设置双击回调
+    // 璁剧疆鍙屽嚮鍥炶皟
     __declspec(dllexport) void __stdcall SetDoubleClickCallback(HWND hControl, DoubleClickCallback callback);
 
-    // 设置右键点击回调
+    // 璁剧疆鍙抽敭鐐瑰嚮鍥炶皟
     __declspec(dllexport) void __stdcall SetRightClickCallback(HWND hControl, RightClickCallback callback);
 
-    // 设置获得焦点回调
+    // 璁剧疆鑾峰緱鐒︾偣鍥炶皟
     __declspec(dllexport) void __stdcall SetFocusCallback(HWND hControl, FocusCallback callback);
 
-    // 设置失去焦点回调
+    // 璁剧疆澶卞幓鐒︾偣鍥炶皟
     __declspec(dllexport) void __stdcall SetBlurCallback(HWND hControl, BlurCallback callback);
 
-    // 设置键盘按下回调
+    // 璁剧疆閿洏鎸変笅鍥炶皟
     __declspec(dllexport) void __stdcall SetKeyDownCallback(HWND hControl, KeyDownCallback callback);
 
-    // 设置键盘松开回调
+    // 璁剧疆閿洏鏉惧紑鍥炶皟
     __declspec(dllexport) void __stdcall SetKeyUpCallback(HWND hControl, KeyUpCallback callback);
 
-    // 设置字符输入回调
+    // 璁剧疆瀛楃杈撳叆鍥炶皟
     __declspec(dllexport) void __stdcall SetCharCallback(HWND hControl, CharCallback callback);
 
-    // 设置值改变回调
+    // 璁剧疆鍊兼敼鍙樺洖璋?
     __declspec(dllexport) void __stdcall SetValueChangedCallback(HWND hControl, ValueChangedCallback callback);
 
-    // ========== 布局管理器功能 ==========
+    // ========== 甯冨眬绠＄悊鍣ㄥ姛鑳?==========
 
-    // 设置窗口的布局管理器
-    // layout_type: 0=无, 1=水平流式, 2=垂直流式, 3=网格, 4=停靠
+    // 璁剧疆绐楀彛鐨勫竷灞€绠＄悊鍣?
+    // layout_type: 0=鏃? 1=姘村钩娴佸紡, 2=鍨傜洿娴佸紡, 3=缃戞牸, 4=鍋滈潬
     __declspec(dllexport) void __stdcall SetLayoutManager(
         HWND hParent,
         int layout_type,
@@ -2904,7 +3535,7 @@ extern "C" {
         int spacing
     );
 
-    // 设置布局管理器的内边距
+    // 璁剧疆甯冨眬绠＄悊鍣ㄧ殑鍐呰竟璺?
     __declspec(dllexport) void __stdcall SetLayoutPadding(
         HWND hParent,
         int padding_left,
@@ -2913,7 +3544,7 @@ extern "C" {
         int padding_bottom
     );
 
-    // 设置控件的布局属性
+    // 璁剧疆鎺т欢鐨勫竷灞€灞炴€?
     __declspec(dllexport) void __stdcall SetControlLayoutProps(
         HWND hControl,
         int margin_left,
@@ -2925,48 +3556,48 @@ extern "C" {
         BOOL stretch_vertical
     );
 
-    // 将控件添加到布局管理器
+    // 灏嗘帶浠舵坊鍔犲埌甯冨眬绠＄悊鍣?
     __declspec(dllexport) void __stdcall AddControlToLayout(
         HWND hParent,
         HWND hControl
     );
 
-    // 从布局管理器移除控件
+    // 浠庡竷灞€绠＄悊鍣ㄧЩ闄ゆ帶浠?
     __declspec(dllexport) void __stdcall RemoveControlFromLayout(
         HWND hParent,
         HWND hControl
     );
 
-    // 立即重新计算布局
+    // 绔嬪嵆閲嶆柊璁＄畻甯冨眬
     __declspec(dllexport) void __stdcall UpdateLayout(HWND hParent);
 
-    // 移除窗口的布局管理器
+    // 绉婚櫎绐楀彛鐨勫竷灞€绠＄悊鍣?
     __declspec(dllexport) void __stdcall RemoveLayoutManager(HWND hParent);
 
-    // ========== 主题系统 API ==========
+    // ========== 涓婚绯荤粺 API ==========
 
-    // 从JSON字符串加载主题
+    // 浠嶫SON瀛楃涓插姞杞戒富棰?
     __declspec(dllexport) BOOL __stdcall LoadThemeFromJSON(
         const unsigned char* json_bytes,
         int json_len
     );
 
-    // 从文件加载主题
+    // 浠庢枃浠跺姞杞戒富棰?
     __declspec(dllexport) BOOL __stdcall LoadThemeFromFile(
         const unsigned char* file_path_bytes,
         int path_len
     );
 
-    // 设置当前主题 (theme_name: "light" 或 "dark" 或自定义名称)
+    // 璁剧疆褰撳墠涓婚 (theme_name: "light" 鎴?"dark" 鎴栬嚜瀹氫箟鍚嶇О)
     __declspec(dllexport) void __stdcall SetTheme(
         const unsigned char* theme_name_bytes,
         int name_len
     );
 
-    // 设置暗色模式 (切换亮色/暗色主题)
+    // 璁剧疆鏆楄壊妯″紡 (鍒囨崲浜壊/鏆楄壊涓婚)
     __declspec(dllexport) void __stdcall SetDarkMode(BOOL dark_mode);
 
-    // 获取主题颜色 (color_name: "primary", "success", "warning", "danger", "info",
+    // 鑾峰彇涓婚棰滆壊 (color_name: "primary", "success", "warning", "danger", "info",
     //   "text_primary", "text_regular", "text_secondary", "text_placeholder",
     //   "border_base", "border_light", "border_lighter", "border_extra_light",
     //   "background", "background_light")
@@ -2975,31 +3606,31 @@ extern "C" {
         int name_len
     );
 
-    // 获取主题字体名称 (font_type: 0=标题, 1=正文, 2=等宽)
-    // 返回UTF-8字节数，写入buffer
+    // 鑾峰彇涓婚瀛椾綋鍚嶇О (font_type: 0=鏍囬, 1=姝ｆ枃, 2=绛夊)
+    // 杩斿洖UTF-8瀛楄妭鏁帮紝鍐欏叆buffer
     __declspec(dllexport) int __stdcall EW_GetThemeFont(
         int font_type,
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 获取主题字号 (font_type: 0=标题, 1=正文, 2=小号)
+    // 鑾峰彇涓婚瀛楀彿 (font_type: 0=鏍囬, 1=姝ｆ枃, 2=灏忓彿)
     __declspec(dllexport) int __stdcall GetThemeFontSize(int font_type);
 
-    // 获取主题尺寸 (size_type: 0=圆角半径, 1=边框宽度, 2=控件高度,
-    //   3=小间距, 4=中间距, 5=大间距)
+    // 鑾峰彇涓婚灏哄 (size_type: 0=鍦嗚鍗婂緞, 1=杈规瀹藉害, 2=鎺т欢楂樺害,
+    //   3=灏忛棿璺? 4=涓棿璺? 5=澶ч棿璺?
     __declspec(dllexport) int __stdcall GetThemeSize(int size_type);
 
-    // 获取当前是否暗色模式
+    // 鑾峰彇褰撳墠鏄惁鏆楄壊妯″紡
     __declspec(dllexport) BOOL __stdcall IsDarkMode();
 
-    // 获取当前主题名称 (返回UTF-8字节数，写入buffer)
+    // 鑾峰彇褰撳墠涓婚鍚嶇О (杩斿洖UTF-8瀛楄妭鏁帮紝鍐欏叆buffer)
     __declspec(dllexport) int __stdcall EW_GetCurrentThemeName(
         unsigned char* buffer,
         int buffer_size
     );
 
-    // 设置主题切换回调
+    // 璁剧疆涓婚鍒囨崲鍥炶皟
     __declspec(dllexport) void __stdcall SetThemeChangedCallback(ThemeChangedCallback callback);
 }
 
@@ -3010,13 +3641,18 @@ LRESULT CALLBACK CheckBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
 LRESULT CALLBACK ProgressBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK PictureBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK RadioButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK SliderProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK SwitchProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK ComboBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK ComboDropDownProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK HotKeyProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK PanelProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK TooltipProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK NotificationProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiButton& button);
 void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenuState* popup);
 void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state);
@@ -3024,6 +3660,8 @@ void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxSt
 void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ProgressBarState* state);
 void DrawPictureBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PictureBoxState* state);
 void DrawRadioButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, RadioButtonState* state);
+void DrawSlider(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, SliderState* state);
+void DrawSwitch(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, SwitchState* state);
 void DrawListBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ListBoxState* state);
 void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxState* state);
 void DrawComboDropDown(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxState* state);
@@ -3039,11 +3677,11 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
                             const std::wstring& icon, MsgBoxButtonType type, MessageBoxCallback callback);
 void CloseMessageBox(HWND hwnd, bool result);
 
-// TabControl 内部辅助函数
+// TabControl 鍐呴儴杈呭姪鍑芥暟
 void UpdateTabLayout(TabControlState* state);
 LRESULT CALLBACK TabControlSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 
-// 布局管理器内部函数
+// 甯冨眬绠＄悊鍣ㄥ唴閮ㄥ嚱鏁?
 void CalculateFlowLayout(LayoutManager* lm, int client_width, int client_height, HDWP* hdwp);
 void CalculateGridLayout(LayoutManager* lm, int client_width, int client_height, HDWP* hdwp);
 void CalculateDockLayout(LayoutManager* lm, int client_width, int client_height, HDWP* hdwp);

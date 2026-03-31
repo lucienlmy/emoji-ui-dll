@@ -1,191 +1,394 @@
 """
-💬 MessageBox / ConfirmBox 信息框控件综合示例
-演示：信息提示框、确认框、emoji图标、确认回调
+MessageBox / ConfirmBox visual demo.
+Includes in-window titlebar color switching to verify titlebar button visibility.
 """
-import ctypes
-import sys
-import os
 
-sys.path.insert(0, os.path.dirname(__file__))
+import ctypes
+import os
+import sys
+
+
+SCRIPT_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+sys.path.insert(0, SCRIPT_DIR)
+
+DLL_PATH = os.path.join(PROJECT_ROOT, "bin", "x64", "Release", "emoji_window.dll")
+if not os.path.exists(DLL_PATH):
+    DLL_PATH = os.path.join(SCRIPT_DIR, "emoji_window.dll")
 
 try:
-    dll = ctypes.CDLL('./emoji_window.dll')
+    dll = ctypes.CDLL(DLL_PATH)
 except OSError:
     print("错误: 无法加载 emoji_window.dll")
     sys.exit(1)
 
-# ========== 函数原型 ==========
+
+def u(text: str) -> bytes:
+    return text.encode("utf-8")
+
+
+def ARGB(a: int, r: int, g: int, b: int) -> int:
+    return ((a & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF)
+
+
 dll.create_window_bytes.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 dll.create_window_bytes.restype = ctypes.c_void_p
 dll.set_message_loop_main_window.argtypes = [ctypes.c_void_p]
+dll.set_message_loop_main_window.restype = None
+dll.run_message_loop.argtypes = []
 dll.run_message_loop.restype = ctypes.c_int
 
-dll.create_emoji_button_bytes.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+dll.create_emoji_button_bytes.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_uint,
+]
 dll.create_emoji_button_bytes.restype = ctypes.c_int
+
 BUTTON_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
 dll.set_button_click_callback.argtypes = [BUTTON_CB]
+dll.set_button_click_callback.restype = None
 
-dll.CreateLabel.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+dll.CreateLabel.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_uint,
+    ctypes.c_uint,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+]
 dll.CreateLabel.restype = ctypes.c_int
 dll.SetLabelText.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+dll.SetLabelText.restype = None
 
-# MessageBox / ConfirmBox
-dll.show_message_box_bytes.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+dll.show_message_box_bytes.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+]
+dll.show_message_box_bytes.restype = None
+
 CONFIRM_CB = ctypes.CFUNCTYPE(None, ctypes.c_int)
-dll.show_confirm_box_bytes.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, CONFIRM_CB]
+dll.show_confirm_box_bytes.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    CONFIRM_CB,
+]
+dll.show_confirm_box_bytes.restype = None
 
-def ARGB(a, r, g, b):
-    return ((a & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF)
+dll.set_window_titlebar_color.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+dll.set_window_titlebar_color.restype = None
 
-def u(s):
-    return s.encode('utf-8')
 
-# ========== 全局变量 ==========
-label_status = 0
+FONT = u("Microsoft YaHei UI")
+
+COLOR_PRIMARY = ARGB(255, 64, 158, 255)
+COLOR_SUCCESS = ARGB(255, 103, 194, 58)
+COLOR_WARNING = ARGB(255, 230, 162, 60)
+COLOR_DANGER = ARGB(255, 245, 108, 108)
+COLOR_DARK_TITLEBAR = ARGB(255, 33, 37, 41)
+COLOR_LIGHT_TITLEBAR = ARGB(255, 245, 247, 250)
+
 main_win = None
+label_status = 0
+
+btn_dark_titlebar = 0
+btn_light_titlebar = 0
 btn_info = 0
 btn_success = 0
 btn_warning = 0
 btn_error = 0
 btn_confirm = 0
-btn_confirm_del = 0
+btn_confirm_delete = 0
 
-# ========== 回调函数 ==========
-def on_confirm_result(confirmed):
-    result = "✅ 确认" if confirmed else "❌ 取消"
-    print(f"💬 确认框结果: {result}")
-    msg = u(f"💬 用户选择了: {result}")
-    dll.SetLabelText(label_status, msg, len(msg))
 
-def on_confirm_delete(confirmed):
+def set_status(text: str) -> None:
+    payload = u(text)
+    dll.SetLabelText(label_status, payload, len(payload))
+
+
+def set_titlebar_dark() -> None:
+    dll.set_window_titlebar_color(main_win, COLOR_DARK_TITLEBAR)
+    set_status("已切换为深色标题栏，可观察右上角最小化、最大化、关闭按钮是否清晰。")
+
+
+def set_titlebar_light() -> None:
+    dll.set_window_titlebar_color(main_win, COLOR_LIGHT_TITLEBAR)
+    set_status("已切换为浅色标题栏，可继续对比标题栏按钮的可见性。")
+
+
+def on_confirm_result(confirmed: int) -> None:
     if confirmed:
-        print("🗑️ 用户确认删除")
-        msg = u("🗑️ 已确认删除操作")
+        set_status("确认框回调: 用户点击了“确认”。")
     else:
-        print("🛡️ 用户取消删除")
-        msg = u("🛡️ 已取消删除操作")
-    dll.SetLabelText(label_status, msg, len(msg))
+        set_status("确认框回调: 用户点击了“取消”。")
+
+
+def on_confirm_delete(confirmed: int) -> None:
+    if confirmed:
+        set_status("删除确认回调: 用户确认删除。")
+    else:
+        set_status("删除确认回调: 用户取消删除。")
+
 
 _confirm_cb = CONFIRM_CB(on_confirm_result)
-_confirm_del_cb = CONFIRM_CB(on_confirm_delete)
+_confirm_delete_cb = CONFIRM_CB(on_confirm_delete)
 
-def on_button_click(button_id, parent_hwnd):
-    if button_id == btn_info:
-        title = u("ℹ️ 信息提示")
-        msg = u("📢 这是一条普通信息提示框\n支持多行文本和emoji表情 🎉")
-        icon = u("ℹ️")
-        dll.show_message_box_bytes(main_win, title, len(title), msg, len(msg), icon, len(icon))
-        status = u("📢 已显示信息提示框")
-        dll.SetLabelText(label_status, status, len(status))
 
-    elif button_id == btn_success:
-        title = u("✅ 操作成功")
-        msg = u("🎊 恭喜！操作已成功完成！\n\n📊 处理了 42 条数据\n⏱️ 耗时 1.5 秒")
-        icon = u("✅")
-        dll.show_message_box_bytes(main_win, title, len(title), msg, len(msg), icon, len(icon))
-        status = u("✅ 已显示成功提示框")
-        dll.SetLabelText(label_status, status, len(status))
+def show_message(title: str, message: str, icon: str, status: str) -> None:
+    title_bytes = u(title)
+    message_bytes = u(message)
+    icon_bytes = u(icon)
+    dll.show_message_box_bytes(
+        main_win,
+        title_bytes,
+        len(title_bytes),
+        message_bytes,
+        len(message_bytes),
+        icon_bytes,
+        len(icon_bytes),
+    )
+    set_status(status)
 
-    elif button_id == btn_warning:
-        title = u("⚠️ 警告")
-        msg = u("🔔 注意！磁盘空间不足\n\n💾 剩余空间: 512 MB\n📁 建议清理临时文件")
-        icon = u("⚠️")
-        dll.show_message_box_bytes(main_win, title, len(title), msg, len(msg), icon, len(icon))
-        status = u("⚠️ 已显示警告提示框")
-        dll.SetLabelText(label_status, status, len(status))
 
-    elif button_id == btn_error:
-        title = u("❌ 错误")
-        msg = u("💥 发生了一个错误！\n\n🔍 错误代码: 0x80070005\n📝 权限不足，请以管理员身份运行")
-        icon = u("❌")
-        dll.show_message_box_bytes(main_win, title, len(title), msg, len(msg), icon, len(icon))
-        status = u("❌ 已显示错误提示框")
-        dll.SetLabelText(label_status, status, len(status))
+def show_confirm(title: str, message: str, icon: str, callback: CONFIRM_CB, status: str) -> None:
+    title_bytes = u(title)
+    message_bytes = u(message)
+    icon_bytes = u(icon)
+    dll.show_confirm_box_bytes(
+        main_win,
+        title_bytes,
+        len(title_bytes),
+        message_bytes,
+        len(message_bytes),
+        icon_bytes,
+        len(icon_bytes),
+        callback,
+    )
+    set_status(status)
 
-    elif button_id == btn_confirm:
-        title = u("🤔 确认操作")
-        msg = u("📋 确定要保存当前更改吗？\n\n💡 点击确认保存，取消放弃更改")
-        icon = u("🤔")
-        dll.show_confirm_box_bytes(main_win, title, len(title), msg, len(msg), icon, len(icon), _confirm_cb)
 
-    elif button_id == btn_confirm_del:
-        title = u("🗑️ 确认删除")
-        msg = u("⚠️ 此操作不可撤销！\n\n📁 将删除选中的 5 个文件\n🔒 包含 2 个受保护文件")
-        icon = u("🗑️")
-        dll.show_confirm_box_bytes(main_win, title, len(title), msg, len(msg), icon, len(icon), _confirm_del_cb)
+def on_button_click(button_id: int, parent_hwnd) -> None:
+    del parent_hwnd
 
-_btn_cb = BUTTON_CB(on_button_click)
-
-def main():
-    global label_status, main_win
-    global btn_info, btn_success, btn_warning, btn_error, btn_confirm, btn_confirm_del
-
-    print("=" * 60)
-    print("💬 MessageBox / ConfirmBox 信息框综合示例")
-    print("=" * 60)
-
-    title = u("💬 信息框示例 - emoji_window")
-    main_win = dll.create_window_bytes(title, len(title), 650, 480)
-    if not main_win:
-        print("❌ 创建窗口失败")
+    if button_id == btn_dark_titlebar:
+        set_titlebar_dark()
         return
 
-    font = u("Microsoft YaHei UI")
+    if button_id == btn_light_titlebar:
+        set_titlebar_light()
+        return
 
-    # 状态标签
-    status_text = u("💡 点击按钮弹出不同类型的信息框")
-    label_status = dll.CreateLabel(main_win, 20, 10, 610, 30, status_text, len(status_text),
-        ARGB(255,50,50,50), ARGB(255,245,247,250), font, len(font), 13, 0, 0, 0, 0, 0)
+    if button_id == btn_info:
+        show_message(
+            "信息提示",
+            "这是一个普通的信息提示框。\n支持多行文本、左侧图标和更接近 Element 的信息框布局。",
+            "ℹ️",
+            "已弹出信息提示框。",
+        )
+        return
 
-    # 分类标签
-    lbl1 = u("📢 信息提示框 (MessageBox):")
-    dll.CreateLabel(main_win, 20, 55, 300, 25, lbl1, len(lbl1),
-        ARGB(255,50,50,50), ARGB(0,0,0,0), font, len(font), 14, 1, 0, 0, 0, 0)
+    if button_id == btn_success:
+        show_message(
+            "操作成功",
+            "保存已经完成。\n\n已处理 42 条数据，用时 1.5 秒。",
+            "✅",
+            "已弹出成功提示框。",
+        )
+        return
 
-    # 信息框按钮
-    btns_msg = [
-        ("ℹ️", "信息提示", 20, 90, ARGB(255,64,158,255)),
-        ("✅", "成功提示", 170, 90, ARGB(255,103,194,58)),
-        ("⚠️", "警告提示", 320, 90, ARGB(255,230,162,60)),
-        ("❌", "错误提示", 470, 90, ARGB(255,245,108,108)),
-    ]
+    if button_id == btn_warning:
+        show_message(
+            "警告",
+            "磁盘空间不足。\n\n剩余空间: 512 MB\n建议清理临时文件。",
+            "⚠️",
+            "已弹出警告提示框。",
+        )
+        return
 
-    lbl2 = u("🤔 确认框 (ConfirmBox) - 带回调:")
-    dll.CreateLabel(main_win, 20, 155, 350, 25, lbl2, len(lbl2),
-        ARGB(255,50,50,50), ARGB(0,0,0,0), font, len(font), 14, 1, 0, 0, 0, 0)
+    if button_id == btn_error:
+        show_message(
+            "错误",
+            "发生了一处权限错误。\n\n错误代码: 0x80070005\n请尝试以管理员身份运行。",
+            "❌",
+            "已弹出错误提示框。",
+        )
+        return
 
-    btns_confirm = [
-        ("🤔", "确认保存", 20, 190, ARGB(255,64,158,255)),
-        ("🗑️", "确认删除", 220, 190, ARGB(255,245,108,108)),
-    ]
+    if button_id == btn_confirm:
+        show_confirm(
+            "确认保存",
+            "确定要保存当前修改吗？\n\n点击“确认”继续保存，点击“取消”放弃本次修改。",
+            "❓",
+            _confirm_cb,
+            "已弹出保存确认框。",
+        )
+        return
 
-    all_btns = btns_msg + btns_confirm
-    btn_ids = []
-    for emoji, text, x, y, color in all_btns:
-        e = u(emoji)
-        t = u(text)
-        bid = dll.create_emoji_button_bytes(main_win, e, len(e), t, len(t), x, y, 140, 40, color)
-        btn_ids.append(bid)
+    if button_id == btn_confirm_delete:
+        show_confirm(
+            "确认删除",
+            "此操作不可撤销。\n\n将删除 5 个文件，其中 2 个为受保护文件。",
+            "🗑️",
+            _confirm_delete_cb,
+            "已弹出删除确认框。",
+        )
 
-    btn_info, btn_success, btn_warning, btn_error, btn_confirm, btn_confirm_del = btn_ids
-    dll.set_button_click_callback(_btn_cb)
 
-    # 说明标签
+_button_cb = BUTTON_CB(on_button_click)
+
+
+def create_label(x: int, y: int, w: int, h: int, text: str, text_color: int, bg_color: int, font_size: int, bold: int = 0) -> int:
+    text_bytes = u(text)
+    return dll.CreateLabel(
+        main_win,
+        x,
+        y,
+        w,
+        h,
+        text_bytes,
+        len(text_bytes),
+        text_color,
+        bg_color,
+        FONT,
+        len(FONT),
+        font_size,
+        bold,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
+def create_button(emoji: str, text: str, x: int, y: int, w: int, color: int) -> int:
+    emoji_bytes = u(emoji)
+    text_bytes = u(text)
+    return dll.create_emoji_button_bytes(
+        main_win,
+        emoji_bytes,
+        len(emoji_bytes),
+        text_bytes,
+        len(text_bytes),
+        x,
+        y,
+        w,
+        40,
+        color,
+    )
+
+
+def main() -> None:
+    global main_win, label_status
+    global btn_dark_titlebar, btn_light_titlebar
+    global btn_info, btn_success, btn_warning, btn_error, btn_confirm, btn_confirm_delete
+
+    title = u("MessageBox / 标题栏样式测试 - emoji_window")
+    main_win = dll.create_window_bytes(title, len(title), 760, 560)
+    if not main_win:
+        print("错误: 创建窗口失败")
+        return
+
+    label_status = create_label(
+        20,
+        10,
+        720,
+        34,
+        "点击下方按钮测试消息框样式，并切换深浅标题栏检查右上角三个按钮是否可见。",
+        ARGB(255, 48, 49, 51),
+        ARGB(255, 245, 247, 250),
+        13,
+        0,
+    )
+
+    create_label(20, 60, 360, 26, "标题栏可见性测试", ARGB(255, 48, 49, 51), ARGB(0, 0, 0, 0), 15, 1)
+    create_label(
+        20,
+        88,
+        700,
+        24,
+        "切换为深色标题栏后，重点观察最小化、最大化、关闭按钮是否仍然清晰，hover 是否足够扁平。",
+        ARGB(255, 96, 98, 102),
+        ARGB(0, 0, 0, 0),
+        12,
+        0,
+    )
+
+    btn_dark_titlebar = create_button("🌙", "深色标题栏", 20, 122, 170, COLOR_PRIMARY)
+    btn_light_titlebar = create_button("☀️", "浅色标题栏", 205, 122, 170, ARGB(255, 144, 147, 153))
+
+    create_label(20, 186, 360, 26, "MessageBox 样式测试", ARGB(255, 48, 49, 51), ARGB(0, 0, 0, 0), 15, 1)
+    create_label(
+        20,
+        214,
+        700,
+        24,
+        "用于检查信息框、确认框、图标、按钮区、标题区是否更接近 Element 的视觉结构。",
+        ARGB(255, 96, 98, 102),
+        ARGB(0, 0, 0, 0),
+        12,
+        0,
+    )
+
+    btn_info = create_button("ℹ️", "信息提示", 20, 250, 160, COLOR_PRIMARY)
+    btn_success = create_button("✅", "成功提示", 195, 250, 160, COLOR_SUCCESS)
+    btn_warning = create_button("⚠️", "警告提示", 370, 250, 160, COLOR_WARNING)
+    btn_error = create_button("❌", "错误提示", 545, 250, 160, COLOR_DANGER)
+
+    btn_confirm = create_button("❓", "确认保存", 20, 310, 200, COLOR_PRIMARY)
+    btn_confirm_delete = create_button("🗑️", "确认删除", 235, 310, 200, COLOR_DANGER)
+
     info_lines = [
-        "💬 信息框功能说明:",
-        "  📢 MessageBox: 纯提示，只有确定按钮",
-        "  🤔 ConfirmBox: 确认/取消，带回调函数返回用户选择",
-        "  🎨 支持emoji图标、多行文本、UTF-8编码",
+        "当前示例窗口不会自动关闭，便于持续观察可视化效果。",
+        "标题栏按钮已经改为更扁平的 hover 结构，不再使用圆角悬浮块。",
+        "建议先点“深色标题栏”，再观察右上角按钮与关闭按钮 hover 的对比度。",
     ]
-    for i, line in enumerate(info_lines):
-        t = u(line)
-        dll.CreateLabel(main_win, 20, 270 + i * 30, 610, 28, t, len(t),
-            ARGB(255,100,100,100), ARGB(0,0,0,0), font, len(font), 12, 0, 0, 0, 0, 0)
 
+    for index, line in enumerate(info_lines):
+        create_label(
+            20,
+            388 + index * 30,
+            710,
+            24,
+            line,
+            ARGB(255, 100, 100, 100),
+            ARGB(0, 0, 0, 0),
+            12,
+            0,
+        )
+
+    dll.set_button_click_callback(_button_cb)
     dll.set_message_loop_main_window(main_win)
-    print("\n✅ 进入消息循环...")
+    set_titlebar_light()
     dll.run_message_loop()
-    print("程序退出。")
+
 
 if __name__ == "__main__":
     main()

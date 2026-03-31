@@ -93,6 +93,12 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
   if (hasBtns) {
     lines.push(`dll.create_emoji_button_bytes.argtypes = [c_void_p, ctypes.c_char_p, c_int, ctypes.c_char_p, c_int, c_int, c_int, c_int, c_int, c_uint]`);
     lines.push(`dll.create_emoji_button_bytes.restype = c_int`);
+    lines.push(`dll.SetButtonType.argtypes = [c_int, c_int]`);
+    lines.push(`dll.SetButtonStyle.argtypes = [c_int, c_int]`);
+    lines.push(`dll.SetButtonSize.argtypes = [c_int, c_int]`);
+    lines.push(`dll.SetButtonRound.argtypes = [c_int, c_bool]`);
+    lines.push(`dll.SetButtonCircle.argtypes = [c_int, c_bool]`);
+    lines.push(`dll.SetButtonLoading.argtypes = [c_int, c_bool]`);
   }
   if (hasLabels) {
     lines.push(`dll.CreateLabel.argtypes = [c_void_p, c_int, c_int, c_int, c_int, ctypes.c_char_p, c_int, c_uint, c_uint, ctypes.c_char_p, c_int, c_int, c_int, c_int, c_int, c_int, c_int]`);
@@ -224,6 +230,9 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
     switch (c.type) {
       case 'button': {
         const emoji = (p.emoji as string) || '';
+        const buttonType = (p.buttonType as number) ?? -1;
+        const buttonStyle = (p.buttonStyle as number) ?? 0;
+        const buttonSize = (p.buttonSize as number) ?? 1;
         const text = (p.text as string) || '按钮';
         lines.push(``);
         lines.push(`# ${c.name}`);
@@ -232,6 +241,12 @@ export function generatePython(win: DesignWindow, controls: DesignControl[]): st
         }
         lines.push(`text_${c.name} = "${escapePy(text)}".encode("utf-8")`);
         lines.push(`${c.name} = dll.create_emoji_button_bytes(${parentExpr}, ${emoji ? `emoji_${c.name}, len(emoji_${c.name})` : 'b"", 0'}, text_${c.name}, len(text_${c.name}), ${c.x}, ${c.y}, ${c.width}, ${c.height}, ${pyColor((p.bgColor as string) || '#409EFF')})`);
+        if (buttonType !== -1) lines.push(`dll.SetButtonType(${c.name}, ${buttonType})`);
+        if (buttonStyle !== 0) lines.push(`dll.SetButtonStyle(${c.name}, ${buttonStyle})`);
+        if (buttonSize !== 1) lines.push(`dll.SetButtonSize(${c.name}, ${buttonSize})`);
+        if (p.round) lines.push(`dll.SetButtonRound(${c.name}, True)`);
+        if (p.circle) lines.push(`dll.SetButtonCircle(${c.name}, True)`);
+        if (p.loading) lines.push(`dll.SetButtonLoading(${c.name}, True)`);
         if (attachToGroup) {
           lines.push(`dll.AddChildToGroup(${c.parentId}, ${c.name})`);
         }

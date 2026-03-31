@@ -24,6 +24,8 @@ static const wchar_t* TREEVIEW_CLASS_NAME = L"CustomTreeViewClass";
 // 窗口类是否已注册
 static bool g_class_registered = false;
 
+extern "C" UINT32 __stdcall EW_GetThemeColorByIndex(int color_index);
+
 // ============================================================================
 // 辅助函数实现
 // ============================================================================
@@ -37,6 +39,17 @@ TreeViewState* GetTreeViewState(HWND hwnd) {
         return it->second;
     }
     return nullptr;
+}
+
+static UINT32 ResolveTreeThemeColor(unsigned int argb) {
+    if (argb <= 19) {
+        return EW_GetThemeColorByIndex((int)argb);
+    }
+    return argb;
+}
+
+static D2D1_COLOR_F TreeArgbToColorF(unsigned int argb) {
+    return ArgbToColorF(ResolveTreeThemeColor(argb));
 }
 
 void TreeViewOnNodeSelectedDeferred(HWND hTree, int node_id) {
@@ -224,6 +237,70 @@ static void TreeViewApplySelection(HWND hwnd, TreeViewState* state, TreeNode* no
  * 创建节点
  * 分配 TreeNode 内存，初始化所有字段，设置默认颜色和状态
  */
+static bool GetTreeViewScrollbarMetrics(TreeViewState* state, RECT* track_rc, RECT* thumb_rc, int* max_scroll_out) {
+    if (!state || !state->hwnd || !state->show_scrollbar || state->content_height <= 0 || state->scroll_max <= 0) {
+        return false;
+    }
+
+    RECT client_rect = {};
+    GetClientRect(state->hwnd, &client_rect);
+
+    const int client_height = client_rect.bottom - client_rect.top;
+    if (client_height <= 0) {
+        return false;
+    }
+
+    int scrollbar_width = static_cast<int>(state->scrollbar_width * state->dpi_scale + 0.5f);
+    scrollbar_width = (std::max)(1, scrollbar_width);
+
+    int padding = static_cast<int>(2.0f * state->dpi_scale + 0.5f);
+    padding = (std::max)(1, padding);
+
+    const float visible_height = static_cast<float>(client_height);
+    const float content_height = static_cast<float>(state->content_height);
+    float thumb_height_f = (visible_height / content_height) * visible_height;
+    thumb_height_f = (std::max)(20.0f * state->dpi_scale, thumb_height_f);
+    thumb_height_f = (std::min)(visible_height, thumb_height_f);
+
+    int thumb_height = static_cast<int>(thumb_height_f + 0.5f);
+    thumb_height = (std::max)(1, thumb_height);
+
+    const int max_scroll = state->scroll_max;
+    const int travel = (std::max)(1, client_height - thumb_height);
+
+    float ratio = static_cast<float>(state->scroll_pos) / static_cast<float>(max_scroll);
+    ratio = (std::max)(0.0f, (std::min)(1.0f, ratio));
+    int thumb_top = static_cast<int>(ratio * travel + 0.5f);
+    thumb_top = (std::max)(0, (std::min)(client_height - thumb_height, thumb_top));
+
+    if (track_rc) {
+        track_rc->left = client_rect.right - scrollbar_width;
+        track_rc->top = client_rect.top;
+        track_rc->right = client_rect.right;
+        track_rc->bottom = client_rect.bottom;
+    }
+
+    if (thumb_rc) {
+        int thumb_left = client_rect.right - scrollbar_width + padding;
+        int thumb_right = client_rect.right - padding;
+        if (thumb_right <= thumb_left) {
+            thumb_left = client_rect.right - scrollbar_width;
+            thumb_right = client_rect.right;
+        }
+
+        thumb_rc->left = thumb_left;
+        thumb_rc->top = thumb_top;
+        thumb_rc->right = thumb_right;
+        thumb_rc->bottom = thumb_top + thumb_height;
+    }
+
+    if (max_scroll_out) {
+        *max_scroll_out = max_scroll;
+    }
+
+    return true;
+}
+
 TreeNode* CreateNode(int id, const std::wstring& text) {
     TreeNode* node = new TreeNode();
     
@@ -466,6 +543,12 @@ TreeNode* HitTestNode(TreeViewState* state, int x, int y) {
     if (!state) return nullptr;
     
     // 调整坐标（考虑滚动）
+    RECT scrollbar_track = {};
+    if (GetTreeViewScrollbarMetrics(state, &scrollbar_track, nullptr, nullptr) &&
+        PtInRect(&scrollbar_track, POINT{ x, y })) {
+        return nullptr;
+    }
+
     float adjusted_y = static_cast<float>(y) + static_cast<float>(state->scroll_pos);
     
     // 遍历可见节点
@@ -954,8 +1037,8 @@ HWND __stdcall CreateTreeView(
     }
     
     // 设置默认样式
-    state->background_color = ArgbToColorF(bg_color);
-    state->text_color = ArgbToColorF(text_color);
+    state->background_color = TreeArgbToColorF(bg_color);
+    state->text_color = TreeArgbToColorF(text_color);
     state->selected_color = D2D1::ColorF(0.26f, 0.59f, 0.98f, 0.2f);  // Element UI 蓝色半透明（选中背景）
     state->selected_foreground = D2D1::ColorF(0.26f, 0.59f, 0.98f, 1.0f); // 选中前景（字/图标）
     state->hover_color = D2D1::ColorF(0.96f, 0.96f, 0.96f);           // 浅灰色
@@ -2257,12 +2340,30 @@ float __stdcall GetTreeViewItemSpacing(HWND hwnd) {
     return state->item_spacing;
 }
 
+bool __stdcall SetTreeViewBackgroundColor(HWND hwnd, unsigned int argb) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+    state->background_color = TreeArgbToColorF(argb);
+    InvalidateRect(hwnd, NULL, TRUE);
+    return true;
+}
+
+unsigned int __stdcall GetTreeViewBackgroundColor(HWND hwnd) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return 0;
+    }
+    return ColorFToArgb(state->background_color);
+}
+
 bool __stdcall SetTreeViewTextColor(HWND hwnd, unsigned int argb) {
     TreeViewState* state = GetTreeViewState(hwnd);
     if (!state) {
         return false;
     }
-    state->text_color = ArgbToColorF(argb);
+    state->text_color = TreeArgbToColorF(argb);
     for (auto& kv : state->node_map) {
         if (kv.second) {
             kv.second->fore_color = state->text_color;
@@ -2285,7 +2386,7 @@ bool __stdcall SetTreeViewSelectedBgColor(HWND hwnd, unsigned int argb) {
     if (!state) {
         return false;
     }
-    state->selected_color = ArgbToColorF(argb);
+    state->selected_color = TreeArgbToColorF(argb);
     InvalidateRect(hwnd, NULL, TRUE);
     return true;
 }
@@ -2303,7 +2404,7 @@ bool __stdcall SetTreeViewSelectedForeColor(HWND hwnd, unsigned int argb) {
     if (!state) {
         return false;
     }
-    state->selected_foreground = ArgbToColorF(argb);
+    state->selected_foreground = TreeArgbToColorF(argb);
     InvalidateRect(hwnd, NULL, TRUE);
     return true;
 }
@@ -2321,7 +2422,7 @@ bool __stdcall SetTreeViewHoverBgColor(HWND hwnd, unsigned int argb) {
     if (!state) {
         return false;
     }
-    state->hover_color = ArgbToColorF(argb);
+    state->hover_color = TreeArgbToColorF(argb);
     InvalidateRect(hwnd, NULL, TRUE);
     return true;
 }
@@ -2546,6 +2647,34 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 }
                 
                 // 调用 HitTestNode 查找点击的节点
+                RECT scrollbar_track = {};
+                RECT scrollbar_thumb = {};
+                int scrollbar_max = 0;
+                if (GetTreeViewScrollbarMetrics(state, &scrollbar_track, &scrollbar_thumb, &scrollbar_max) &&
+                    PtInRect(&scrollbar_track, POINT{ x, y })) {
+                    if (PtInRect(&scrollbar_thumb, POINT{ x, y })) {
+                        state->scrollbar_dragging = true;
+                        state->scrollbar_drag_start_y = y;
+                        state->scrollbar_drag_start_pos = state->scroll_pos;
+                    } else {
+                        const int thumb_height = scrollbar_thumb.bottom - scrollbar_thumb.top;
+                        const int track_height = scrollbar_track.bottom - scrollbar_track.top;
+                        const int travel = (std::max)(1, track_height - thumb_height);
+                        int new_thumb_top = y - scrollbar_track.top - thumb_height / 2;
+                        new_thumb_top = (std::max)(0, (std::min)(travel, new_thumb_top));
+                        float ratio = static_cast<float>(new_thumb_top) / static_cast<float>(travel);
+                        state->scroll_pos = static_cast<int>(ratio * scrollbar_max + 0.5f);
+                        state->scroll_pos = (std::max)(0, (std::min)(state->scroll_pos, state->scroll_max));
+                        state->scrollbar_dragging = true;
+                        state->scrollbar_drag_start_y = y;
+                        state->scrollbar_drag_start_pos = state->scroll_pos;
+                    }
+
+                    SetCapture(hwnd);
+                    InvalidateRect(hwnd, NULL, FALSE);
+                    return 0;
+                }
+
                 TreeNode* clicked_node = HitTestNode(state, x, y);
                 
                 if (clicked_node && clicked_node->enabled) {
@@ -2622,6 +2751,17 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             // 鼠标左键释放处理
             if (state) {
                 // 如果正在拖放，结束拖放操作
+                if (state->scrollbar_dragging) {
+                    state->scrollbar_dragging = false;
+                    state->scrollbar_drag_start_y = 0;
+                    state->scrollbar_drag_start_pos = 0;
+                    if (GetCapture() == hwnd) {
+                        ReleaseCapture();
+                    }
+                    InvalidateRect(hwnd, NULL, FALSE);
+                    return 0;
+                }
+
                 if (state->drag_node && GetCapture() == hwnd) {
                     ReleaseCapture();
                     
@@ -2723,6 +2863,36 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 int y = GET_Y_LPARAM(lParam);
                 
                 // 调用 HitTestNode 查找悬停的节点
+                if (state->scrollbar_dragging) {
+                    RECT scrollbar_track = {};
+                    RECT scrollbar_thumb = {};
+                    int scrollbar_max = 0;
+                    if (GetTreeViewScrollbarMetrics(state, &scrollbar_track, &scrollbar_thumb, &scrollbar_max)) {
+                        const int thumb_height = scrollbar_thumb.bottom - scrollbar_thumb.top;
+                        const int track_height = scrollbar_track.bottom - scrollbar_track.top;
+                        const int travel = (std::max)(1, track_height - thumb_height);
+                        const int delta_y = y - state->scrollbar_drag_start_y;
+                        const float delta_scroll = static_cast<float>(delta_y) * static_cast<float>(scrollbar_max) / static_cast<float>(travel);
+                        int new_scroll = state->scrollbar_drag_start_pos;
+                        if (delta_scroll >= 0.0f) {
+                            new_scroll += static_cast<int>(delta_scroll + 0.5f);
+                        } else {
+                            new_scroll += static_cast<int>(delta_scroll - 0.5f);
+                        }
+                        state->scroll_pos = (std::max)(0, (std::min)(new_scroll, state->scroll_max));
+                    } else {
+                        state->scrollbar_dragging = false;
+                        state->scrollbar_drag_start_y = 0;
+                        state->scrollbar_drag_start_pos = 0;
+                        if (GetCapture() == hwnd) {
+                            ReleaseCapture();
+                        }
+                    }
+
+                    InvalidateRect(hwnd, NULL, FALSE);
+                    return 0;
+                }
+
                 TreeNode* hover_node = HitTestNode(state, x, y);
                 
                 // 更新 state->hover_node
@@ -2778,6 +2948,16 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             }
             return 0;
             
+        case WM_CAPTURECHANGED:
+        case WM_CANCELMODE:
+            if (state && state->scrollbar_dragging) {
+                state->scrollbar_dragging = false;
+                state->scrollbar_drag_start_y = 0;
+                state->scrollbar_drag_start_pos = 0;
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            return 0;
+
         case WM_MOUSELEAVE:
             // 鼠标离开处理
             if (state) {

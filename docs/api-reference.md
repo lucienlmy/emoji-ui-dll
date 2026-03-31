@@ -4,6 +4,12 @@
 
 本文档按控件类型分类列出 emoji_window.dll 所有属性操作 API，包含完整的参数说明、返回值说明和注意事项。
 
+> 维护约定
+>
+> 以后只要新增、删除、重命名、修改任何 DLL 导出方法，都必须同步更新
+> `examples\易语言代码\易语言代码文档\DLL命令.md`，
+> 保证易语言侧命令声明与当前 DLL 导出保持一致。
+
 ---
 
 ## 目录
@@ -301,6 +307,100 @@ void __stdcall SetButtonBackgroundColor(int button_id, unsigned int color);
 |------|------|------|
 | button_id | int | 按钮ID |
 | color | unsigned int | ARGB格式颜色值 |
+
+修改后立即触发重绘。
+
+---
+
+#### GetButtonTextColor  获取按钮文字颜色
+
+`c
+unsigned int __stdcall GetButtonTextColor(int button_id);
+`
+
+返回值：ARGB 格式颜色值；未设置或失败时返回 `0`。
+
+---
+
+#### SetButtonTextColor  设置按钮文字颜色
+
+`c
+void __stdcall SetButtonTextColor(int button_id, unsigned int color);
+`
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| button_id | int | 按钮ID |
+| color | unsigned int | ARGB 格式颜色值 |
+
+修改后立即触发重绘。
+
+---
+
+#### GetButtonBorderColor  获取按钮边框颜色
+
+`c
+unsigned int __stdcall GetButtonBorderColor(int button_id);
+`
+
+返回值：ARGB 格式颜色值；未设置或失败时返回 `0`。
+
+---
+
+#### SetButtonBorderColor  设置按钮边框颜色
+
+`c
+void __stdcall SetButtonBorderColor(int button_id, unsigned int color);
+`
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| button_id | int | 按钮ID |
+| color | unsigned int | ARGB 格式颜色值 |
+
+修改后立即触发重绘。
+
+---
+
+#### GetButtonHoverColors  获取按钮悬停颜色组
+
+`c
+int __stdcall GetButtonHoverColors(
+    int button_id,
+    unsigned int* bg_color,
+    unsigned int* border_color,
+    unsigned int* text_color
+);
+`
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| button_id | int | 按钮ID |
+| bg_color | unsigned int* | 输出悬停背景色，可传 `NULL` |
+| border_color | unsigned int* | 输出悬停边框色，可传 `NULL` |
+| text_color | unsigned int* | 输出悬停文字色，可传 `NULL` |
+
+返回值：当前版本固定返回 `0`，颜色通过输出参数返回；未设置时对应输出值为 `0`。
+
+---
+
+#### SetButtonHoverColors  设置按钮悬停颜色组
+
+`c
+void __stdcall SetButtonHoverColors(
+    int button_id,
+    unsigned int bg_color,
+    unsigned int border_color,
+    unsigned int text_color
+);
+`
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| button_id | int | 按钮ID |
+| bg_color | unsigned int | 悬停背景色，ARGB |
+| border_color | unsigned int | 悬停边框色，ARGB |
+| text_color | unsigned int | 悬停文字色，ARGB |
 
 修改后立即触发重绘。
 

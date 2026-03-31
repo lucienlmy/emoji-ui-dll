@@ -100,6 +100,32 @@
     .参数 按钮ID, 整数型, , 按钮ID
     .参数 背景色, 整数型, , ARGB颜色
 
+.DLL命令 获取按钮文字颜色, 整数型, "emoji_window.dll", "GetButtonTextColor", , , 获取按钮文字颜色（ARGB格式）
+    .参数 按钮ID, 整数型, , 按钮ID
+
+.DLL命令 设置按钮文字颜色, , "emoji_window.dll", "SetButtonTextColor", , , 设置按钮文字颜色
+    .参数 按钮ID, 整数型, , 按钮ID
+    .参数 文字颜色, 整数型, , ARGB颜色
+
+.DLL命令 获取按钮边框颜色, 整数型, "emoji_window.dll", "GetButtonBorderColor", , , 获取按钮边框颜色（ARGB格式）
+    .参数 按钮ID, 整数型, , 按钮ID
+
+.DLL命令 设置按钮边框颜色, , "emoji_window.dll", "SetButtonBorderColor", , , 设置按钮边框颜色
+    .参数 按钮ID, 整数型, , 按钮ID
+    .参数 边框颜色, 整数型, , ARGB颜色
+
+.DLL命令 获取按钮悬停颜色组, 整数型, "emoji_window.dll", "GetButtonHoverColors", , , 获取按钮悬停背景/边框/文字颜色
+    .参数 按钮ID, 整数型, , 按钮ID
+    .参数 悬停背景色地址, 整数型, , 输出参数，传变量地址
+    .参数 悬停边框色地址, 整数型, , 输出参数，传变量地址
+    .参数 悬停文字色地址, 整数型, , 输出参数，传变量地址
+
+.DLL命令 设置按钮悬停颜色组, , "emoji_window.dll", "SetButtonHoverColors", , , 设置按钮悬停背景/边框/文字颜色
+    .参数 按钮ID, 整数型, , 按钮ID
+    .参数 悬停背景色, 整数型, , ARGB颜色
+    .参数 悬停边框色, 整数型, , ARGB颜色
+    .参数 悬停文字色, 整数型, , ARGB颜色
+
 .DLL命令 设置消息循环主窗口, , "emoji_window.dll", "set_message_loop_main_window", , , , 公开
     .参数 窗口句柄, 整数型
 
@@ -257,6 +283,43 @@
 .DLL命令 更新TabControl布局, , "emoji_window.dll", "UpdateTabControlLayout", , , 手动更新TabControl布局
     .参数 TabControl句柄, 整数型
 
+.DLL命令 创建菜单栏, 整数型, "emoji_window.dll", "CreateMenuBar", , , 创建窗口顶部菜单栏
+    .参数 所属窗口句柄, 整数型
+
+.DLL命令 销毁菜单栏, , "emoji_window.dll", "DestroyMenuBar", , , 销毁菜单栏
+    .参数 菜单栏句柄, 整数型
+
+.DLL命令 菜单栏添加项, 整数型, "emoji_window.dll", "MenuBarAddItem", , , 添加菜单栏一级菜单
+    .参数 菜单栏句柄, 整数型
+    .参数 文本字节集指针, 整数型, , 取变量数据地址(文本字节集)
+    .参数 文本长度, 整数型, , 取字节集长度(文本字节集)
+    .参数 菜单项ID, 整数型, , 自定义ID，回调时用于识别
+
+.DLL命令 菜单栏添加子项, 整数型, "emoji_window.dll", "MenuBarAddSubItem", , , 添加菜单栏子菜单
+    .参数 菜单栏句柄, 整数型
+    .参数 父项ID, 整数型, , 父菜单项的ID
+    .参数 文本字节集指针, 整数型, , 取变量数据地址(文本字节集)
+    .参数 文本长度, 整数型, , 取字节集长度(文本字节集)
+    .参数 菜单项ID, 整数型, , 自定义ID，回调时用于识别
+
+.DLL命令 设置菜单栏位置, , "emoji_window.dll", "SetMenuBarPlacement", , , 设置菜单栏位置与大小
+    .参数 菜单栏句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+
+.DLL命令 设置菜单栏回调, , "emoji_window.dll", "SetMenuBarCallback", , , 设置菜单项点击回调
+    .参数 菜单栏句柄, 整数型
+    .参数 回调函数, 子程序指针, , 回调签名：.子程序 回调, , , stdcall  .参数 menu_id, 整数型  .参数 item_id, 整数型
+
+.DLL命令 更新菜单栏子项文字, 逻辑型, "emoji_window.dll", "MenuBarUpdateSubItemText", , , 动态更新菜单栏子项文本
+    .参数 菜单栏句柄, 整数型
+    .参数 父项ID, 整数型
+    .参数 菜单项ID, 整数型
+    .参数 文本字节集指针, 整数型, , 取变量数据地址(文本字节集)
+    .参数 文本长度, 整数型, , 取字节集长度(文本字节集)
+
 .DLL命令 创建弹出菜单, 整数型, "emoji_window.dll", "CreateEmojiPopupMenu", , , 创建右键弹出菜单（支持Emoji）
     .参数 所属窗口句柄, 整数型
 
@@ -365,8 +428,8 @@
 
 .DLL命令 获取编辑框文本, 整数型, "emoji_window.dll", "GetEditBoxText", , , 获取编辑框文本
     .参数 编辑框句柄, 整数型
-    .参数 缓冲区指针, 整数型
-    .参数 缓冲区大小, 整数型
+    .参数 缓冲区指针, 整数型, , 第一次传0仅获取 UTF-8 文本长度
+    .参数 缓冲区大小, 整数型, , 第二次读取时建议传“返回长度 ＋ 1”，给结尾0预留空间
 
 .DLL命令 设置编辑框文本, , "emoji_window.dll", "SetEditBoxText", , , 设置编辑框文本
     .参数 编辑框句柄, 整数型
@@ -2063,6 +2126,10 @@
 .DLL命令 获取编辑框对齐方式, 整数型, "emoji_window.dll", "GetEditBoxAlignment", , , 获取编辑框对齐方式（0=左，1=中，2=右，-1=错误）
     .参数 编辑框句柄, 整数型, , 编辑框窗口句柄
 
+.DLL命令 设置编辑框对齐方式, , "emoji_window.dll", "SetEditBoxAlignment", , , 设置编辑框对齐方式
+    .参数 编辑框句柄, 整数型, , 编辑框窗口句柄
+    .参数 对齐方式, 整数型, , 0=左对齐，1=居中，2=右对齐
+
 .DLL命令 获取编辑框启用状态, 整数型, "emoji_window.dll", "GetEditBoxEnabled", , , 获取编辑框启用状态（1=启用，0=禁用，-1=错误）
     .参数 编辑框句柄, 整数型, , 编辑框窗口句柄
 
@@ -2111,3 +2178,247 @@
 .DLL命令 设置标题栏对齐方式, 整数型, "emoji_window.dll", "SetTitleBarAlignment", , , 设置标题栏文字对齐方式，返回1=成功，0=失败
     .参数 窗口句柄, 整数型, , 窗口句柄
     .参数 对齐方式, 整数型, , 0=左对齐，1=居中，2=右对齐
+' ========== 维护规则（必须遵守） ==========
+'
+' 重要规则：
+' 以后只要新增、删除、重命名、修改任何 DLL 导出方法，
+' 都必须同步更新：
+' examples\易语言代码\易语言代码文档\DLL命令.md
+' 否则视为工作未完成。
+'
+' 本次新增命令登记：
+'
+.DLL命令 强制重绘TabControl, 逻辑型, "emoji_window.dll", "RedrawTabControl", , , 强制重绘TabControl及当前内容页，返回真=成功，假=失败
+    .参数 TabControl句柄, 整数型, , TabControl句柄
+'
+.DLL命令 创建面板容器, 整数型, "emoji_window.dll", "CreatePanel", , , 创建可承载子控件的空白容器，适合布局器、树形框、TabControl等复杂内容宿主
+    .参数 父窗口句柄, 整数型, , 父窗口句柄
+    .参数 X坐标, 整数型, , X坐标
+    .参数 Y坐标, 整数型, , Y坐标
+    .参数 宽度, 整数型, , 宽度
+    .参数 高度, 整数型, , 高度
+    .参数 背景色, 整数型, , ARGB颜色
+'
+' 本次新增命令登记（Element Plus 风格扩展）：
+'
+.DLL命令 设置单选按钮样式, , "emoji_window.dll", "SetRadioButtonStyle", , , 设置单选按钮样式：0=默认，1=带边框，2=按钮样式
+    .参数 单选按钮句柄, 整数型, , 单选按钮句柄
+    .参数 样式, 整数型, , 0=默认，1=带边框，2=按钮
+'
+.DLL命令 获取单选按钮样式, 整数型, "emoji_window.dll", "GetRadioButtonStyle", , , 获取单选按钮样式
+    .参数 单选按钮句柄, 整数型, , 单选按钮句柄
+'
+.DLL命令 设置单选按钮圆点颜色, , "emoji_window.dll", "SetRadioButtonDotColor", , , 设置单选按钮选中圆点颜色
+    .参数 单选按钮句柄, 整数型, , 单选按钮句柄
+    .参数 颜色, 整数型, , ARGB颜色
+'
+.DLL命令 获取单选按钮圆点颜色, 整数型, "emoji_window.dll", "GetRadioButtonDotColor", , , 获取单选按钮选中圆点颜色
+    .参数 单选按钮句柄, 整数型, , 单选按钮句柄
+    .参数 颜色, 整数型, 参考, 输出ARGB颜色
+'
+.DLL命令 创建滑块, 整数型, "emoji_window.dll", "CreateSlider", , , 创建 Element Plus 风格滑块
+    .参数 父窗口句柄, 整数型, , 父窗口句柄
+    .参数 X坐标, 整数型, , X坐标
+    .参数 Y坐标, 整数型, , Y坐标
+    .参数 宽度, 整数型, , 宽度
+    .参数 高度, 整数型, , 高度
+    .参数 最小值, 整数型, , 最小值
+    .参数 最大值, 整数型, , 最大值
+    .参数 当前值, 整数型, , 当前值
+    .参数 步长, 整数型, , 步长
+    .参数 激活颜色, 整数型, , ARGB颜色
+    .参数 背景颜色, 整数型, , ARGB颜色
+'
+.DLL命令 获取滑块值, 整数型, "emoji_window.dll", "GetSliderValue", , , 获取当前滑块值
+    .参数 滑块句柄, 整数型, , 滑块句柄
+'
+.DLL命令 设置滑块值, , "emoji_window.dll", "SetSliderValue", , , 设置当前滑块值
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 值, 整数型, , 当前值
+'
+.DLL命令 设置滑块范围, , "emoji_window.dll", "SetSliderRange", , , 设置滑块最小值和最大值
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 最小值, 整数型, , 最小值
+    .参数 最大值, 整数型, , 最大值
+'
+.DLL命令 设置滑块步长, , "emoji_window.dll", "SetSliderStep", , , 设置滑块步长
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 步长, 整数型, , 步长
+'
+.DLL命令 设置滑块显示停点, , "emoji_window.dll", "SetSliderShowStops", , , 设置是否显示停点
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 是否显示, 逻辑型, , 真=显示，假=隐藏
+'
+.DLL命令 设置滑块颜色, , "emoji_window.dll", "SetSliderColors", , , 设置滑块激活色、轨道色和按钮色
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 激活颜色, 整数型, , ARGB颜色
+    .参数 背景颜色, 整数型, , ARGB颜色
+    .参数 按钮颜色, 整数型, , ARGB颜色
+'
+.DLL命令 获取滑块颜色, 逻辑型, "emoji_window.dll", "GetSliderColors", , , 获取滑块激活色、轨道色和按钮色
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 激活颜色, 整数型, 参考, 输出ARGB颜色
+    .参数 背景颜色, 整数型, 参考, 输出ARGB颜色
+    .参数 按钮颜色, 整数型, 参考, 输出ARGB颜色
+'
+.DLL命令 设置滑块回调, , "emoji_window.dll", "SetSliderCallback", , , 设置滑块值变化回调
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 回调函数, 整数型, , 回调地址
+'
+.DLL命令 启用滑块, , "emoji_window.dll", "EnableSlider", , , 启用或禁用滑块
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 启用, 逻辑型, , 真=启用，假=禁用
+'
+.DLL命令 显示隐藏滑块, , "emoji_window.dll", "ShowSlider", , , 显示或隐藏滑块
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 可见, 逻辑型, , 真=显示，假=隐藏
+'
+.DLL命令 设置滑块位置, , "emoji_window.dll", "SetSliderBounds", , , 设置滑块位置与大小
+    .参数 滑块句柄, 整数型, , 滑块句柄
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+'
+.DLL命令 创建开关, 整数型, "emoji_window.dll", "CreateSwitch", , , 创建 Element Plus 风格开关
+    .参数 父窗口句柄, 整数型, , 父窗口句柄
+    .参数 X坐标, 整数型, , X坐标
+    .参数 Y坐标, 整数型, , Y坐标
+    .参数 宽度, 整数型, , 宽度
+    .参数 高度, 整数型, , 高度
+    .参数 初始状态, 逻辑型, , 真=开启，假=关闭
+    .参数 开启颜色, 整数型, , ARGB颜色
+    .参数 关闭颜色, 整数型, , ARGB颜色
+    .参数 开启文字, 字节集, , UTF-8文字
+    .参数 开启文字长度, 整数型, , UTF-8长度
+    .参数 关闭文字, 字节集, , UTF-8文字
+    .参数 关闭文字长度, 整数型, , UTF-8长度
+'
+.DLL命令 获取开关状态, 逻辑型, "emoji_window.dll", "GetSwitchState", , , 获取当前开关状态
+    .参数 开关句柄, 整数型, , 开关句柄
+'
+.DLL命令 设置开关状态, , "emoji_window.dll", "SetSwitchState", , , 设置当前开关状态
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 状态, 逻辑型, , 真=开启，假=关闭
+'
+.DLL命令 设置开关文字, , "emoji_window.dll", "SetSwitchText", , , 设置开关开启/关闭文字
+    .参数 开关句柄, 整数型, , 开关句柄
+'
+.DLL命令 设置开关颜色, , "emoji_window.dll", "SetSwitchColors", , , 设置开关开启/关闭颜色
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 开启颜色, 整数型, , ARGB颜色
+    .参数 关闭颜色, 整数型, , ARGB颜色
+'
+.DLL命令 设置开关文字颜色, , "emoji_window.dll", "SetSwitchTextColors", , , 设置开关开启/关闭文字颜色
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 开启文字颜色, 整数型, , ARGB颜色
+    .参数 关闭文字颜色, 整数型, , ARGB颜色
+'
+.DLL命令 获取开关颜色, 逻辑型, "emoji_window.dll", "GetSwitchColors", , , 获取开关轨道颜色和文字颜色
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 开启颜色, 整数型, 参考, 输出ARGB颜色
+    .参数 关闭颜色, 整数型, 参考, 输出ARGB颜色
+    .参数 开启文字颜色, 整数型, 参考, 输出ARGB颜色
+    .参数 关闭文字颜色, 整数型, 参考, 输出ARGB颜色
+'
+.DLL命令 设置开关回调, , "emoji_window.dll", "SetSwitchCallback", , , 设置开关状态变化回调
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 回调函数, 整数型, , 回调地址
+'
+.DLL命令 启用开关, , "emoji_window.dll", "EnableSwitch", , , 启用或禁用开关
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 启用, 逻辑型, , 真=启用，假=禁用
+'
+.DLL命令 显示隐藏开关, , "emoji_window.dll", "ShowSwitch", , , 显示或隐藏开关
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 可见, 逻辑型, , 真=显示，假=隐藏
+'
+.DLL命令 设置开关位置, , "emoji_window.dll", "SetSwitchBounds", , , 设置开关位置与大小
+    .参数 开关句柄, 整数型, , 开关句柄
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+'
+.DLL命令 创建提示层, 整数型, "emoji_window.dll", "CreateTooltip", , , 创建 Tooltip 提示层
+    .参数 所有者窗口句柄, 整数型, , 所有者窗口句柄
+    .参数 文本, 字节集, , UTF-8提示文字
+    .参数 文本长度, 整数型, , UTF-8长度
+    .参数 位置, 整数型, , 参考 PopupPlacement 枚举
+    .参数 背景颜色, 整数型, , ARGB颜色
+    .参数 前景颜色, 整数型, , ARGB颜色
+'
+.DLL命令 设置提示层文字, , "emoji_window.dll", "SetTooltipText", , , 设置 Tooltip 文字
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+'
+.DLL命令 设置提示层位置, , "emoji_window.dll", "SetTooltipPlacement", , , 设置 Tooltip 出现方向
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+    .参数 位置, 整数型, , 0=上方，1=下方，2=左侧，3=右侧
+'
+.DLL命令 设置提示层主题, , "emoji_window.dll", "SetTooltipTheme", , , 设置 Tooltip 主题模式
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+    .参数 主题, 整数型, , 0=dark，1=light，2=custom
+'
+.DLL命令 设置提示层颜色, , "emoji_window.dll", "SetTooltipColors", , , 设置 Tooltip 背景/前景/边框颜色
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+    .参数 背景颜色, 整数型, , ARGB颜色
+    .参数 前景颜色, 整数型, , ARGB颜色
+    .参数 边框颜色, 整数型, , ARGB颜色
+'
+.DLL命令 设置提示层字体, , "emoji_window.dll", "SetTooltipFont", , , 设置 Tooltip 字体和字号
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+    .参数 字体字节集指针, 整数型, , 取变量数据地址(字体名字节集)
+    .参数 字体长度, 整数型, , 取字节集长度(字体名字节集)
+    .参数 字号, 小数型, , 字号大小（如 14.0）
+'
+.DLL命令 设置提示层触发方式, , "emoji_window.dll", "SetTooltipTrigger", , , 设置 Tooltip 触发方式
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+    .参数 触发方式, 整数型, , 0=hover，1=click
+'
+.DLL命令 绑定提示层到控件, , "emoji_window.dll", "BindTooltipToControl", , , 绑定 Tooltip 与目标控件
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+    .参数 目标控件句柄, 整数型, , 目标控件句柄
+'
+.DLL命令 对控件显示提示层, , "emoji_window.dll", "ShowTooltipForControl", , , 在指定控件附近显示 Tooltip
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+    .参数 目标控件句柄, 整数型, , 目标控件句柄
+'
+.DLL命令 隐藏提示层, , "emoji_window.dll", "HideTooltip", , , 隐藏 Tooltip
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+'
+.DLL命令 销毁提示层, , "emoji_window.dll", "DestroyTooltip", , , 销毁 Tooltip
+    .参数 提示层句柄, 整数型, , Tooltip句柄
+'
+.DLL命令 创建气泡确认框, 整数型, "emoji_window.dll", "CreatePopconfirm", , , 创建 Popconfirm 气泡确认框
+    .参数 所有者窗口句柄, 整数型, , 所有者窗口句柄
+'
+.DLL命令 设置气泡确认框回调, , "emoji_window.dll", "SetPopconfirmCallback", , , 设置 Popconfirm 确认/取消回调
+    .参数 气泡确认框句柄, 整数型, , Popconfirm句柄
+    .参数 回调函数, 整数型, , 回调地址
+'
+.DLL命令 对控件显示气泡确认框, , "emoji_window.dll", "ShowPopconfirmForControl", , , 在指定控件附近显示 Popconfirm
+    .参数 气泡确认框句柄, 整数型, , Popconfirm句柄
+    .参数 目标控件句柄, 整数型, , 目标控件句柄
+'
+.DLL命令 隐藏气泡确认框, , "emoji_window.dll", "HidePopconfirm", , , 隐藏 Popconfirm
+    .参数 气泡确认框句柄, 整数型, , Popconfirm句柄
+'
+.DLL命令 销毁气泡确认框, , "emoji_window.dll", "DestroyPopconfirm", , , 销毁 Popconfirm
+    .参数 气泡确认框句柄, 整数型, , Popconfirm句柄
+'
+.DLL命令 显示通知, 整数型, "emoji_window.dll", "ShowNotification", , , 显示 Notification 通知窗口
+    .参数 所有者窗口句柄, 整数型, , 所有者窗口句柄
+    .参数 标题, 字节集, , UTF-8标题
+    .参数 标题长度, 整数型, , UTF-8长度
+    .参数 内容, 字节集, , UTF-8内容
+    .参数 内容长度, 整数型, , UTF-8长度
+    .参数 类型, 整数型, , 0=info，1=success，2=warning，3=error
+    .参数 位置, 整数型, , 0=右上，1=左上，2=右下，3=左下
+    .参数 持续毫秒, 整数型, , 自动关闭时长，0=不自动关闭
+'
+.DLL命令 设置通知回调, , "emoji_window.dll", "SetNotificationCallback", , , 设置 Notification 点击/关闭回调
+    .参数 通知句柄, 整数型, , 通知句柄
+    .参数 回调函数, 整数型, , 回调地址
+'
+.DLL命令 关闭通知, , "emoji_window.dll", "CloseNotification", , , 主动关闭 Notification
+    .参数 通知句柄, 整数型, , 通知句柄

@@ -3,18 +3,74 @@
 #include "emoji_window.h"
 #include <windowsx.h>
 #include <algorithm>
+#include <set>
 
 // 外部全局变量
 extern ID2D1Factory* g_d2d_factory;
 extern IDWriteFactory* g_dwrite_factory;
 extern std::map<HWND, MenuBarState*> g_menubars;  // 访问菜单栏状态
+extern HMODULE g_emoji_window_module;
 
 // 全局变量：当前活动的子菜单窗口（用于鼠标钩子）
 static SubMenuWindow* g_active_submenu = nullptr;
+static std::set<SubMenuWindow*> g_visible_submenus;
 
 // 窗口类名
 static const wchar_t* SUBMENU_WINDOW_CLASS = L"SubMenuWindowClass";
 static bool g_class_registered = false;
+
+static D2D1_COLOR_F ColorFromArgb(UINT32 argb) {
+    return D2D1::ColorF(
+        ((argb >> 16) & 0xFF) / 255.0f,
+        ((argb >> 8) & 0xFF) / 255.0f,
+        (argb & 0xFF) / 255.0f,
+        ((argb >> 24) & 0xFF) / 255.0f
+    );
+}
+
+static UINT32 SubMenuThemeColor(UINT32 fallback, UINT32 ThemeColors::* member) {
+    if (g_current_theme) {
+        return g_current_theme->colors.*member;
+    }
+    return fallback;
+}
+
+static SubMenuWindow::MenuTheme BuildCurrentMenuTheme() {
+    SubMenuWindow::MenuTheme theme = {};
+    theme.backgroundColor = ColorFromArgb(SubMenuThemeColor(0xFFFFFFFF, &ThemeColors::background));
+    theme.hoverColor = ColorFromArgb(SubMenuThemeColor(0xFFF5F7FA, &ThemeColors::background_light));
+    theme.textColor = ColorFromArgb(SubMenuThemeColor(0xFF606266, &ThemeColors::text_regular));
+    theme.disabledColor = ColorFromArgb(SubMenuThemeColor(0xFFC0C4CC, &ThemeColors::text_placeholder));
+    theme.borderColor = ColorFromArgb(SubMenuThemeColor(0xFFE4E7ED, &ThemeColors::border_light));
+    theme.separatorColor = ColorFromArgb(SubMenuThemeColor(0xFFF2F6FC, &ThemeColors::border_extra_light));
+    theme.borderWidth = 1;
+    theme.cornerRadius = 8;
+    theme.shadowSize = 4;
+    return theme;
+}
+
+SubMenuWindow* SubMenuWindow::FindVisibleSubMenuAtPoint(POINT screen_pt) {
+    SubMenuWindow* target = nullptr;
+    int best_nesting_level = -1;
+    for (SubMenuWindow* current : g_visible_submenus) {
+        if (!current) {
+            continue;
+        }
+        HWND hwnd = current->GetHwnd();
+        if (!hwnd || !IsWindow(hwnd) || !current->IsVisible()) {
+            continue;
+        }
+        RECT rect = {};
+        GetWindowRect(hwnd, &rect);
+        if (PtInRect(&rect, screen_pt)) {
+            if (!target || current->m_nesting_level >= best_nesting_level) {
+                target = current;
+                best_nesting_level = current->m_nesting_level;
+            }
+        }
+    }
+    return target;
+}
 
 // 注册窗口类
 static bool RegisterSubMenuWindowClass() {
@@ -24,7 +80,7 @@ static bool RegisterSubMenuWindowClass() {
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
     wc.lpfnWndProc = SubMenuWindow::WindowProc;
-    wc.hInstance = GetModuleHandle(nullptr);
+    wc.hInstance = g_emoji_window_module ? g_emoji_window_module : GetModuleHandle(nullptr);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.lpszClassName = SUBMENU_WINDOW_CLASS;
     
@@ -54,6 +110,7 @@ SubMenuWindow::SubMenuWindow()
     , m_nesting_level(0)
     , m_hover_start_time(0)
     , m_hover_item_for_submenu(-1)
+    , m_ignore_outside_click_until(0)
     , m_animation_enabled(true)
     , m_animation_type(ANIMATION_FADE)
     , m_is_animating(false)
@@ -65,6 +122,7 @@ SubMenuWindow::SubMenuWindow()
 
 SubMenuWindow::~SubMenuWindow() {
     Hide();
+    g_visible_submenus.erase(this);
     ReleaseD2DResources();
     
     if (m_hwnd) {
@@ -83,14 +141,14 @@ bool SubMenuWindow::Create(HWND parent, int menu_id) {
     
     // 创建弹出窗口（无边框、置顶、工具窗口）
     m_hwnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         SUBMENU_WINDOW_CLASS,
         L"",
         WS_POPUP,
         0, 0, 100, 100,  // 初始大小，稍后调整
         parent,
         nullptr,
-        GetModuleHandle(nullptr),
+        g_emoji_window_module ? g_emoji_window_module : GetModuleHandle(nullptr),
         this  // 传递 this 指针
     );
     
@@ -98,14 +156,23 @@ bool SubMenuWindow::Create(HWND parent, int menu_id) {
         return false;
     }
     
-    // 设置窗口透明度（用于淡入淡出效果）
-    SetLayeredWindowAttributes(m_hwnd, 0, 255, LWA_ALPHA);
-    
     // 初始化 Direct2D 资源
-    if (!InitD2DResources()) {
-        DestroyWindow(m_hwnd);
-        m_hwnd = nullptr;
-        return false;
+    m_dwrite_factory = g_dwrite_factory;
+    if (!m_text_format && m_dwrite_factory) {
+        HRESULT hr = m_dwrite_factory->CreateTextFormat(
+            L"Segoe UI Emoji",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            14.0f,
+            L"zh-CN",
+            &m_text_format
+        );
+        if (SUCCEEDED(hr) && m_text_format) {
+            m_text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            m_text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
     }
     
     return true;
@@ -254,7 +321,29 @@ void SubMenuWindow::Show(const std::vector<MenuItem>& items, int x, int y, std::
     if (!m_hwnd || items.empty()) {
         return;
     }
-    
+
+    m_theme = BuildCurrentMenuTheme();
+
+    if (!m_dwrite_factory) {
+        m_dwrite_factory = g_dwrite_factory;
+    }
+    if (!m_text_format && m_dwrite_factory) {
+        HRESULT hr = m_dwrite_factory->CreateTextFormat(
+            L"Segoe UI Emoji",
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            14.0f,
+            L"zh-CN",
+            &m_text_format
+        );
+        if (SUCCEEDED(hr) && m_text_format) {
+            m_text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            m_text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+
     m_items = items;
     m_callback = callback;
     m_hovered_index = -1;
@@ -277,7 +366,7 @@ void SubMenuWindow::Show(const std::vector<MenuItem>& items, int x, int y, std::
     
     // 调整窗口大小和位置（使用像素）
     SetWindowPos(m_hwnd, HWND_TOPMOST, pos_x, pos_y, width_px, height_px,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                 SWP_SHOWWINDOW);
     
     // 重新创建渲染目标（因为窗口大小改变了）
     if (m_render_target) {
@@ -301,6 +390,8 @@ void SubMenuWindow::Show(const std::vector<MenuItem>& items, int x, int y, std::
     }
     
     m_visible = true;
+    g_visible_submenus.insert(this);
+    m_ignore_outside_click_until = GetTickCount() + 180;
     
     // 只有顶层子菜单才设置为当前活动的子菜单
     if (m_nesting_level == 0) {
@@ -308,12 +399,18 @@ void SubMenuWindow::Show(const std::vector<MenuItem>& items, int x, int y, std::
         
         // 只有顶层子菜单才安装鼠标钩子
         if (!m_mouse_hook) {
-            m_mouse_hook = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, GetModuleHandle(nullptr), 0);
+            m_mouse_hook = SetWindowsHookEx(
+                WH_MOUSE_LL,
+                MouseHookProc,
+                g_emoji_window_module ? g_emoji_window_module : GetModuleHandle(nullptr),
+                0);
         }
     }
     
     // 渲染菜单
     Render();
+
+    SetFocus(m_hwnd);
     
     // 执行显示动画
     if (m_animation_enabled) {
@@ -341,6 +438,7 @@ void SubMenuWindow::Show(const std::vector<MenuItem>& items, int x, int y, std::
 }
 
 void SubMenuWindow::Hide() {
+    g_visible_submenus.erase(this);
     if (m_hwnd && m_visible) {
         // 先隐藏所有子菜单
         HideAllChildSubMenus();
@@ -457,6 +555,9 @@ void SubMenuWindow::OnClick(int x, int y) {
         
         // 如果有子菜单，立即显示（不等待延迟）
         if (HasSubMenu(clicked_index)) {
+            if (m_callback) {
+                m_callback(m_menu_id, item.id);
+            }
             WriteLog("SubMenuWindow::OnClick: showing child submenu");
             ShowChildSubMenu(clicked_index);
             return;
@@ -537,6 +638,13 @@ void SubMenuWindow::ActivateCurrentItem() {
         const MenuItem& item = m_items[m_selected_index];
         
         if (item.enabled && !item.separator) {
+            if (HasSubMenu(m_selected_index)) {
+                if (m_callback) {
+                    m_callback(m_menu_id, item.id);
+                }
+                ShowChildSubMenu(m_selected_index);
+                return;
+            }
             if (m_callback) {
                 m_callback(m_menu_id, item.id);
             }
@@ -569,57 +677,89 @@ void SubMenuWindow::Render() {
     if (!m_render_target || !m_text_format || m_items.empty()) {
         return;
     }
-    
+
     m_render_target->BeginDraw();
-    
-    // 使用主题背景色清除背景
     m_render_target->Clear(m_theme.backgroundColor);
-    
-    // 使用主题颜色创建画刷
+
+    const float surface_inset = 1.0f;
+    const float surface_radius = (float)(std::max)(0, m_theme.cornerRadius > 0 ? m_theme.cornerRadius : 8);
+    const float item_inset_x = 6.0f;
+    const float hover_radius = (std::max)(4.0f, surface_radius - 2.0f);
+    const float item_height = (float)ITEM_HEIGHT;
+    const float separator_height = (float)SEPARATOR_HEIGHT;
+    const float text_padding_x = 14.0f;
+    const float arrow_area_w = 20.0f;
+
+    ID2D1SolidColorBrush* panel_brush = nullptr;
     ID2D1SolidColorBrush* text_brush = nullptr;
     ID2D1SolidColorBrush* disabled_brush = nullptr;
     ID2D1SolidColorBrush* hover_brush = nullptr;
     ID2D1SolidColorBrush* separator_brush = nullptr;
     ID2D1SolidColorBrush* border_brush = nullptr;
-    
+
+    m_render_target->CreateSolidColorBrush(m_theme.backgroundColor, &panel_brush);
     m_render_target->CreateSolidColorBrush(m_theme.textColor, &text_brush);
     m_render_target->CreateSolidColorBrush(m_theme.disabledColor, &disabled_brush);
     m_render_target->CreateSolidColorBrush(m_theme.hoverColor, &hover_brush);
     m_render_target->CreateSolidColorBrush(m_theme.separatorColor, &separator_brush);
     m_render_target->CreateSolidColorBrush(m_theme.borderColor, &border_brush);
-    
-    // 绘制菜单项
-    float y = 0;
-    
+
+    if (panel_brush && border_brush) {
+        D2D1_ROUNDED_RECT panel_rect = D2D1::RoundedRect(
+            D2D1::RectF(
+                surface_inset,
+                surface_inset,
+                (float)m_width - surface_inset,
+                (float)m_height - surface_inset),
+            surface_radius,
+            surface_radius);
+        m_render_target->FillRoundedRectangle(panel_rect, panel_brush);
+        if (m_theme.borderWidth > 0) {
+            m_render_target->DrawRoundedRectangle(panel_rect, border_brush, (float)m_theme.borderWidth);
+        }
+    }
+
+    float y = 0.0f;
     for (size_t i = 0; i < m_items.size(); i++) {
         const MenuItem& item = m_items[i];
-        
         if (item.separator) {
-            // 绘制分隔线
-            float sep_y = y + SEPARATOR_HEIGHT / 2.0f;
-            m_render_target->DrawLine(
-                D2D1::Point2F(10.0f, sep_y),
-                D2D1::Point2F((float)m_width - 10.0f, sep_y),
-                separator_brush,
-                1.0f
-            );
-            y += SEPARATOR_HEIGHT;
-        } else {
-            // 绘制悬停背景
-            if ((int)i == m_hovered_index || (int)i == m_selected_index) {
-                D2D1_RECT_F hover_rect = D2D1::RectF(0, y, (float)m_width, y + ITEM_HEIGHT);
-                m_render_target->FillRectangle(hover_rect, hover_brush);
+            if (separator_brush) {
+                float sep_y = y + separator_height / 2.0f;
+                m_render_target->DrawLine(
+                    D2D1::Point2F(16.0f, sep_y),
+                    D2D1::Point2F((float)m_width - 16.0f, sep_y),
+                    separator_brush,
+                    1.0f
+                );
             }
-            
-            // 绘制文本
-            ID2D1SolidColorBrush* brush = item.enabled ? text_brush : disabled_brush;
+            y += separator_height;
+            continue;
+        }
+
+        D2D1_RECT_F item_rect = D2D1::RectF(
+            item_inset_x,
+            y,
+            (float)m_width - item_inset_x,
+            y + item_height
+        );
+
+        if ((int)i == m_hovered_index || (int)i == m_selected_index) {
+            if (hover_brush) {
+                m_render_target->FillRoundedRectangle(
+                    D2D1::RoundedRect(item_rect, hover_radius, hover_radius),
+                    hover_brush
+                );
+            }
+        }
+
+        ID2D1SolidColorBrush* brush = item.enabled ? text_brush : disabled_brush;
+        if (brush) {
             D2D1_RECT_F text_rect = D2D1::RectF(
-                (float)PADDING_LEFT,
+                item_rect.left + text_padding_x,
                 y,
-                (float)(m_width - PADDING_RIGHT),
-                y + ITEM_HEIGHT
+                item_rect.right - text_padding_x - (HasSubMenu((int)i) ? arrow_area_w : 0.0f),
+                y + item_height
             );
-            
             m_render_target->DrawText(
                 item.text.c_str(),
                 (UINT32)item.text.length(),
@@ -628,63 +768,42 @@ void SubMenuWindow::Render() {
                 brush,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
             );
-            
-            // 如果有子菜单，绘制箭头指示器
-            if (HasSubMenu((int)i)) {
-                // 绘制右箭头 "▶"
-                float arrow_x = (float)(m_width - 20);
-                float arrow_y = y + ITEM_HEIGHT / 2.0f;
-                
-                // 创建箭头路径（三角形）
-                ID2D1PathGeometry* arrow_geometry = nullptr;
-                ID2D1GeometrySink* sink = nullptr;
-                
-                if (g_d2d_factory) {
-                    g_d2d_factory->CreatePathGeometry(&arrow_geometry);
-                    if (arrow_geometry) {
-                        arrow_geometry->Open(&sink);
-                        if (sink) {
-                            sink->BeginFigure(
-                                D2D1::Point2F(arrow_x - 4, arrow_y - 4),
-                                D2D1_FIGURE_BEGIN_FILLED
-                            );
-                            sink->AddLine(D2D1::Point2F(arrow_x + 4, arrow_y));
-                            sink->AddLine(D2D1::Point2F(arrow_x - 4, arrow_y + 4));
-                            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-                            sink->Close();
-                            
-                            // 绘制箭头
-                            m_render_target->FillGeometry(arrow_geometry, brush);
-                            
-                            sink->Release();
-                        }
-                        arrow_geometry->Release();
-                    }
-                }
-            }
-            
-            y += ITEM_HEIGHT;
         }
+
+        if (HasSubMenu((int)i)) {
+            ID2D1SolidColorBrush* arrow_brush = item.enabled ? text_brush : disabled_brush;
+            if (arrow_brush) {
+                D2D1_RECT_F arrow_rect = D2D1::RectF(
+                    item_rect.right - 18.0f,
+                    y + item_height / 2.0f - 4.0f,
+                    item_rect.right - 10.0f,
+                    y + item_height / 2.0f + 4.0f
+                );
+                m_render_target->DrawLine(
+                    D2D1::Point2F(arrow_rect.left, arrow_rect.top),
+                    D2D1::Point2F(arrow_rect.right, y + item_height / 2.0f),
+                    arrow_brush,
+                    1.2f
+                );
+                m_render_target->DrawLine(
+                    D2D1::Point2F(arrow_rect.left, arrow_rect.bottom),
+                    D2D1::Point2F(arrow_rect.right, y + item_height / 2.0f),
+                    arrow_brush,
+                    1.2f
+                );
+            }
+        }
+
+        y += item_height;
     }
-    
-    // 使用主题设置绘制边框
-    if (m_theme.borderWidth > 0) {
-        D2D1_RECT_F border_rect = D2D1::RectF(
-            (float)m_theme.borderWidth / 2.0f, 
-            (float)m_theme.borderWidth / 2.0f, 
-            (float)m_width - (float)m_theme.borderWidth / 2.0f, 
-            (float)m_height - (float)m_theme.borderWidth / 2.0f
-        );
-        m_render_target->DrawRectangle(border_rect, border_brush, (float)m_theme.borderWidth);
-    }
-    
-    // 释放画刷
+
+    if (panel_brush) panel_brush->Release();
     if (text_brush) text_brush->Release();
     if (disabled_brush) disabled_brush->Release();
     if (hover_brush) hover_brush->Release();
     if (separator_brush) separator_brush->Release();
     if (border_brush) border_brush->Release();
-    
+
     m_render_target->EndDraw();
 }
 
@@ -718,8 +837,11 @@ LRESULT CALLBACK SubMenuWindow::WindowProc(HWND hwnd, UINT msg, WPARAM wparam, L
             window->OnMouseMove(x, y);
             return 0;
         }
+
+        case WM_MOUSEACTIVATE:
+            return MA_ACTIVATE;
         
-        case WM_LBUTTONDOWN: {
+        case WM_LBUTTONUP: {
             int x = GET_X_LPARAM(lparam);
             int y = GET_Y_LPARAM(lparam);
             window->OnClick(x, y);
@@ -847,7 +969,7 @@ LRESULT CALLBACK SubMenuWindow::WindowProc(HWND hwnd, UINT msg, WPARAM wparam, L
         
         case WM_KILLFOCUS: {
             // 失去焦点时隐藏菜单
-            window->Hide();
+            return 0;
             return 0;
         }
         
@@ -862,36 +984,54 @@ LRESULT CALLBACK SubMenuWindow::WindowProc(HWND hwnd, UINT msg, WPARAM wparam, L
 // 鼠标钩子过程：检测点击菜单外区域
 LRESULT CALLBACK SubMenuWindow::MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode >= 0 && wParam == WM_LBUTTONDOWN) {
-        if (g_active_submenu && g_active_submenu->IsVisible()) {
+        if (!g_visible_submenus.empty()) {
+            DWORD ignore_outside_click_until = 0;
+            for (SubMenuWindow* menu : g_visible_submenus) {
+                if (menu && menu->IsVisible()) {
+                    ignore_outside_click_until = (std::max)(ignore_outside_click_until, menu->m_ignore_outside_click_until);
+                }
+            }
+            bool ignore_outside_close = GetTickCount() <= ignore_outside_click_until;
             MSLLHOOKSTRUCT* pMouseStruct = (MSLLHOOKSTRUCT*)lParam;
             POINT pt = pMouseStruct->pt;
             
-            // 检查点击位置是否在任何子菜单窗口内（包括嵌套的子菜单）
-            bool clicked_inside_menu = false;
-            
-            // 从顶层子菜单开始检查
-            SubMenuWindow* current = g_active_submenu;
-            while (current) {
-                RECT rect;
-                GetWindowRect(current->GetHwnd(), &rect);
-                
-                if (PtInRect(&rect, pt)) {
-                    clicked_inside_menu = true;
-                    break;
-                }
-                
-                // 检查下一级子菜单
-                current = current->m_child_submenu;
+            SubMenuWindow* target_menu = FindVisibleSubMenuAtPoint(pt);
+            if (target_menu && target_menu->GetHwnd()) {
+                POINT client_pt = pt;
+                ScreenToClient(target_menu->GetHwnd(), &client_pt);
+                target_menu->OnClick(client_pt.x, client_pt.y);
+                return 1;
             }
-            
-            if (!clicked_inside_menu) {
+
+            if (!ignore_outside_close) {
                 // 点击在所有菜单外，关闭顶层菜单（会自动关闭所有子菜单）
-                g_active_submenu->Hide();
+                for (SubMenuWindow* menu : g_visible_submenus) {
+                    if (menu && menu->IsVisible() && !menu->m_parent_submenu) {
+                        menu->Hide();
+                        break;
+                    }
+                }
             }
         }
     }
     
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
+}
+
+bool SubMenuWindow::ContainsActivePoint(POINT screen_pt) {
+    return FindVisibleSubMenuAtPoint(screen_pt) != nullptr;
+}
+
+bool SubMenuWindow::DispatchActiveClick(POINT screen_pt) {
+    SubMenuWindow* target_menu = FindVisibleSubMenuAtPoint(screen_pt);
+    if (!target_menu || !target_menu->GetHwnd()) {
+        return false;
+    }
+
+    POINT client_pt = screen_pt;
+    ScreenToClient(target_menu->GetHwnd(), &client_pt);
+    target_menu->OnClick(client_pt.x, client_pt.y);
+    return true;
 }
 
 // ============================================================================
@@ -1092,62 +1232,22 @@ void SubMenuWindow::AnimateScale() {
 
 // 默认主题（亮色）
 SubMenuWindow::MenuTheme SubMenuWindow::MenuTheme::Default() {
-    MenuTheme theme;
-    theme.backgroundColor = D2D1::ColorF(1.0f, 1.0f, 1.0f);      // 白色
-    theme.hoverColor = D2D1::ColorF(0.85f, 0.90f, 1.0f);         // 浅蓝色
-    theme.textColor = D2D1::ColorF(0.1f, 0.1f, 0.1f);            // 深灰色
-    theme.disabledColor = D2D1::ColorF(0.6f, 0.6f, 0.6f);        // 灰色
-    theme.borderColor = D2D1::ColorF(0.8f, 0.8f, 0.8f);          // 浅灰色
-    theme.separatorColor = D2D1::ColorF(0.85f, 0.85f, 0.85f);    // 浅灰色
-    theme.borderWidth = 1;
-    theme.cornerRadius = 0;
-    theme.shadowSize = 4;
-    return theme;
+    return BuildCurrentMenuTheme();
 }
 
 // 亮色主题
 SubMenuWindow::MenuTheme SubMenuWindow::MenuTheme::Light() {
-    MenuTheme theme;
-    theme.backgroundColor = D2D1::ColorF(0.98f, 0.98f, 0.98f);   // 浅灰白色
-    theme.hoverColor = D2D1::ColorF(0.90f, 0.94f, 1.0f);         // 浅蓝色
-    theme.textColor = D2D1::ColorF(0.15f, 0.15f, 0.15f);         // 深灰色
-    theme.disabledColor = D2D1::ColorF(0.65f, 0.65f, 0.65f);     // 灰色
-    theme.borderColor = D2D1::ColorF(0.85f, 0.85f, 0.85f);       // 浅灰色
-    theme.separatorColor = D2D1::ColorF(0.88f, 0.88f, 0.88f);    // 浅灰色
-    theme.borderWidth = 1;
-    theme.cornerRadius = 4;
-    theme.shadowSize = 6;
-    return theme;
+    return BuildCurrentMenuTheme();
 }
 
 // 暗色主题
 SubMenuWindow::MenuTheme SubMenuWindow::MenuTheme::Dark() {
-    MenuTheme theme;
-    theme.backgroundColor = D2D1::ColorF(0.15f, 0.15f, 0.15f);   // 深灰色
-    theme.hoverColor = D2D1::ColorF(0.25f, 0.30f, 0.40f);        // 深蓝灰色
-    theme.textColor = D2D1::ColorF(0.95f, 0.95f, 0.95f);         // 浅灰白色
-    theme.disabledColor = D2D1::ColorF(0.50f, 0.50f, 0.50f);     // 中灰色
-    theme.borderColor = D2D1::ColorF(0.30f, 0.30f, 0.30f);       // 深灰色
-    theme.separatorColor = D2D1::ColorF(0.35f, 0.35f, 0.35f);    // 深灰色
-    theme.borderWidth = 1;
-    theme.cornerRadius = 4;
-    theme.shadowSize = 8;
-    return theme;
+    return BuildCurrentMenuTheme();
 }
 
 // 蓝色主题
 SubMenuWindow::MenuTheme SubMenuWindow::MenuTheme::Blue() {
-    MenuTheme theme;
-    theme.backgroundColor = D2D1::ColorF(0.95f, 0.97f, 1.0f);    // 浅蓝白色
-    theme.hoverColor = D2D1::ColorF(0.70f, 0.85f, 1.0f);         // 蓝色
-    theme.textColor = D2D1::ColorF(0.10f, 0.20f, 0.40f);         // 深蓝色
-    theme.disabledColor = D2D1::ColorF(0.60f, 0.65f, 0.75f);     // 蓝灰色
-    theme.borderColor = D2D1::ColorF(0.70f, 0.80f, 0.95f);       // 浅蓝色
-    theme.separatorColor = D2D1::ColorF(0.80f, 0.88f, 0.98f);    // 浅蓝色
-    theme.borderWidth = 1;
-    theme.cornerRadius = 6;
-    theme.shadowSize = 5;
-    return theme;
+    return BuildCurrentMenuTheme();
 }
 
 // 设置主题

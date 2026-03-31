@@ -1,8 +1,9 @@
-#include "log.h"
+﻿#include "log.h"
 #include "emoji_window.h"
 #include "treeview_window.h"  // WM_EW_TABPAGE_VISIBLE
 #include "submenu_window.h"
 #include <algorithm>
+#include <cmath>
 #include <windowsx.h>  // For GET_X_LPARAM and GET_Y_LPARAM
 #include <set>
 
@@ -17,16 +18,44 @@ std::map<HWND, CheckBoxState*> g_checkboxes;
 std::map<HWND, ProgressBarState*> g_progressbars;
 std::map<HWND, PictureBoxState*> g_pictureboxes;
 std::map<HWND, RadioButtonState*> g_radiobuttons;
+std::map<HWND, SliderState*> g_sliders;
+std::map<HWND, SwitchState*> g_switches;
+std::map<HWND, TooltipState*> g_tooltips;
+std::map<HWND, NotificationState*> g_notifications;
 std::map<int, std::vector<HWND>> g_radio_groups;  // 分组管理
 std::map<HWND, ListBoxState*> g_listboxes;
 std::map<HWND, ComboBoxState*> g_comboboxes;
 std::map<HWND, HotKeyState*> g_hotkeys;
 std::map<HWND, GroupBoxState*> g_groupboxes;
+std::map<HWND, PanelState*> g_panels;
 std::map<HWND, DataGridViewState*> g_datagrids;
 std::map<HWND, LayoutManager*> g_layout_managers;
+static std::map<HWND, SIZE> g_layout_control_preferred_sizes;
+static std::map<std::pair<HWND, int>, SIZE> g_layout_button_preferred_sizes;
 std::map<HWND, MenuBarState*> g_menubars;
 std::map<HWND, PopupMenuState*> g_popup_menus;
 std::map<HWND, HWND> g_control_popup_menu_bindings;  // 控件 → 弹出菜单绑定
+std::map<HWND, std::map<int, HWND>> g_button_popup_menu_bindings; // 父窗口按钮ID → 弹出菜单绑定
+struct ButtonWindowBindingInfo {
+    HWND state_host = nullptr;
+    HWND callback_parent = nullptr;
+    int button_id = 0;
+};
+static std::map<HWND, ButtonWindowBindingInfo> g_button_window_bindings; // 按钮窗口 -> 绑定信息
+std::map<int, UINT32> g_button_text_colors;
+std::map<int, UINT32> g_button_border_colors;
+std::map<int, UINT32> g_button_hover_bg_colors;
+std::map<int, UINT32> g_button_hover_border_colors;
+std::map<int, UINT32> g_button_hover_text_colors;
+std::map<HWND, int> g_checkbox_styles;
+std::map<HWND, UINT32> g_checkbox_check_colors;
+std::map<HWND, int> g_radio_styles;
+std::map<HWND, int> g_groupbox_styles;
+std::map<HWND, int> g_tab_header_styles;
+std::map<HWND, bool> g_datagrid_double_click_enabled;
+std::map<HWND, bool> g_datagrid_header_multiline;
+std::map<HWND, int> g_datagrid_header_styles;
+std::map<HWND, std::map<int, std::vector<std::wstring>>> g_datagrid_combo_items;
 ButtonClickCallback g_button_callback = nullptr;
 WindowResizeCallback g_window_resize_callback = nullptr;
 WindowCloseCallback g_window_close_callback = nullptr;
@@ -51,8 +80,32 @@ static HWND g_message_loop_main_window = nullptr;
 // Forward declarations
 LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 LRESULT CALLBACK TabControlSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+LRESULT CALLBACK CustomTabControlProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 static void EnsureThemesInitialized();
 static int VisibleIndexToPageIndex(TabControlState* state, int visibleIdx);
+static BOOL ApplySelectTab(HWND hTabControl, int index);
+static PopupMenuState* LookupPopupMenuState(HWND hPopupMenu);
+static HWND ResolveBoundPopupMenuAtPoint(HWND root_hwnd, POINT screen_pt);
+static HWND ResolveBoundButtonMenuAtPoint(HWND root_hwnd, POINT screen_pt);
+static HWND ResolveBoundPopupMenu(HWND hwnd);
+static bool TryShowBoundPopupMenu(HWND hwnd, int x, int y, bool is_screen_coords);
+__declspec(dllexport) void __stdcall ShowContextMenu(HWND hPopupMenu, int x, int y);
+static void DestroyMenuBarPopup(MenuBarState* menubar);
+static void ShowMenuBarPopup(MenuBarState* menubar, const MenuItem& item, int screen_x, int screen_y);
+static bool ActivatePopupMenuItem(PopupMenuState* state, HWND popup_hwnd, int item_index);
+static bool DispatchVisiblePopupMenuClick(HWND root_hwnd, POINT screen_pt, bool button_up);
+static void DestroyVisiblePopupMenusForRoot(HWND root_hwnd);
+static LRESULT CALLBACK EmojiButtonWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+static LRESULT CALLBACK TooltipTargetProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
+static bool IsButtonOwnedByAnyGroupBox(int button_id, GroupBoxState** out_groupbox = nullptr);
+static EmojiButton* FindGroupBoxButtonAtPoint(GroupBoxState* gb, int x, int y);
+static void DrawGroupBoxOwnedButtons(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxState* gb);
+static EmojiButton* FindEmojiButton(HWND hParent, int button_id);
+static void SyncEmojiButtonWindow(EmojiButton* button);
+static const wchar_t* CUSTOM_TAB_CONTROL_CLASS = L"EmojiWindowCustomTabControl";
+static inline UINT32 ResolveThemeColor(UINT32 color);
+static UINT32 BlendThemeSurface(UINT32 surface, UINT32 accent, float accent_ratio);
+static std::wstring NormalizeD2DEditText(const std::wstring& text, bool multiline);
 
 // ========== 主题辅助函数 ==========
 // 获取主题颜色，如果主题未初始化则返回默认值
@@ -67,6 +120,10 @@ static inline UINT32 ThemeColor_TextPrimary() {
 static inline UINT32 ThemeColor_TextRegular() {
     if (g_current_theme) return g_current_theme->colors.text_regular;
     return 0xFF606266;
+}
+static inline UINT32 ThemeColor_TextSecondary() {
+    if (g_current_theme) return g_current_theme->colors.text_secondary;
+    return 0xFF909399;
 }
 static inline UINT32 ThemeColor_TextPlaceholder() {
     if (g_current_theme) return g_current_theme->colors.text_placeholder;
@@ -83,6 +140,10 @@ static inline UINT32 ThemeColor_BorderLight() {
 static inline UINT32 ThemeColor_BorderLighter() {
     if (g_current_theme) return g_current_theme->colors.border_lighter;
     return 0xFFEBEEF5;
+}
+static inline UINT32 ThemeColor_BorderExtraLight() {
+    if (g_current_theme) return g_current_theme->colors.border_extra_light;
+    return 0xFFF2F6FC;
 }
 static inline UINT32 ThemeColor_Background() {
     if (g_current_theme) return g_current_theme->colors.background;
@@ -130,16 +191,14 @@ static inline UINT32 ThemeColor_Pressed(UINT32 base) {
     b = max(0, b * 90 / 100);
     return (a << 24) | (r << 16) | (g << 8) | b;
 }
-// 根据基色生成浅色背景（混合白色90%）
+// 根据基色生成浅色背景（浅色主题用背景色轻混合，深色主题用暗面轻染色）
 static inline UINT32 ThemeColor_LightBg(UINT32 base) {
-    int a = (base >> 24) & 0xFF;
-    int r = (base >> 16) & 0xFF;
-    int g = (base >> 8) & 0xFF;
-    int b = base & 0xFF;
-    r = r + (255 - r) * 90 / 100;
-    g = g + (255 - g) * 90 / 100;
-    b = b + (255 - b) * 90 / 100;
-    return (a << 24) | (r << 16) | (g << 8) | b;
+    EnsureThemesInitialized();
+    UINT32 resolved = ResolveThemeColor(base);
+    if (g_current_theme && g_current_theme->dark_mode) {
+        return BlendThemeSurface(ThemeColor_BackgroundLight(), resolved, 0.22f);
+    }
+    return BlendThemeSurface(ThemeColor_Background(), resolved, 0.10f);
 }
 static inline float ThemeSize_BorderRadius() {
     if (g_current_theme) return g_current_theme->sizes.border_radius;
@@ -155,9 +214,10 @@ static inline float ThemeSize_BorderWidth() {
 // 索引: 0=primary, 1=success, 2=warning, 3=danger, 4=info,
 //       5=text_primary, 6=text_regular, 7=text_secondary, 8=text_placeholder,
 //       9=border_base, 10=border_light, 11=border_lighter, 12=border_extra_light,
-//       13=background, 14=background_light
+//       13=background, 14=background_light,
+//       15=surface_primary, 16=surface_success, 17=surface_warning, 18=surface_danger, 19=surface_info
 static inline bool IsThemeColorIndex(UINT32 color) {
-    return color <= 14;
+    return color <= 19;
 }
 
 static inline UINT32 ResolveThemeColor(UINT32 color) {
@@ -180,12 +240,526 @@ static inline UINT32 ResolveThemeColor(UINT32 color) {
         case 12: return c.border_extra_light;
         case 13: return c.background;
         case 14: return c.background_light;
-        default: return color;
+        case 15: return ThemeColor_LightBg(c.primary);
+        case 16: return ThemeColor_LightBg(c.success);
+        case 17: return ThemeColor_LightBg(c.warning);
+        case 18: return ThemeColor_LightBg(c.danger);
+        case 19: return ThemeColor_LightBg(c.info);
+    default: return color;
     }
+}
+
+static void RebuildBrush(HBRUSH& brush, UINT32 color) {
+    if (brush) {
+        DeleteObject(brush);
+        brush = nullptr;
+    }
+    UINT32 resolved = ResolveThemeColor(color);
+    brush = CreateSolidBrush(RGB(
+        (resolved >> 16) & 0xFF,
+        (resolved >> 8) & 0xFF,
+        resolved & 0xFF
+    ));
 }
 
 // 鼠标进入跟踪集合
 static std::set<HWND> g_mouse_tracking_set;
+
+static PopupMenuState* LookupPopupMenuState(HWND hPopupMenu) {
+    auto it = g_popup_menus.find(hPopupMenu);
+    if (it == g_popup_menus.end()) return nullptr;
+    return it->second;
+}
+
+static void ClosePopupSubMenu(PopupMenuState* state) {
+    if (!state) return;
+    if (state->child_popup_handle) {
+        HWND child_popup_handle = state->child_popup_handle;
+        state->child_popup_handle = nullptr;
+        DestroyEmojiPopupMenu(child_popup_handle);
+    }
+    if (state->submenu) {
+        state->submenu->Hide();
+        delete state->submenu;
+        state->submenu = nullptr;
+    }
+    state->submenu_owner_index = -1;
+}
+
+static void ShowPopupSubMenu(PopupMenuState* state, HWND popup_hwnd, int item_index) {
+    if (!state || !popup_hwnd) return;
+    if (item_index < 0 || item_index >= (int)state->items.size()) {
+        ClosePopupSubMenu(state);
+        return;
+    }
+
+    MenuItem& item = state->items[item_index];
+    if (item.sub_items.empty() || item.separator || !item.enabled) {
+        ClosePopupSubMenu(state);
+        return;
+    }
+
+    if (state->child_popup_handle && state->submenu_owner_index == item_index) {
+        PopupMenuState* child_state = LookupPopupMenuState(state->child_popup_handle);
+        if (child_state && child_state->hwnd && IsWindow(child_state->hwnd) && child_state->visible) {
+            return;
+        }
+    }
+
+    ClosePopupSubMenu(state);
+
+    UINT dpi = GetDpiForWindow(popup_hwnd);
+    if (dpi == 0) dpi = 96;
+    const float scale = (float)dpi / 96.0f;
+    POINT pt = {
+        (LONG)std::lround(item.bounds.right * scale),
+        (LONG)std::lround(item.bounds.top * scale)
+    };
+    ClientToScreen(popup_hwnd, &pt);
+
+    HWND child_popup = CreateEmojiPopupMenu(popup_hwnd);
+    PopupMenuState* child_state = LookupPopupMenuState(child_popup);
+    if (!child_state) {
+        WriteLog("ShowPopupSubMenu: failed to allocate child popup state");
+        return;
+    }
+
+    child_state->items = item.sub_items;
+    child_state->font = state->font;
+    child_state->bg_color = state->bg_color;
+    child_state->fg_color = state->fg_color;
+    child_state->hover_color = state->hover_color;
+    child_state->callback = state->callback;
+    child_state->callback_menu_id = state->callback_menu_id;
+    child_state->auto_destroy = true;
+    child_state->owner_menubar = state->owner_menubar;
+    child_state->parent_popup_handle = popup_hwnd;
+
+    state->child_popup_handle = child_popup;
+    WriteLog("ShowPopupSubMenu: popup=%p owner_index=%d child_popup=%p screen=(%d,%d) dpi=%u", popup_hwnd, item_index, child_popup, pt.x, pt.y, dpi);
+    ShowContextMenu(child_popup, pt.x, pt.y);
+    state->submenu_owner_index = item_index;
+}
+
+static bool IsPointInsidePopupSubMenuTransit(PopupMenuState* state, HWND popup_hwnd, POINT screen_pt) {
+    if (!state || !popup_hwnd) {
+        return false;
+    }
+    if (!state->submenu && !state->child_popup_handle) {
+        return false;
+    }
+
+    RECT submenu_rect = {};
+    bool has_submenu_rect = false;
+    if (state->child_popup_handle) {
+        PopupMenuState* child_state = LookupPopupMenuState(state->child_popup_handle);
+        if (child_state && child_state->hwnd && IsWindow(child_state->hwnd) && child_state->visible) {
+            GetWindowRect(child_state->hwnd, &submenu_rect);
+            has_submenu_rect = true;
+        }
+    }
+
+    if (!has_submenu_rect && state->submenu) {
+        HWND submenu_hwnd = state->submenu->GetHwnd();
+        if (submenu_hwnd && IsWindow(submenu_hwnd) && state->submenu->IsVisible()) {
+            GetWindowRect(submenu_hwnd, &submenu_rect);
+            has_submenu_rect = true;
+        }
+    }
+
+    if (!has_submenu_rect) {
+        return false;
+    }
+
+    if (PtInRect(&submenu_rect, screen_pt)) {
+        return true;
+    }
+
+    if (state->submenu_owner_index < 0 || state->submenu_owner_index >= (int)state->items.size()) {
+        return false;
+    }
+
+    UINT dpi = GetDpiForWindow(popup_hwnd);
+    if (dpi == 0) dpi = 96;
+    const float scale = (float)dpi / 96.0f;
+    RECT owner_rect = {
+        (LONG)std::lround(state->items[state->submenu_owner_index].bounds.left * scale),
+        (LONG)std::lround(state->items[state->submenu_owner_index].bounds.top * scale),
+        (LONG)std::lround(state->items[state->submenu_owner_index].bounds.right * scale),
+        (LONG)std::lround(state->items[state->submenu_owner_index].bounds.bottom * scale)
+    };
+    MapWindowPoints(popup_hwnd, nullptr, reinterpret_cast<POINT*>(&owner_rect), 2);
+
+    RECT transit_rect = {};
+    transit_rect.top = (std::min)(owner_rect.top, submenu_rect.top) - 6;
+    transit_rect.bottom = (std::max)(owner_rect.bottom, submenu_rect.bottom) + 6;
+
+    if (submenu_rect.left >= owner_rect.right) {
+        transit_rect.left = owner_rect.right - 8;
+        transit_rect.right = submenu_rect.left + 8;
+    } else if (submenu_rect.right <= owner_rect.left) {
+        transit_rect.left = submenu_rect.right - 8;
+        transit_rect.right = owner_rect.left + 8;
+    } else {
+        transit_rect.left = (std::min)(owner_rect.left, submenu_rect.left) - 6;
+        transit_rect.right = (std::max)(owner_rect.right, submenu_rect.right) + 6;
+    }
+
+    return PtInRect(&transit_rect, screen_pt) != FALSE;
+}
+
+static void DestroyMenuBarPopup(MenuBarState* menubar) {
+    if (!menubar || !menubar->popup_menu_handle) return;
+    PopupMenuState* state = LookupPopupMenuState(menubar->popup_menu_handle);
+    if (state) {
+        DestroyEmojiPopupMenu(menubar->popup_menu_handle);
+    }
+    menubar->popup_menu_handle = nullptr;
+}
+
+static void ShowMenuBarPopup(MenuBarState* menubar, const MenuItem& item, int screen_x, int screen_y) {
+    if (!menubar || item.sub_items.empty()) return;
+
+    DestroyMenuBarPopup(menubar);
+
+    HWND hPopup = CreateEmojiPopupMenu(menubar->hwnd);
+    PopupMenuState* popup = LookupPopupMenuState(hPopup);
+    if (!popup) return;
+
+    popup->items = item.sub_items;
+    popup->font = menubar->font;
+    popup->bg_color = menubar->bg_color ? menubar->bg_color : ThemeColor_Background();
+    popup->hover_color = ThemeColor_LightBg(ThemeColor_Primary());
+    popup->callback = menubar->callback;
+    popup->callback_menu_id = item.id;
+    popup->auto_destroy = true;
+    popup->owner_menubar = menubar->hwnd;
+
+    menubar->opened_menu_id = item.id;
+    menubar->popup_menu_handle = hPopup;
+    ShowContextMenu(hPopup, screen_x, screen_y);
+}
+
+static bool IsPopupOwnedByRoot(PopupMenuState* state, HWND root_hwnd) {
+    if (!state) return false;
+    if (root_hwnd) {
+        HWND normalized_root = GetAncestor(root_hwnd, GA_ROOT);
+        if (normalized_root) {
+            root_hwnd = normalized_root;
+        }
+    }
+    HWND owner = state->owner_hwnd ? state->owner_hwnd : state->owner_menubar;
+    HWND popup_root = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
+    if (!popup_root) popup_root = owner;
+    return popup_root == root_hwnd;
+}
+
+static bool ActivatePopupMenuItem(PopupMenuState* state, HWND popup_hwnd, int item_index) {
+    if (!state || !popup_hwnd) return false;
+    if (item_index < 0 || item_index >= (int)state->items.size()) return false;
+
+    MenuItem& item = state->items[item_index];
+    if (!item.enabled || item.separator) {
+        return true;
+    }
+
+    if (!item.sub_items.empty()) {
+        if (state->callback) {
+            WriteLog("PopupMenuActivate: invoking callback menu_id=%d item_id=%d before submenu", state->callback_menu_id, item.id);
+            state->callback(state->callback_menu_id, item.id);
+        }
+        state->hovered_index = item_index;
+        ShowPopupSubMenu(state, popup_hwnd, item_index);
+    } else {
+        if (state->callback) {
+            WriteLog("PopupMenuActivate: invoking callback menu_id=%d item_id=%d before destroy", state->callback_menu_id, item.id);
+            state->callback(state->callback_menu_id, item.id);
+        }
+        HWND parent_popup = state->parent_popup_handle;
+        DestroyWindow(popup_hwnd);
+        while (parent_popup && IsWindow(parent_popup)) {
+            PopupMenuState* parent_state = LookupPopupMenuState(parent_popup);
+            HWND next_parent = parent_state ? parent_state->parent_popup_handle : nullptr;
+            DestroyWindow(parent_popup);
+            parent_popup = next_parent;
+        }
+    }
+    return true;
+}
+
+static void DestroyVisiblePopupMenusForRoot(HWND root_hwnd) {
+    std::vector<HWND> popups_to_destroy;
+    for (const auto& entry : g_popup_menus) {
+        PopupMenuState* state = entry.second;
+        if (!state || entry.first != state->hwnd || !state->hwnd || !IsWindow(state->hwnd) || !state->visible) {
+            continue;
+        }
+        if (!IsPopupOwnedByRoot(state, root_hwnd)) {
+            continue;
+        }
+        if ((std::find)(popups_to_destroy.begin(), popups_to_destroy.end(), state->hwnd) == popups_to_destroy.end()) {
+            popups_to_destroy.push_back(state->hwnd);
+        }
+    }
+
+    for (HWND popup_hwnd : popups_to_destroy) {
+        if (IsWindow(popup_hwnd)) {
+            DestroyWindow(popup_hwnd);
+        }
+    }
+}
+
+static bool DispatchVisiblePopupMenuClick(HWND root_hwnd, POINT screen_pt, bool button_up) {
+    if (!root_hwnd) return false;
+    HWND normalized_root = GetAncestor(root_hwnd, GA_ROOT);
+    if (normalized_root) {
+        root_hwnd = normalized_root;
+    }
+    WriteLog("DispatchVisiblePopupMenuClick: root=%p screen=(%d,%d) button_up=%d", root_hwnd, screen_pt.x, screen_pt.y, button_up ? 1 : 0);
+
+    PopupMenuState* target_popup = nullptr;
+    SubMenuWindow* target_submenu = nullptr;
+    RECT target_rect = {};
+    bool has_visible_popup = false;
+    DWORD ignore_until = 0;
+
+    for (const auto& entry : g_popup_menus) {
+        PopupMenuState* state = entry.second;
+        if (!state || entry.first != state->hwnd || !state->hwnd || !IsWindow(state->hwnd) || !state->visible) {
+            continue;
+        }
+        if (!IsPopupOwnedByRoot(state, root_hwnd)) {
+            continue;
+        }
+
+        has_visible_popup = true;
+        ignore_until = (std::max)(ignore_until, state->ignore_initial_button_up_until);
+
+        RECT rect = {};
+        GetWindowRect(state->hwnd, &rect);
+        WriteLog("DispatchVisiblePopupMenuClick: popup hwnd=%p rect=(%ld,%ld)-(%ld,%ld) visible=%d", state->hwnd, rect.left, rect.top, rect.right, rect.bottom, state->visible ? 1 : 0);
+        if (PtInRect(&rect, screen_pt)) {
+            if (!target_popup || rect.bottom >= target_rect.bottom) {
+                target_popup = state;
+                target_rect = rect;
+            }
+        }
+
+        if (state->child_popup_handle) {
+            PopupMenuState* child_state = LookupPopupMenuState(state->child_popup_handle);
+            if (child_state && child_state->hwnd && IsWindow(child_state->hwnd) && child_state->visible) {
+                RECT submenu_rect = {};
+                GetWindowRect(child_state->hwnd, &submenu_rect);
+                WriteLog("DispatchVisiblePopupMenuClick: child popup hwnd=%p rect=(%ld,%ld)-(%ld,%ld)", child_state->hwnd, submenu_rect.left, submenu_rect.top, submenu_rect.right, submenu_rect.bottom);
+            }
+        }
+
+        if (state->submenu && state->submenu->IsVisible()) {
+            HWND submenu_hwnd = state->submenu->GetHwnd();
+            if (submenu_hwnd && IsWindow(submenu_hwnd)) {
+                RECT submenu_rect = {};
+                GetWindowRect(submenu_hwnd, &submenu_rect);
+                WriteLog("DispatchVisiblePopupMenuClick: submenu hwnd=%p rect=(%ld,%ld)-(%ld,%ld)", submenu_hwnd, submenu_rect.left, submenu_rect.top, submenu_rect.right, submenu_rect.bottom);
+                if (PtInRect(&submenu_rect, screen_pt)) {
+                    target_submenu = state->submenu;
+                }
+            }
+        }
+    }
+
+    if (!has_visible_popup) {
+        WriteLog("DispatchVisiblePopupMenuClick: no visible popup for root");
+        return false;
+    }
+
+    if (target_submenu) {
+        WriteLog("DispatchVisiblePopupMenuClick: target submenu hwnd=%p", target_submenu->GetHwnd());
+        if (button_up) {
+            POINT client_pt = screen_pt;
+            ScreenToClient(target_submenu->GetHwnd(), &client_pt);
+            target_submenu->OnClick(client_pt.x, client_pt.y);
+        }
+        return true;
+    }
+
+    if (SubMenuWindow::ContainsActivePoint(screen_pt)) {
+        if (button_up) {
+            SubMenuWindow::DispatchActiveClick(screen_pt);
+        }
+        return true;
+    }
+
+    if (button_up && GetTickCount() <= ignore_until) {
+        WriteLog("DispatchVisiblePopupMenuClick: ignoring initial button up while popup is opening");
+        return true;
+    }
+
+    if (target_popup && target_popup->hwnd) {
+        WriteLog("DispatchVisiblePopupMenuClick: target popup hwnd=%p", target_popup->hwnd);
+        if (button_up) {
+            POINT client_pt = screen_pt;
+            ScreenToClient(target_popup->hwnd, &client_pt);
+            float fx = (float)client_pt.x;
+            float fy = (float)client_pt.y;
+            for (size_t i = 0; i < target_popup->items.size(); i++) {
+                const D2D1_RECT_F& bounds = target_popup->items[i].bounds;
+                if (fx >= bounds.left && fx <= bounds.right &&
+                    fy >= bounds.top && fy <= bounds.bottom) {
+                    WriteLog("DispatchVisiblePopupMenuClick: popup hwnd=%p index=%zu", target_popup->hwnd, i);
+                    ActivatePopupMenuItem(target_popup, target_popup->hwnd, (int)i);
+                    return true;
+                }
+            }
+            DestroyWindow(target_popup->hwnd);
+        }
+        return true;
+    }
+
+    WriteLog("DispatchVisiblePopupMenuClick: popup visible but no hit target");
+    if (button_up) {
+        DestroyVisiblePopupMenusForRoot(root_hwnd);
+    }
+    return true;
+}
+
+static int GetWindowHierarchyDepth(HWND hwnd) {
+    int depth = 0;
+    while (hwnd) {
+        ++depth;
+        hwnd = GetParent(hwnd);
+    }
+    return depth;
+}
+
+static HWND ResolveBoundPopupMenuAtPoint(HWND root_hwnd, POINT screen_pt) {
+    HWND root = GetAncestor(root_hwnd, GA_ROOT);
+    if (!root) root = root_hwnd;
+
+    HWND best_popup = nullptr;
+    int best_area = INT_MAX;
+    int best_depth = -1;
+
+    for (auto it = g_control_popup_menu_bindings.begin(); it != g_control_popup_menu_bindings.end(); ) {
+        HWND hControl = it->first;
+        HWND hPopupMenu = it->second;
+        if (!IsWindow(hControl) || !LookupPopupMenuState(hPopupMenu)) {
+            it = g_control_popup_menu_bindings.erase(it);
+            continue;
+        }
+        ++it;
+
+        HWND control_root = GetAncestor(hControl, GA_ROOT);
+        if (control_root != root) continue;
+        if (!IsWindowVisible(hControl)) continue;
+
+        RECT rc = {};
+        if (!GetWindowRect(hControl, &rc) || !PtInRect(&rc, screen_pt)) continue;
+
+        int area = max(1, (rc.right - rc.left) * (rc.bottom - rc.top));
+        int depth = GetWindowHierarchyDepth(hControl);
+        if (!best_popup || area < best_area || (area == best_area && depth > best_depth)) {
+            best_popup = hPopupMenu;
+            best_area = area;
+            best_depth = depth;
+        }
+    }
+
+    return best_popup;
+}
+
+static HWND ResolveBoundButtonMenuAtPoint(HWND root_hwnd, POINT screen_pt) {
+    auto resolve_bound_button_menu_for_hwnd = [](HWND hwnd) -> HWND {
+        while (hwnd) {
+            auto button_binding_it = g_button_window_bindings.find(hwnd);
+            if (button_binding_it != g_button_window_bindings.end()) {
+                        HWND logical_parent = button_binding_it->second.callback_parent;
+                        int button_id = button_binding_it->second.button_id;
+                auto popup_group_it = g_button_popup_menu_bindings.find(logical_parent);
+                if (popup_group_it != g_button_popup_menu_bindings.end()) {
+                    auto popup_it = popup_group_it->second.find(button_id);
+                    if (popup_it != popup_group_it->second.end() && LookupPopupMenuState(popup_it->second)) {
+                        return popup_it->second;
+                    }
+                }
+            }
+            hwnd = GetParent(hwnd);
+        }
+        return (HWND)nullptr;
+    };
+
+    HWND point_hwnd = WindowFromPoint(screen_pt);
+    if (HWND popup = resolve_bound_button_menu_for_hwnd(point_hwnd)) {
+        return popup;
+    }
+    if (HWND popup = resolve_bound_button_menu_for_hwnd(root_hwnd)) {
+        return popup;
+    }
+
+    std::vector<HWND> candidate_hosts;
+    auto append_candidate_chain = [&candidate_hosts](HWND start) {
+        for (HWND current = start; current; current = GetParent(current)) {
+            if ((std::find)(candidate_hosts.begin(), candidate_hosts.end(), current) == candidate_hosts.end()) {
+                candidate_hosts.push_back(current);
+            }
+        }
+    };
+    append_candidate_chain(point_hwnd);
+    append_candidate_chain(root_hwnd);
+
+    for (HWND host : candidate_hosts) {
+        auto window_it = g_windows.find(host);
+        if (window_it == g_windows.end()) continue;
+
+        auto binding_it = g_button_popup_menu_bindings.find(host);
+        if (binding_it == g_button_popup_menu_bindings.end() || binding_it->second.empty()) continue;
+
+        POINT client_pt = screen_pt;
+        ScreenToClient(host, &client_pt);
+
+        WindowState* state = window_it->second;
+        for (auto button_it = state->buttons.rbegin(); button_it != state->buttons.rend(); ++button_it) {
+            const EmojiButton& button = *button_it;
+            if (!button.visible || !button.enabled || !button.ContainsPoint(client_pt.x, client_pt.y)) continue;
+
+            auto popup_it = binding_it->second.find(button.id);
+            if (popup_it != binding_it->second.end() && LookupPopupMenuState(popup_it->second)) {
+                return popup_it->second;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+static HWND ResolveBoundPopupMenu(HWND hwnd) {
+    HWND current = hwnd;
+    while (current) {
+        auto binding_it = g_control_popup_menu_bindings.find(current);
+        if (binding_it != g_control_popup_menu_bindings.end()) {
+            if (LookupPopupMenuState(binding_it->second)) {
+                return binding_it->second;
+            }
+            g_control_popup_menu_bindings.erase(binding_it);
+        }
+        current = GetParent(current);
+    }
+    return nullptr;
+}
+
+static bool TryShowBoundPopupMenu(HWND hwnd, int x, int y, bool is_screen_coords) {
+    HWND hPopupMenu = ResolveBoundPopupMenu(hwnd);
+    if (!hPopupMenu) return false;
+
+    POINT pt = { x, y };
+    if (!is_screen_coords) {
+        ClientToScreen(hwnd, &pt);
+    } else if (pt.x == -1 || pt.y == -1) {
+        GetCursorPos(&pt);
+    }
+
+    ShowContextMenu(hPopupMenu, pt.x, pt.y);
+    return true;
+}
 
 // 通用事件消息处理辅助函数（前向声明+定义）
 static bool HandleCommonEvents(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, EventCallbacks* ec) {
@@ -223,12 +797,59 @@ static bool HandleCommonEvents(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         break;
 
     case WM_RBUTTONUP:
+    {
         if (ec->on_right_click) {
             int x = GET_X_LPARAM(lparam);
             int y = GET_Y_LPARAM(lparam);
             ec->on_right_click(hwnd, x, y);
-            return true;
         }
+        return false;
+    }
+        break;
+
+    case WM_CONTEXTMENU:
+    {
+        bool handled = false;
+        HWND target_hwnd = (HWND)wparam;
+        if (!target_hwnd || !IsWindow(target_hwnd)) {
+            target_hwnd = hwnd;
+        }
+        HWND root_hwnd = GetAncestor(target_hwnd, GA_ROOT);
+        if (!root_hwnd) root_hwnd = GetAncestor(hwnd, GA_ROOT);
+        if (!root_hwnd) root_hwnd = hwnd;
+        POINT screen_pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+        if (screen_pt.x == -1 && screen_pt.y == -1) {
+            GetCursorPos(&screen_pt);
+        }
+        if ((GET_X_LPARAM(lparam) == -1 && GET_Y_LPARAM(lparam) == -1)) {
+            EventCallbacks* target_ec = (target_hwnd == hwnd) ? ec : FindEventCallbacks(target_hwnd);
+            if (target_ec && target_ec->on_right_click) {
+                POINT client_pt = screen_pt;
+                ScreenToClient(target_hwnd, &client_pt);
+                target_ec->on_right_click(target_hwnd, client_pt.x, client_pt.y);
+                handled = true;
+            }
+        }
+        HWND point_popup = ResolveBoundButtonMenuAtPoint(target_hwnd, screen_pt);
+        if (!point_popup) {
+            point_popup = ResolveBoundPopupMenuAtPoint(root_hwnd, screen_pt);
+        }
+        if (point_popup) {
+            ShowContextMenu(point_popup, screen_pt.x, screen_pt.y);
+            handled = true;
+        } else if (TryShowBoundPopupMenu(target_hwnd, screen_pt.x, screen_pt.y, true)) {
+            handled = true;
+        } else if (target_hwnd != hwnd && TryShowBoundPopupMenu(hwnd, screen_pt.x, screen_pt.y, true)) {
+            handled = true;
+        }
+        if (!handled && target_hwnd == hwnd && ec && ec->on_right_click) {
+            POINT client_pt = screen_pt;
+            ScreenToClient(hwnd, &client_pt);
+            ec->on_right_click(hwnd, client_pt.x, client_pt.y);
+            handled = true;
+        }
+        return handled;
+    }
         break;
 
     case WM_SETFOCUS:
@@ -269,6 +890,8 @@ static bool HandleCommonEvents(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
     case WM_NCDESTROY:
         g_mouse_tracking_set.erase(hwnd);
+        g_control_popup_menu_bindings.erase(hwnd);
+        g_layout_control_preferred_sizes.erase(hwnd);
         break;
     }
 
@@ -316,6 +939,497 @@ UINT32 DarkenColor(UINT32 color, float factor) {
     UINT32 g = (UINT32)(((color >> 8) & 0xFF) * factor);
     UINT32 b = (UINT32)((color & 0xFF) * factor);
     return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+static float ColorLuma(UINT32 color) {
+    color = ResolveThemeColor(color);
+    float r = ((color >> 16) & 0xFF) / 255.0f;
+    float g = ((color >> 8) & 0xFF) / 255.0f;
+    float b = (color & 0xFF) / 255.0f;
+    return 0.299f * r + 0.587f * g + 0.114f * b;
+}
+
+static UINT32 AutoContrastText(UINT32 bg_color) {
+    return ColorLuma(bg_color) >= 0.62f ? 0xFF303133 : 0xFFFFFFFF;
+}
+
+struct ButtonRenderMetrics {
+    float radius;
+    float border_width;
+    float text_size;
+    float emoji_size;
+    float spinner_size;
+    float content_spacing;
+};
+
+struct ButtonRenderPalette {
+    bool fill = true;
+    bool border = true;
+    bool underline = false;
+    UINT32 bg = 0xFFFFFFFF;
+    UINT32 border_color = ThemeColor_BorderBase();
+    UINT32 text = ThemeColor_TextRegular();
+};
+
+static ButtonRenderMetrics GetButtonRenderMetrics(const EmojiButton& button) {
+    ButtonRenderMetrics metrics = {};
+    switch (button.visual_size) {
+    case BUTTON_SIZE_LARGE:
+        metrics.text_size = 14.0f;
+        metrics.emoji_size = 18.0f;
+        metrics.spinner_size = 14.0f;
+        metrics.radius = 6.0f;
+        metrics.content_spacing = 7.0f;
+        break;
+    case BUTTON_SIZE_SMALL:
+        metrics.text_size = 12.0f;
+        metrics.emoji_size = 14.0f;
+        metrics.spinner_size = 11.0f;
+        metrics.radius = 4.0f;
+        metrics.content_spacing = 5.0f;
+        break;
+    default:
+        metrics.text_size = 13.0f;
+        metrics.emoji_size = 16.0f;
+        metrics.spinner_size = 12.0f;
+        metrics.radius = 5.0f;
+        metrics.content_spacing = 6.0f;
+        break;
+    }
+    metrics.border_width = 1.0f;
+    if (button.round || button.circle) {
+        metrics.radius = max(4.0f, min((float)button.width, (float)button.height) * 0.5f);
+    }
+    return metrics;
+}
+
+static UINT32 ResolveLegacyButtonColor(UINT32 color) {
+    UINT32 resolved = ResolveThemeColor(color);
+    UINT32 rgb = resolved & 0x00FFFFFF;
+    if (rgb == 0x409EFF) return ThemeColor_Primary();
+    if (rgb == 0x67C23A) return ThemeColor_Success();
+    if (rgb == 0xE6A23C) return ThemeColor_Warning();
+    if (rgb == 0xF56C6C) return ThemeColor_Danger();
+    if (rgb == 0x909399) return ThemeColor_Info();
+    return resolved;
+}
+
+static UINT32 BlendThemeSurface(UINT32 surface, UINT32 accent, float accent_ratio) {
+    accent_ratio = (std::max)(0.0f, (std::min)(1.0f, accent_ratio));
+    const float surface_ratio = 1.0f - accent_ratio;
+    UINT32 a = (surface >> 24) & 0xFF;
+    if (a == 0) a = 0xFF;
+    UINT32 r = (UINT32)((((surface >> 16) & 0xFF) * surface_ratio) + (((accent >> 16) & 0xFF) * accent_ratio) + 0.5f);
+    UINT32 g = (UINT32)((((surface >> 8) & 0xFF) * surface_ratio) + (((accent >> 8) & 0xFF) * accent_ratio) + 0.5f);
+    UINT32 b = (UINT32)(((surface & 0xFF) * surface_ratio) + ((accent & 0xFF) * accent_ratio) + 0.5f);
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+static UINT32 ResolveContainerBackgroundColor(HWND hwnd, UINT32 fallback = 13) {
+    EnsureThemesInitialized();
+    std::set<HWND> visited;
+    HWND current = hwnd;
+    while (current && visited.insert(current).second) {
+        auto groupbox_it = g_groupboxes.find(current);
+        if (groupbox_it != g_groupboxes.end() && groupbox_it->second) {
+            int style = GROUPBOX_STYLE_OUTLINE;
+            auto style_it = g_groupbox_styles.find(current);
+            if (style_it != g_groupbox_styles.end()) {
+                style = style_it->second;
+            }
+            if (style == GROUPBOX_STYLE_OUTLINE) {
+                current = groupbox_it->second->parent;
+                continue;
+            }
+            UINT32 bg = groupbox_it->second->bg_color;
+            return ResolveThemeColor(bg ? bg : 14);
+        }
+
+        auto panel_it = g_panels.find(current);
+        if (panel_it != g_panels.end() && panel_it->second) {
+            UINT32 bg = panel_it->second->bg_color;
+            return ResolveThemeColor(bg ? bg : 13);
+        }
+
+        auto window_it = g_windows.find(current);
+        if (window_it != g_windows.end() && window_it->second) {
+            UINT32 bg = window_it->second->client_bg_color;
+            return ResolveThemeColor(bg ? bg : 13);
+        }
+
+        current = GetParent(current);
+    }
+
+    return ResolveThemeColor(fallback);
+}
+
+static UINT32 ResolveLegacyLabelTextColor(UINT32 color) {
+    if (IsThemeColorIndex(color)) return ResolveThemeColor(color);
+    EnsureThemesInitialized();
+    UINT32 rgb = color & 0x00FFFFFF;
+    if (rgb == 0x303133) return ThemeColor_TextPrimary();
+    if (rgb == 0x606266) return ThemeColor_TextRegular();
+    if (rgb == 0x909399) return ThemeColor_TextSecondary();
+    if (rgb == 0xC0C4CC) return ThemeColor_TextPlaceholder();
+    if (g_current_theme && g_current_theme->dark_mode) {
+        if (rgb == 0x1F5E99) return LightenColor(ThemeColor_Primary(), 1.08f);
+        if (rgb == 0x3A7A2D) return LightenColor(ThemeColor_Success(), 1.06f);
+        if (rgb == 0x8C4A00) return LightenColor(ThemeColor_Warning(), 1.04f);
+        if (rgb == 0x7C3AED) return LightenColor(color, 1.18f);
+    }
+    return color;
+}
+
+static UINT32 ResolveLegacyLabelBackgroundColor(const LabelState* state) {
+    if (!state) return ThemeColor_Background();
+    UINT32 color = state->bg_color;
+    if (IsThemeColorIndex(color)) return ResolveThemeColor(color);
+    EnsureThemesInitialized();
+    UINT32 rgb = color & 0x00FFFFFF;
+    if (rgb == 0xFFFFFF) return ResolveContainerBackgroundColor(state->parent, 13);
+    if (rgb == 0xF5F7FA) return ResolveContainerBackgroundColor(state->parent, 14);
+    if (g_current_theme && g_current_theme->dark_mode) {
+        if (rgb == 0xEAF3FF) return BlendThemeSurface(ThemeColor_BackgroundLight(), ThemeColor_Primary(), 0.22f);
+        if (rgb == 0xF0F9EB) return BlendThemeSurface(ThemeColor_BackgroundLight(), ThemeColor_Success(), 0.20f);
+        if (rgb == 0xFFF7E6 || rgb == 0xFFF3E0) return BlendThemeSurface(ThemeColor_BackgroundLight(), ThemeColor_Warning(), 0.22f);
+        if (rgb == 0xF4F0FF) return BlendThemeSurface(ThemeColor_BackgroundLight(), 0xFF8E44AD, 0.22f);
+    }
+    return color;
+}
+
+static void RebuildLabelBackgroundBrush(LabelState* state) {
+    if (!state) return;
+    if (state->bg_brush) {
+        DeleteObject(state->bg_brush);
+        state->bg_brush = nullptr;
+    }
+    UINT32 resolved = ResolveLegacyLabelBackgroundColor(state);
+    state->bg_brush = CreateSolidBrush(RGB(
+        (resolved >> 16) & 0xFF,
+        (resolved >> 8) & 0xFF,
+        resolved & 0xFF
+    ));
+}
+
+static LRESULT HandleManagedControlColorMessage(WPARAM wparam, LPARAM lparam) {
+    HWND hChild = (HWND)lparam;
+
+    auto edit_it = g_editboxes.find(hChild);
+    if (edit_it != g_editboxes.end()) {
+        EditBoxState* edit_state = edit_it->second;
+        HDC hdc = (HDC)wparam;
+        UINT32 resolved_fg = ResolveThemeColor(edit_state->fg_color);
+        UINT32 resolved_bg = ResolveThemeColor(edit_state->bg_color);
+        SetTextColor(hdc, RGB(
+            (resolved_fg >> 16) & 0xFF,
+            (resolved_fg >> 8) & 0xFF,
+            resolved_fg & 0xFF
+        ));
+        SetBkColor(hdc, RGB(
+            (resolved_bg >> 16) & 0xFF,
+            (resolved_bg >> 8) & 0xFF,
+            resolved_bg & 0xFF
+        ));
+        if (IsThemeColorIndex(edit_state->bg_color)) {
+            RebuildBrush(edit_state->bg_brush, edit_state->bg_color);
+        }
+        return (LRESULT)edit_state->bg_brush;
+    }
+
+    auto label_it = g_labels.find(hChild);
+    if (label_it != g_labels.end()) {
+        LabelState* label_state = label_it->second;
+        HDC hdc = (HDC)wparam;
+        UINT32 resolved_fg = ResolveLegacyLabelTextColor(label_state->fg_color);
+        UINT32 resolved_bg = ResolveLegacyLabelBackgroundColor(label_state);
+        SetTextColor(hdc, RGB(
+            (resolved_fg >> 16) & 0xFF,
+            (resolved_fg >> 8) & 0xFF,
+            resolved_fg & 0xFF
+        ));
+        SetBkColor(hdc, RGB(
+            (resolved_bg >> 16) & 0xFF,
+            (resolved_bg >> 8) & 0xFF,
+            resolved_bg & 0xFF
+        ));
+        if (!label_state->bg_brush) {
+            RebuildLabelBackgroundBrush(label_state);
+        }
+        return (LRESULT)label_state->bg_brush;
+    }
+
+    return 0;
+}
+
+static UINT32 ButtonTypeAccentColor(int type, UINT32 fallback) {
+    switch (type) {
+    case BUTTON_TYPE_PRIMARY: return ThemeColor_Primary();
+    case BUTTON_TYPE_SUCCESS: return ThemeColor_Success();
+    case BUTTON_TYPE_WARNING: return ThemeColor_Warning();
+    case BUTTON_TYPE_DANGER: return ThemeColor_Danger();
+    case BUTTON_TYPE_INFO: return ThemeColor_Info();
+    default: return fallback;
+    }
+}
+
+static ButtonRenderPalette ResolveButtonPalette(const EmojiButton& button) {
+    ButtonRenderPalette palette = {};
+    const UINT32 resolved_bg = ResolveLegacyButtonColor(button.bg_color);
+    const UINT32 resolved_rgb = resolved_bg & 0x00FFFFFF;
+    const bool legacy_default =
+        resolved_rgb == 0xFFFFFF ||
+        resolved_rgb == 0xF2F2F7 ||
+        resolved_rgb == 0xF5F7FA;
+    const bool explicit_default = button.visual_type == BUTTON_TYPE_DEFAULT;
+    const bool neutral_default = explicit_default || (button.visual_type == BUTTON_TYPE_AUTO && legacy_default);
+
+    UINT32 accent = resolved_bg;
+    if (button.visual_type != BUTTON_TYPE_AUTO) {
+        accent = ButtonTypeAccentColor(button.visual_type, resolved_bg);
+    }
+    if ((button.visual_style == BUTTON_STYLE_TEXT || button.visual_style == BUTTON_STYLE_LINK || button.visual_style == BUTTON_STYLE_PLAIN) && neutral_default) {
+        accent = ThemeColor_Primary();
+    }
+
+    if (!button.enabled) {
+        palette.text = 0xFFC0C4CC;
+        if (button.visual_style == BUTTON_STYLE_TEXT || button.visual_style == BUTTON_STYLE_LINK) {
+            palette.fill = false;
+            palette.border = false;
+            return palette;
+        }
+        palette.bg = 0xFFF5F7FA;
+        palette.border_color = 0xFFE4E7ED;
+        return palette;
+    }
+
+    switch (button.visual_style) {
+    case BUTTON_STYLE_PLAIN:
+        palette.bg = ThemeColor_LightBg(accent);
+        palette.border_color = accent;
+        palette.text = accent;
+        break;
+    case BUTTON_STYLE_TEXT:
+        palette.fill = false;
+        palette.border = false;
+        palette.text = accent;
+        break;
+    case BUTTON_STYLE_LINK:
+        palette.fill = false;
+        palette.border = false;
+        palette.underline = true;
+        palette.text = accent;
+        break;
+    default:
+        if (neutral_default) {
+            palette.bg = ThemeColor_Background();
+            palette.border_color = ThemeColor_BorderBase();
+            palette.text = ThemeColor_TextRegular();
+        } else {
+            palette.bg = accent;
+            palette.border_color = accent;
+            palette.text = AutoContrastText(accent);
+        }
+        break;
+    }
+
+    if (button.is_pressed) {
+        switch (button.visual_style) {
+        case BUTTON_STYLE_PLAIN:
+            palette.bg = DarkenColor(ThemeColor_LightBg(accent), 0.94f);
+            palette.border_color = DarkenColor(accent, 0.92f);
+            break;
+        case BUTTON_STYLE_TEXT:
+        case BUTTON_STYLE_LINK:
+            palette.text = DarkenColor(accent, 0.90f);
+            if (button.visual_style == BUTTON_STYLE_TEXT) {
+                palette.fill = true;
+                palette.bg = DarkenColor(ThemeColor_LightBg(accent), 0.94f);
+            }
+            break;
+        default:
+            if (neutral_default) {
+                palette.bg = DarkenColor(ThemeColor_LightBg(ThemeColor_Primary()), 0.94f);
+                palette.border_color = DarkenColor(ThemeColor_Primary(), 0.92f);
+                palette.text = ThemeColor_Primary();
+            } else {
+                palette.bg = ThemeColor_Pressed(accent);
+                palette.border_color = ThemeColor_Pressed(accent);
+                palette.text = AutoContrastText(palette.bg);
+            }
+            break;
+        }
+    } else if (button.is_hovered) {
+        switch (button.visual_style) {
+        case BUTTON_STYLE_PLAIN:
+            palette.bg = LightenColor(ThemeColor_LightBg(accent), 1.06f);
+            palette.border_color = accent;
+            break;
+        case BUTTON_STYLE_TEXT:
+            palette.fill = true;
+            palette.bg = ThemeColor_LightBg(accent);
+            break;
+        case BUTTON_STYLE_LINK:
+            palette.text = LightenColor(accent, 1.05f);
+            break;
+        default:
+            if (neutral_default) {
+                palette.bg = ThemeColor_LightBg(ThemeColor_Primary());
+                palette.border_color = ThemeColor_Primary();
+                palette.text = ThemeColor_Primary();
+            } else {
+                palette.bg = ThemeColor_Hover(accent);
+                palette.border_color = ThemeColor_Hover(accent);
+                palette.text = AutoContrastText(palette.bg);
+            }
+            break;
+        }
+    }
+
+    auto text_it = g_button_text_colors.find(button.id);
+    if (text_it != g_button_text_colors.end()) {
+        palette.text = ResolveThemeColor(text_it->second);
+    }
+
+    auto border_it = g_button_border_colors.find(button.id);
+    if (border_it != g_button_border_colors.end()) {
+        palette.border = true;
+        palette.border_color = ResolveThemeColor(border_it->second);
+    }
+
+    auto hover_bg_it = g_button_hover_bg_colors.find(button.id);
+    auto hover_border_it = g_button_hover_border_colors.find(button.id);
+    auto hover_text_it = g_button_hover_text_colors.find(button.id);
+
+    if (button.is_pressed) {
+        if (hover_bg_it != g_button_hover_bg_colors.end()) {
+            palette.fill = true;
+            palette.bg = DarkenColor(ResolveThemeColor(hover_bg_it->second), 0.92f);
+        }
+        if (hover_border_it != g_button_hover_border_colors.end()) {
+            palette.border = true;
+            palette.border_color = DarkenColor(ResolveThemeColor(hover_border_it->second), 0.92f);
+        }
+        if (hover_text_it != g_button_hover_text_colors.end()) {
+            palette.text = ResolveThemeColor(hover_text_it->second);
+        }
+    } else if (button.is_hovered) {
+        if (hover_bg_it != g_button_hover_bg_colors.end()) {
+            palette.fill = true;
+            palette.bg = ResolveThemeColor(hover_bg_it->second);
+        }
+        if (hover_border_it != g_button_hover_border_colors.end()) {
+            palette.border = true;
+            palette.border_color = ResolveThemeColor(hover_border_it->second);
+        }
+        if (hover_text_it != g_button_hover_text_colors.end()) {
+            palette.text = ResolveThemeColor(hover_text_it->second);
+        }
+    }
+
+    return palette;
+}
+
+static float MeasureTextWidth(
+    IDWriteFactory* factory,
+    const std::wstring& text,
+    const wchar_t* font_name,
+    float font_size
+) {
+    if (!factory || text.empty()) return 0.0f;
+    IDWriteTextFormat* format = nullptr;
+    factory->CreateTextFormat(
+        font_name,
+        nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        font_size,
+        L"zh-CN",
+        &format
+    );
+    if (!format) return 0.0f;
+
+    IDWriteTextLayout* layout = nullptr;
+    factory->CreateTextLayout(
+        text.c_str(),
+        (UINT32)text.length(),
+        format,
+        1000.0f,
+        1000.0f,
+        &layout
+    );
+    float width = 0.0f;
+    if (layout) {
+        DWRITE_TEXT_METRICS metrics = {};
+        if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+            width = metrics.width;
+        }
+        layout->Release();
+    }
+    format->Release();
+    return width;
+}
+
+static void DrawButtonSpinner(
+    ID2D1HwndRenderTarget* rt,
+    float center_x,
+    float center_y,
+    float size,
+    UINT32 color,
+    int phase
+) {
+    if (!rt) return;
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (FAILED(rt->CreateSolidColorBrush(ColorFromUInt32(color), &brush)) || !brush) return;
+
+    constexpr float kPi = 3.1415926535f;
+    const float orbit = size * 0.34f;
+    const float dot = max(1.2f, size * 0.10f);
+
+    for (int i = 0; i < 8; ++i) {
+        const int distance = (i - phase + 8) % 8;
+        const float opacity = max(0.18f, 1.0f - distance * 0.11f);
+        const float angle = -kPi * 0.5f + (kPi * 2.0f / 8.0f) * i;
+        brush->SetOpacity(opacity);
+        rt->FillEllipse(
+            D2D1::Ellipse(
+                D2D1::Point2F(center_x + cosf(angle) * orbit, center_y + sinf(angle) * orbit),
+                dot,
+                dot
+            ),
+            brush
+        );
+    }
+
+    brush->SetOpacity(1.0f);
+    brush->Release();
+}
+
+static UINT32 ResolveOptionalColor(UINT32 explicit_color, UINT32 fallback) {
+    return explicit_color ? ResolveThemeColor(explicit_color) : ResolveThemeColor(fallback);
+}
+
+static std::vector<std::wstring> SplitLines(const std::wstring& text) {
+    std::vector<std::wstring> result;
+    std::wstring current;
+    for (wchar_t ch : text) {
+        if (ch == L'\r') {
+            continue;
+        }
+        if (ch == L'\n' || ch == L'|') {
+            if (!current.empty()) {
+                result.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(ch);
+    }
+    if (!current.empty()) {
+        result.push_back(current);
+    }
+    return result;
 }
 
 // ========== 自定义标题栏辅助函数 ==========
@@ -404,7 +1518,7 @@ static ID2D1Bitmap* CreateBitmapFromHICONForD2D(ID2D1HwndRenderTarget* rt, HICON
 static void GetTitleBarButtonRects(WindowState* state, RECT* min_rect, RECT* max_rect, RECT* close_rect) {
     RECT rc = {};
     GetClientRect(state->hwnd, &rc);
-    int btn_w = 44;
+    int btn_w = 40;
     int btn_h = state->titlebar_height;
 
     if (close_rect) {
@@ -483,92 +1597,97 @@ void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Wind
 
     // 1. 标题栏背景色
     UINT32 bg = state->titlebar_color;
-    if (bg == 0) bg = ThemeColor_BackgroundLight();  // 跟随主题
-    bg &= 0x00FFFFFF;  // 去掉alpha
+    if (bg == 0) bg = ThemeColor_BackgroundLight();
+    if (((bg >> 24) & 0xFF) == 0) bg |= 0xFF000000;
+    UINT32 titlebar_fg = (state->titlebar_text_color != 0)
+        ? ResolveThemeColor(state->titlebar_text_color)
+        : AutoContrastText(bg);
+    bool light_foreground = ((titlebar_fg & 0x00FFFFFF) == 0x00FFFFFF);
 
     ID2D1SolidColorBrush* bg_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(
-        ((bg >> 16) & 0xFF) / 255.0f,
-        ((bg >> 8) & 0xFF) / 255.0f,
-        (bg & 0xFF) / 255.0f,
-        1.0f), &bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(bg), &bg_brush);
     rt->FillRectangle(D2D1::RectF(0, 0, width, tb_h), bg_brush);
     bg_brush->Release();
+
+    ID2D1SolidColorBrush* divider_brush = nullptr;
+    UINT32 divider_color = light_foreground ? 0x22FFFFFF : ThemeColor_BorderExtraLight();
+    rt->CreateSolidColorBrush(ColorFromUInt32(divider_color), &divider_brush);
+    if (divider_brush) {
+        rt->DrawLine(D2D1::Point2F(0.0f, tb_h - 0.5f), D2D1::Point2F(width, tb_h - 0.5f), divider_brush, 1.0f);
+        divider_brush->Release();
+    }
 
     // 1.5 绘制标题栏按钮（最小化/最大化/关闭）
     RECT min_rect = {}, max_rect = {}, close_rect = {};
     GetTitleBarButtonRects(state, &min_rect, &max_rect, &close_rect);
 
-    UINT32 hover_bg = IsDarkMode() ? LightenColor(bg | 0xFF000000, 1.18f) : DarkenColor(bg | 0xFF000000, 0.92f);
-    hover_bg &= 0x00FFFFFF;
+    UINT32 hover_bg = light_foreground ? 0x18FFFFFF : 0x10000000;
+    UINT32 close_hover_bg = 0xFFE81123;
 
     auto fill_rect = [&](RECT r, UINT32 color) {
         ID2D1SolidColorBrush* b = nullptr;
-        rt->CreateSolidColorBrush(D2D1::ColorF(
-            ((color >> 16) & 0xFF) / 255.0f,
-            ((color >> 8) & 0xFF) / 255.0f,
-            (color & 0xFF) / 255.0f,
-            1.0f), &b);
-        rt->FillRectangle(D2D1::RectF((FLOAT)r.left, (FLOAT)r.top, (FLOAT)r.right, (FLOAT)r.bottom), b);
+        rt->CreateSolidColorBrush(ColorFromUInt32(color), &b);
+        if (!b) return;
+        rt->FillRectangle(
+            D2D1::RectF((FLOAT)r.left, (FLOAT)r.top, (FLOAT)r.right, (FLOAT)r.bottom),
+            b);
         b->Release();
     };
 
     if (state->hovered_titlebar_button == TITLEBAR_BUTTON_MINIMIZE) fill_rect(min_rect, hover_bg);
     if (state->hovered_titlebar_button == TITLEBAR_BUTTON_MAXIMIZE) fill_rect(max_rect, hover_bg);
-    if (state->hovered_titlebar_button == TITLEBAR_BUTTON_CLOSE) fill_rect(close_rect, 0xE81123);
+    if (state->hovered_titlebar_button == TITLEBAR_BUTTON_CLOSE) fill_rect(close_rect, close_hover_bg);
 
     ID2D1SolidColorBrush* icon_brush = nullptr;
-    UINT32 icon_fg = ThemeColor_TextPrimary() & 0x00FFFFFF;
-    rt->CreateSolidColorBrush(D2D1::ColorF(
-        ((icon_fg >> 16) & 0xFF) / 255.0f,
-        ((icon_fg >> 8) & 0xFF) / 255.0f,
-        (icon_fg & 0xFF) / 255.0f,
-        1.0f), &icon_brush);
+    UINT32 icon_fg = titlebar_fg;
+    rt->CreateSolidColorBrush(ColorFromUInt32(icon_fg), &icon_brush);
 
     ID2D1SolidColorBrush* close_brush = nullptr;
-    UINT32 close_icon_fg = (state->hovered_titlebar_button == TITLEBAR_BUTTON_CLOSE) ? 0xFFFFFF : 0xE81123;
-    rt->CreateSolidColorBrush(D2D1::ColorF(
-        ((close_icon_fg >> 16) & 0xFF) / 255.0f,
-        ((close_icon_fg >> 8) & 0xFF) / 255.0f,
-        (close_icon_fg & 0xFF) / 255.0f,
-        1.0f), &close_brush);
+    UINT32 close_icon_fg = (state->hovered_titlebar_button == TITLEBAR_BUTTON_CLOSE) ? 0xFFFFFFFF : titlebar_fg;
+    rt->CreateSolidColorBrush(ColorFromUInt32(close_icon_fg), &close_brush);
 
     // 最小化图标
+    float min_cx = ((FLOAT)min_rect.left + (FLOAT)min_rect.right) * 0.5f;
+    float min_cy = tb_h * 0.5f + 3.0f;
     rt->DrawLine(
-        D2D1::Point2F((FLOAT)min_rect.left + 15.0f, tb_h / 2 + 4.5f),
-        D2D1::Point2F((FLOAT)min_rect.right - 15.0f, tb_h / 2 + 4.5f),
+        D2D1::Point2F(min_cx - 6.5f, min_cy),
+        D2D1::Point2F(min_cx + 6.5f, min_cy),
         icon_brush,
         1.0f);
 
     // 最大化/还原图标
     bool is_zoomed = IsZoomed(state->hwnd) ? true : false;
+    float max_cx = ((FLOAT)max_rect.left + (FLOAT)max_rect.right) * 0.5f;
+    float max_cy = tb_h * 0.5f;
     if (!is_zoomed) {
         rt->DrawRectangle(
-            D2D1::RectF((FLOAT)max_rect.left + 15.5f, 9.0f, (FLOAT)max_rect.right - 15.5f, tb_h - 9.0f),
+            D2D1::RectF(max_cx - 5.5f, max_cy - 5.0f, max_cx + 5.5f, max_cy + 5.0f),
             icon_brush,
             1.0f);
     } else {
         rt->DrawRectangle(
-            D2D1::RectF((FLOAT)max_rect.left + 18.0f, 10.0f, (FLOAT)max_rect.right - 12.5f, tb_h - 10.5f),
+            D2D1::RectF(max_cx - 4.0f, max_cy - 5.5f, max_cx + 5.0f, max_cy + 3.0f),
             icon_brush,
-            0.95f);
+            1.0f);
         rt->DrawRectangle(
-            D2D1::RectF((FLOAT)max_rect.left + 12.5f, 13.5f, (FLOAT)max_rect.right - 18.0f, tb_h - 7.0f),
+            D2D1::RectF(max_cx - 5.5f, max_cy - 2.0f, max_cx + 3.5f, max_cy + 6.5f),
             icon_brush,
-            0.95f);
+            1.0f);
     }
 
     // 关闭图标
+    float close_cx = ((FLOAT)close_rect.left + (FLOAT)close_rect.right) * 0.5f;
+    float close_cy = tb_h * 0.5f;
     rt->DrawLine(
-        D2D1::Point2F((FLOAT)close_rect.left + 16.0f, 9.0f),
-        D2D1::Point2F((FLOAT)close_rect.right - 16.0f, tb_h - 9.0f),
+        D2D1::Point2F(close_cx - 5.0f, close_cy - 5.0f),
+        D2D1::Point2F(close_cx + 5.0f, close_cy + 5.0f),
         close_brush,
-        1.2f);
+        1.0f);
     rt->DrawLine(
-        D2D1::Point2F((FLOAT)close_rect.left + 16.0f, tb_h - 9.0f),
-        D2D1::Point2F((FLOAT)close_rect.right - 16.0f, 9.0f),
+        D2D1::Point2F(close_cx - 5.0f, close_cy + 5.0f),
+        D2D1::Point2F(close_cx + 5.0f, close_cy - 5.0f),
         close_brush,
-        1.2f);
+        1.0f);
 
     close_brush->Release();
     icon_brush->Release();
@@ -620,17 +1739,13 @@ void DrawWindowTitleBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Wind
 
             // 文字颜色：0 跟随主题，非 0 使用自定义值
             UINT32 fg = (state->titlebar_text_color != 0)
-                ? (state->titlebar_text_color & 0x00FFFFFF)
-                : (ThemeColor_TextPrimary() & 0x00FFFFFF);
+                ? ResolveThemeColor(state->titlebar_text_color)
+                : titlebar_fg;
             ID2D1SolidColorBrush* text_brush = nullptr;
-            rt->CreateSolidColorBrush(D2D1::ColorF(
-                ((fg >> 16) & 0xFF) / 255.0f,
-                ((fg >> 8) & 0xFF) / 255.0f,
-                (fg & 0xFF) / 255.0f,
-                1.0f), &text_brush);
+            rt->CreateSolidColorBrush(ColorFromUInt32(fg), &text_brush);
 
             // 左侧保留图标和间距，右侧留136px给标题栏按钮
-            D2D1_RECT_F text_rect = D2D1::RectF(text_left, 0, width - 136.0f, tb_h);
+            D2D1_RECT_F text_rect = D2D1::RectF(text_left, 0, width - 124.0f, tb_h);
             rt->DrawText(
                 state->title.c_str(),
                 (UINT32)state->title.length(),
@@ -651,16 +1766,19 @@ void DrawMenuBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MenuBarStat
     
     RECT rc;
     GetClientRect(menubar->hwnd, &rc);
-    float width = (float)(rc.right - rc.left);
+    float client_width = (float)(rc.right - rc.left);
     
-    // 菜单栏在标题栏下方
-    float menu_y = 0.0f;
+    float menu_x = (float)menubar->x;
+    float menu_y = (float)menubar->y;
     auto win_it = g_windows.find(menubar->hwnd);
     if (win_it != g_windows.end() && win_it->second->custom_titlebar) {
         menu_y = (float)win_it->second->titlebar_height;
+        menu_y += (float)menubar->y;
     }
     
-    float menu_h = 30.0f; // 固定高度
+    float menu_w = menubar->width > 0 ? (float)menubar->width : (client_width - menu_x);
+    if (menu_w < 0.0f) menu_w = 0.0f;
+    float menu_h = menubar->height > 0 ? (float)menubar->height : 30.0f;
     
     // 绘制菜单栏背景
     UINT32 bg = menubar->bg_color ? menubar->bg_color : ThemeColor_Background();
@@ -670,7 +1788,7 @@ void DrawMenuBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MenuBarStat
         ((bg >> 8) & 0xFF) / 255.0f,
         (bg & 0xFF) / 255.0f,
         1.0f), &bg_brush);
-    rt->FillRectangle(D2D1::RectF(0, menu_y, width, menu_y + menu_h), bg_brush);
+    rt->FillRectangle(D2D1::RectF(menu_x, menu_y, menu_x + menu_w, menu_y + menu_h), bg_brush);
     bg_brush->Release();
     
     // 创建文本格式
@@ -691,7 +1809,7 @@ void DrawMenuBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MenuBarStat
     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     
     // 绘制菜单项
-    float x = 10.0f;
+    float x = menu_x + 10.0f;
     for (size_t i = 0; i < menubar->items.size(); i++) {
         MenuItem& item = menubar->items[i];
         
@@ -766,15 +1884,47 @@ void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenu
     
     OutputDebugStringA("DrawPopupMenu: Starting to draw menu items\n");
     
-    // 创建文本格式
+    const float surface_inset = 1.0f;
+    const float surface_radius = 8.0f;
+    const float item_inset_x = 6.0f;
+    const float hover_radius = 6.0f;
+    const float item_height = popup->item_height > 0 ? (float)popup->item_height : 34.0f;
+    const float separator_height = 8.0f;
+    const float text_padding_x = 14.0f;
+    const float arrow_area_w = 20.0f;
+
+    UINT32 panel_bg = popup->bg_color ? popup->bg_color : ThemeColor_Background();
+    UINT32 panel_border = ThemeColor_BorderLight();
+    UINT32 hover_bg = popup->hover_color ? popup->hover_color : ThemeColor_LightBg(ThemeColor_Primary());
+
+    ID2D1SolidColorBrush* panel_brush = nullptr;
+    ID2D1SolidColorBrush* border_brush = nullptr;
+    ID2D1SolidColorBrush* hover_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(panel_bg), &panel_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(panel_border), &border_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(hover_bg), &hover_brush);
+    if (!panel_brush || !border_brush || !hover_brush) {
+        if (panel_brush) panel_brush->Release();
+        if (border_brush) border_brush->Release();
+        if (hover_brush) hover_brush->Release();
+        return;
+    }
+
+    D2D1_ROUNDED_RECT panel_rect = D2D1::RoundedRect(
+        D2D1::RectF(surface_inset, surface_inset, (float)popup->width - surface_inset, (float)popup->height - surface_inset),
+        surface_radius, surface_radius);
+    rt->FillRoundedRectangle(panel_rect, panel_brush);
+    rt->DrawRoundedRectangle(panel_rect, border_brush, 1.0f);
+
+    // 创建文本格式，默认走 Segoe UI Emoji 以启用彩色 emoji，中文交给 DirectWrite 回退
     IDWriteTextFormat* fmt = nullptr;
     factory->CreateTextFormat(
-        L"Segoe UI Emoji",
+        popup->font.font_name.empty() ? L"Segoe UI Emoji" : popup->font.font_name.c_str(),
         nullptr,
-        DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL,
+        popup->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        popup->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL,
-        14.0f,
+        popup->font.font_size > 0 ? (float)popup->font.font_size : 14.0f,
         L"zh-CN",
         &fmt);
     
@@ -782,11 +1932,10 @@ void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenu
     
     fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     
     // 垂直布局菜单项
-    float y = 0.0f;
-    float item_height = 32.0f;
-    float separator_height = 8.0f;
+    float y = 6.0f;
     
     for (size_t i = 0; i < popup->items.size(); i++) {
         MenuItem& item = popup->items[i];
@@ -794,16 +1943,11 @@ void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenu
         if (item.separator) {
             // 绘制分隔符
             float sep_y = y + separator_height / 2.0f;
-            UINT32 border_color = ThemeColor_BorderLight();
             ID2D1SolidColorBrush* sep_brush = nullptr;
-            rt->CreateSolidColorBrush(D2D1::ColorF(
-                ((border_color >> 16) & 0xFF) / 255.0f,
-                ((border_color >> 8) & 0xFF) / 255.0f,
-                (border_color & 0xFF) / 255.0f,
-                1.0f), &sep_brush);
+            rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_BorderExtraLight()), &sep_brush);
             rt->DrawLine(
-                D2D1::Point2F(10.0f, sep_y),
-                D2D1::Point2F((float)popup->width - 10.0f, sep_y),
+                D2D1::Point2F(16.0f, sep_y),
+                D2D1::Point2F((float)popup->width - 16.0f, sep_y),
                 sep_brush,
                 1.0f);
             sep_brush->Release();
@@ -812,367 +1956,211 @@ void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenu
             y += separator_height;
         } else {
             // 保存边界
-            item.bounds = D2D1::RectF(0, y, (float)popup->width, y + item_height);
+            item.bounds = D2D1::RectF(item_inset_x, y, (float)popup->width - item_inset_x, y + item_height);
             
             // 绘制悬停背景
             if ((int)i == popup->hovered_index) {
-                UINT32 hover_bg = ThemeColor_BackgroundLight();
-                ID2D1SolidColorBrush* hover_brush = nullptr;
-                rt->CreateSolidColorBrush(D2D1::ColorF(
-                    ((hover_bg >> 16) & 0xFF) / 255.0f,
-                    ((hover_bg >> 8) & 0xFF) / 255.0f,
-                    (hover_bg & 0xFF) / 255.0f,
-                    1.0f), &hover_brush);
-                rt->FillRectangle(item.bounds, hover_brush);
-                hover_brush->Release();
+                rt->FillRoundedRectangle(
+                    D2D1::RoundedRect(item.bounds, hover_radius, hover_radius),
+                    hover_brush);
             }
             
             // 绘制文本
-            UINT32 fg = item.enabled ? ThemeColor_TextPrimary() : ThemeColor_TextPlaceholder();
+            UINT32 fg = item.enabled ? ThemeColor_TextRegular() : ThemeColor_TextPlaceholder();
             ID2D1SolidColorBrush* text_brush = nullptr;
-            rt->CreateSolidColorBrush(D2D1::ColorF(
-                ((fg >> 16) & 0xFF) / 255.0f,
-                ((fg >> 8) & 0xFF) / 255.0f,
-                (fg & 0xFF) / 255.0f,
-                1.0f), &text_brush);
+            rt->CreateSolidColorBrush(ColorFromUInt32(fg), &text_brush);
             
-            D2D1_RECT_F text_rect = D2D1::RectF(20.0f, y, (float)popup->width - 20.0f, y + item_height);
-            rt->DrawText(
+            D2D1_RECT_F text_rect = D2D1::RectF(
+                item.bounds.left + text_padding_x,
+                y,
+                item.bounds.right - text_padding_x - (!item.sub_items.empty() ? arrow_area_w : 0.0f),
+                y + item_height);
+            IDWriteTextLayout* layout = nullptr;
+            factory->CreateTextLayout(
                 item.text.c_str(),
                 (UINT32)item.text.length(),
                 fmt,
-                text_rect,
-                text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
-            
+                max(1.0f, text_rect.right - text_rect.left),
+                max(1.0f, text_rect.bottom - text_rect.top),
+                &layout);
+            if (layout) {
+                rt->DrawTextLayout(
+                    D2D1::Point2F(text_rect.left, text_rect.top),
+                    layout,
+                    text_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                layout->Release();
+            }
+
             text_brush->Release();
             
             // 如果有子菜单,绘制箭头
             if (!item.sub_items.empty()) {
-                // 绘制右箭头 ">"
-                D2D1_RECT_F arrow_rect = D2D1::RectF((float)popup->width - 30.0f, y, (float)popup->width - 10.0f, y + item_height);
+                D2D1_RECT_F arrow_rect = D2D1::RectF(item.bounds.right - 18.0f, y + item_height / 2.0f - 4.0f, item.bounds.right - 10.0f, y + item_height / 2.0f + 4.0f);
                 ID2D1SolidColorBrush* arrow_brush = nullptr;
-                rt->CreateSolidColorBrush(D2D1::ColorF(
-                    ((fg >> 16) & 0xFF) / 255.0f,
-                    ((fg >> 8) & 0xFF) / 255.0f,
-                    (fg & 0xFF) / 255.0f,
-                    1.0f), &arrow_brush);
-                rt->DrawText(L">", 1, fmt, arrow_rect, arrow_brush);
+                rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_TextPlaceholder()), &arrow_brush);
+                rt->DrawLine(D2D1::Point2F(arrow_rect.left, arrow_rect.top), D2D1::Point2F(arrow_rect.right, y + item_height / 2.0f), arrow_brush, 1.2f);
+                rt->DrawLine(D2D1::Point2F(arrow_rect.left, arrow_rect.bottom), D2D1::Point2F(arrow_rect.right, y + item_height / 2.0f), arrow_brush, 1.2f);
                 arrow_brush->Release();
             }
             
             y += item_height;
         }
     }
-    
-    // 绘制边框
-    UINT32 border_color = ThemeColor_BorderBase();
-    ID2D1SolidColorBrush* border_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(
-        ((border_color >> 16) & 0xFF) / 255.0f,
-        ((border_color >> 8) & 0xFF) / 255.0f,
-        (border_color & 0xFF) / 255.0f,
-        1.0f), &border_brush);
-    rt->DrawRectangle(
-        D2D1::RectF(0, 0, (float)popup->width, y),
-        border_brush,
-        1.0f);
+
+    panel_brush->Release();
     border_brush->Release();
-    
+    hover_brush->Release();
     fmt->Release();
 }
 
 // Draw button (Element UI style - supports both main window buttons and message box buttons)
 void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiButton& button) {
-    // ========== 检查可见状态 ==========
-    if (!button.visible) {
-        return;  // 不可见的按钮不绘制
+    if (!button.visible || !rt || !factory) return;
+
+    const ButtonRenderMetrics metrics = GetButtonRenderMetrics(button);
+    const ButtonRenderPalette palette = ResolveButtonPalette(button);
+    const D2D1_RECT_F bounds = D2D1::RectF(
+        (FLOAT)button.x,
+        (FLOAT)button.y,
+        (FLOAT)(button.x + button.width),
+        (FLOAT)(button.y + button.height)
+    );
+    const D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(bounds, metrics.radius, metrics.radius);
+
+    if (palette.fill) {
+        ID2D1SolidColorBrush* fill_brush = nullptr;
+        if (SUCCEEDED(rt->CreateSolidColorBrush(ColorFromUInt32(palette.bg), &fill_brush)) && fill_brush) {
+            rt->FillRoundedRectangle(rect, fill_brush);
+            fill_brush->Release();
+        }
     }
-    
-    // ========== 处理禁用状态 ==========
-    if (!button.enabled) {
-        // 禁用状态：使用灰色绘制
-        ID2D1SolidColorBrush* brush = nullptr;
-        UINT32 disabled_bg = 0xFFF5F7FA;  // 浅灰色背景
-        rt->CreateSolidColorBrush(ColorFromUInt32(disabled_bg), &brush);
 
-        D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(
-            D2D1::RectF(
-                (FLOAT)button.x,
-                (FLOAT)button.y,
-                (FLOAT)(button.x + button.width),
-                (FLOAT)(button.y + button.height)
-            ),
-            4.0f, 4.0f
-        );
-        rt->FillRoundedRectangle(rect, brush);
-        brush->Release();
-
-        // 绘制边框
+    if (palette.border) {
         ID2D1SolidColorBrush* border_brush = nullptr;
-        UINT32 disabled_border = 0xFFE4E7ED;  // 浅灰色边框
-        rt->CreateSolidColorBrush(ColorFromUInt32(disabled_border), &border_brush);
-        rt->DrawRoundedRectangle(rect, border_brush, 1.0f);
-        border_brush->Release();
+        if (SUCCEEDED(rt->CreateSolidColorBrush(ColorFromUInt32(palette.border_color), &border_brush)) && border_brush) {
+            rt->DrawRoundedRectangle(rect, border_brush, metrics.border_width);
+            border_brush->Release();
+        }
+    }
 
-        // 绘制禁用文本
-        ID2D1SolidColorBrush* text_brush = nullptr;
-        UINT32 disabled_text = 0xFFC0C4CC;  // 占位文本色
-        rt->CreateSolidColorBrush(ColorFromUInt32(disabled_text), &text_brush);
+    const bool prefer_icon_only = button.circle && (!button.emoji.empty() || button.loading);
+    const bool show_text = !button.text.empty() && !prefer_icon_only;
+    const bool show_spinner = button.loading;
+    const bool show_emoji = !show_spinner && !button.emoji.empty();
 
-        // 创建文本格式
-        IDWriteTextFormat* fmt = nullptr;
+    const float spinner_width = show_spinner ? metrics.spinner_size + 2.0f : 0.0f;
+    const float emoji_width = show_emoji ? MeasureTextWidth(factory, button.emoji, L"Segoe UI Emoji", metrics.emoji_size) : 0.0f;
+    const float text_width = show_text ? MeasureTextWidth(factory, button.text, L"Microsoft YaHei UI", metrics.text_size) : 0.0f;
+
+    float total_content_width = 0.0f;
+    if (show_spinner) total_content_width += spinner_width;
+    else if (show_emoji) total_content_width += emoji_width;
+    if ((show_spinner || show_emoji) && show_text) {
+        total_content_width += metrics.content_spacing;
+    }
+    total_content_width += text_width;
+
+    const float content_start_x = button.x + max(0.0f, ((float)button.width - total_content_width) * 0.5f);
+
+    ID2D1SolidColorBrush* text_brush = nullptr;
+    if (FAILED(rt->CreateSolidColorBrush(ColorFromUInt32(palette.text), &text_brush)) || !text_brush) {
+        return;
+    }
+
+    float cursor_x = content_start_x;
+
+    if (show_spinner) {
+        DrawButtonSpinner(
+            rt,
+            cursor_x + metrics.spinner_size * 0.5f,
+            button.y + button.height * 0.5f,
+            metrics.spinner_size,
+            palette.text,
+            button.loading_phase % 8
+        );
+        cursor_x += spinner_width;
+    } else if (show_emoji) {
+        IDWriteTextFormat* emoji_format = nullptr;
         factory->CreateTextFormat(
             L"Segoe UI Emoji",
             nullptr,
             DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
-            14.0f,
+            metrics.emoji_size,
             L"zh-CN",
-            &fmt
+            &emoji_format
         );
-        if (fmt) {
-            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-            // 绘制文本（emoji + text）
-            std::wstring full_text = button.emoji + button.text;
-            D2D1_RECT_F text_rect = D2D1::RectF(
-                (FLOAT)button.x,
+        if (emoji_format) {
+            emoji_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            emoji_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            D2D1_RECT_F emoji_rect = D2D1::RectF(
+                cursor_x,
                 (FLOAT)button.y,
-                (FLOAT)(button.x + button.width),
+                cursor_x + emoji_width + 8.0f,
                 (FLOAT)(button.y + button.height)
             );
             rt->DrawText(
-                full_text.c_str(),
-                (UINT32)full_text.length(),
-                fmt,
-                text_rect,
+                button.emoji.c_str(),
+                (UINT32)button.emoji.length(),
+                emoji_format,
+                emoji_rect,
                 text_brush,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
             );
-            fmt->Release();
+            emoji_format->Release();
         }
-        text_brush->Release();
-        return;  // 禁用状态绘制完成，直接返回
+        cursor_x += emoji_width;
     }
 
-    // ========== Calculate button color based on state (Element UI style) ==========
-    // 解析主题颜色索引（如果传入的是0-14的索引值）
-    UINT32 bg_color = ResolveThemeColor(button.bg_color);
-    UINT32 bg_rgb = bg_color & 0x00FFFFFF;
-
-    // 将默认亮色主题的固定颜色映射到当前主题颜色
-    // 这样当主题切换时，按钮颜色也会跟着变化
-    if (bg_rgb == 0x409EFF) bg_color = ThemeColor_Primary();
-    else if (bg_rgb == 0x67C23A) bg_color = ThemeColor_Success();
-    else if (bg_rgb == 0xE6A23C) bg_color = ThemeColor_Warning();
-    else if (bg_rgb == 0xF56C6C) bg_color = ThemeColor_Danger();
-    else if (bg_rgb == 0x909399) bg_color = ThemeColor_Info();
-    bg_rgb = bg_color & 0x00FFFFFF;
-
-    // Element UI button colors (使用当前主题颜色比较)
-    UINT32 theme_primary_rgb = ThemeColor_Primary() & 0x00FFFFFF;
-    UINT32 theme_success_rgb = ThemeColor_Success() & 0x00FFFFFF;
-    UINT32 theme_warning_rgb = ThemeColor_Warning() & 0x00FFFFFF;
-    UINT32 theme_danger_rgb = ThemeColor_Danger() & 0x00FFFFFF;
-    UINT32 theme_info_rgb = ThemeColor_Info() & 0x00FFFFFF;
-    bool is_primary = (bg_rgb == theme_primary_rgb);
-    bool is_success = (bg_rgb == theme_success_rgb);
-    bool is_warning = (bg_rgb == theme_warning_rgb);
-    bool is_danger = (bg_rgb == theme_danger_rgb);
-    bool is_info = (bg_rgb == theme_info_rgb);
-    bool is_default = (bg_rgb == 0xFFFFFF || bg_rgb == 0xF2F2F7);
-
-    if (button.is_pressed) {
-        // Pressed state: 使用主题辅助函数动态计算按下色
-        bg_color = DarkenColor(bg_color, 0.85f);
-    } else if (button.is_hovered) {
-        // Hover state: 使用主题辅助函数动态计算悬停色
-        bg_color = LightenColor(bg_color, 1.15f);
+    if ((show_spinner || show_emoji) && show_text) {
+        cursor_x += metrics.content_spacing;
     }
 
-    // ========== Draw button with Element UI style ==========
-    ID2D1SolidColorBrush* brush = nullptr;
-    rt->CreateSolidColorBrush(ColorFromUInt32(bg_color), &brush);
-
-    D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(
-        D2D1::RectF(
-            (FLOAT)button.x,
-            (FLOAT)button.y,
-            (FLOAT)(button.x + button.width),
-            (FLOAT)(button.y + button.height)
-        ),
-        4.0f, 4.0f  // Element UI uses 4px border radius
-    );
-    rt->FillRoundedRectangle(rect, brush);
-    brush->Release();
-
-    // ========== Draw border for default button ==========
-    if (is_default) {
-        ID2D1SolidColorBrush* border_brush = nullptr;
-        UINT32 bdr = ThemeColor_BorderBase();
-        rt->CreateSolidColorBrush(ColorFromUInt32(bdr), &border_brush);
-        rt->DrawRoundedRectangle(rect, border_brush, ThemeSize_BorderWidth());
-        border_brush->Release();
-    }
-
-    // ========== Determine text color ==========
-    UINT32 text_color;
-    if (is_default) {
-        text_color = ThemeColor_TextRegular();  // 使用主题常规文本色
-    } else {
-        text_color = 0xFFFFFFFF;  // White text for colored buttons
-    }
-
-    ID2D1SolidColorBrush* text_brush = nullptr;
-    rt->CreateSolidColorBrush(ColorFromUInt32(text_color), &text_brush);
-
-    // ========== Calculate total content width for centering ==========
-    float emoji_width = 0.0f;
-    float text_width = 0.0f;
-    float spacing = 6.0f;  // Space between emoji and text
-
-    // Measure emoji width
-    if (!button.emoji.empty()) {
-        IDWriteTextFormat* emoji_format_measure = nullptr;
-        factory->CreateTextFormat(
-            L"Segoe UI Emoji",
-            nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            18.0f,
-            L"zh-CN",
-            &emoji_format_measure
-        );
-
-        IDWriteTextLayout* emoji_layout = nullptr;
-        factory->CreateTextLayout(
-            button.emoji.c_str(),
-            (UINT32)button.emoji.length(),
-            emoji_format_measure,
-            1000.0f,
-            1000.0f,
-            &emoji_layout
-        );
-
-        DWRITE_TEXT_METRICS emoji_metrics;
-        emoji_layout->GetMetrics(&emoji_metrics);
-        emoji_width = emoji_metrics.width;
-
-        emoji_layout->Release();
-        emoji_format_measure->Release();
-    }
-
-    // Measure text width
-    if (!button.text.empty()) {
-        IDWriteTextFormat* text_format_measure = nullptr;
+    if (show_text) {
+        IDWriteTextFormat* text_format = nullptr;
         factory->CreateTextFormat(
             L"Microsoft YaHei UI",
             nullptr,
             DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
-            14.0f,
-            L"zh-CN",
-            &text_format_measure
-        );
-
-        IDWriteTextLayout* text_layout = nullptr;
-        factory->CreateTextLayout(
-            button.text.c_str(),
-            (UINT32)button.text.length(),
-            text_format_measure,
-            1000.0f,
-            1000.0f,
-            &text_layout
-        );
-
-        DWRITE_TEXT_METRICS text_metrics;
-        text_layout->GetMetrics(&text_metrics);
-        text_width = text_metrics.width;
-
-        text_layout->Release();
-        text_format_measure->Release();
-    }
-
-    // Calculate total content width and starting position for centering
-    float total_content_width = emoji_width + (emoji_width > 0 && text_width > 0 ? spacing : 0) + text_width;
-    float content_start_x = button.x + (button.width - total_content_width) / 2.0f;
-
-    // ========== Draw emoji icon (larger size for consistency) ==========
-    if (!button.emoji.empty()) {
-        IDWriteTextFormat* emoji_format = nullptr;
-        factory->CreateTextFormat(
-            L"Segoe UI Emoji",  // Use emoji font for better rendering
-            nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            18.0f,  // Larger size for emoji (18px instead of 14px)
-            L"zh-CN",
-            &emoji_format
-        );
-
-        emoji_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        emoji_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-        D2D1_RECT_F emoji_rect = D2D1::RectF(
-            content_start_x,
-            (FLOAT)button.y,
-            content_start_x + emoji_width + 10.0f,  // Add some extra space
-            (FLOAT)(button.y + button.height)
-        );
-
-        rt->DrawText(
-            button.emoji.c_str(),
-            (UINT32)button.emoji.length(),
-            emoji_format,
-            emoji_rect,
-            text_brush,
-            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
-        );
-
-        emoji_format->Release();
-    }
-
-    // ========== Draw button text ==========
-    if (!button.text.empty()) {
-        IDWriteTextFormat* text_format = nullptr;
-        factory->CreateTextFormat(
-            L"Microsoft YaHei UI",  // Element UI 推荐字体
-            nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,  // 400 weight
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            14.0f,  // Element UI standard button font size
+            metrics.text_size,
             L"zh-CN",
             &text_format
         );
+        if (text_format) {
+            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            D2D1_RECT_F text_rect = D2D1::RectF(
+                cursor_x,
+                (FLOAT)button.y,
+                cursor_x + max(text_width + 8.0f, (float)button.width - (cursor_x - button.x)),
+                (FLOAT)(button.y + button.height)
+            );
+            rt->DrawText(
+                button.text.c_str(),
+                (UINT32)button.text.length(),
+                text_format,
+                text_rect,
+                text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE
+            );
 
-        float text_start_x = content_start_x + emoji_width + (emoji_width > 0 ? spacing : 0);
-        D2D1_RECT_F text_rect = D2D1::RectF(
-            text_start_x,
-            (FLOAT)button.y,
-            text_start_x + text_width + 10.0f,  // Add some extra space
-            (FLOAT)(button.y + button.height)
-        );
+            if (palette.underline) {
+                const float underline_y = button.y + button.height * 0.68f;
+                rt->DrawLine(
+                    D2D1::Point2F(cursor_x, underline_y),
+                    D2D1::Point2F(cursor_x + text_width, underline_y),
+                    text_brush,
+                    1.0f
+                );
+            }
 
-        rt->DrawText(
-            button.text.c_str(),
-            (UINT32)button.text.length(),
-            text_format,
-            text_rect,
-            text_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE
-        );
-
-        text_format->Release();
+            text_format->Release();
+        }
     }
 
     text_brush->Release();
@@ -1193,8 +2181,11 @@ static void DrawParentLabel(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, 
     IDWriteTextFormat* text_format = nullptr;
     IDWriteTextLayout* text_layout = nullptr;
 
-    rt->CreateSolidColorBrush(ColorFromUInt32(ResolveThemeColor(state->bg_color)), &bg_brush);
-    rt->CreateSolidColorBrush(ColorFromUInt32(ResolveThemeColor(state->fg_color)), &text_brush);
+    const bool enabled = !state->hwnd || IsWindowEnabled(state->hwnd);
+    const UINT32 text_argb = enabled ? ResolveLegacyLabelTextColor(state->fg_color) : ThemeColor_TextPlaceholder();
+
+    rt->CreateSolidColorBrush(ColorFromUInt32(ResolveLegacyLabelBackgroundColor(state)), &bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(text_argb), &text_brush);
 
     if (bg_brush) {
         rt->FillRectangle(rect, bg_brush);
@@ -1296,6 +2287,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         LRESULT dwm_result = 0;
         if (DwmDefWindowProc(hwnd, msg, wparam, lparam, &dwm_result))
             return dwm_result;
+    }
+
+    if (state && HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events)) {
+        return 0;
     }
 
     switch (msg) {
@@ -1483,7 +2478,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 
             state->render_target->BeginDraw();
             // 客户区背景色：0=纯白(ThemeColor_Background)，非0=用户指定色；与标签/复选框/单选框底色一致
-            UINT32 win_bg = (state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background();
+            UINT32 win_bg = ResolveThemeColor((state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background());
             state->render_target->Clear(D2D1::ColorF(
                 ((win_bg >> 16) & 0xFF) / 255.0f,
                 ((win_bg >> 8) & 0xFF) / 255.0f,
@@ -1500,19 +2495,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
 
             for (const auto& button : state->buttons) {
-                // 检查按钮是否属于某个分组框
-                bool should_draw = true;
-                for (const auto& gb_pair : g_groupboxes) {
-                    GroupBoxState* gb = gb_pair.second;
-                    // 如果按钮在这个分组框的按钮列表中
-                    if (std::find(gb->button_ids.begin(), gb->button_ids.end(), button.id) != gb->button_ids.end()) {
-                        // 只有分组框可见时才绘制按钮
-                        should_draw = gb->visible;
-                        break;
-                    }
-                }
-                
-                if (should_draw) {
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (!IsButtonOwnedByAnyGroupBox(button.id)) {
                     DrawButton(state->render_target, state->dwrite_factory, button);
                 }
             }
@@ -1536,6 +2520,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
             WriteLog("WM_LBUTTONDOWN: x=%d, y=%d", x, y);
+            POINT screen_pt = { x, y };
+            ClientToScreen(hwnd, &screen_pt);
+            if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, false)) {
+                WriteLog("WM_LBUTTONDOWN: forwarded to visible popup menu");
+                return 0;
+            }
 
             // 顶栏菜单 bounds 为 DIP（D2D 绘制），鼠标为像素，需换算为 DIP 再命中
             UINT dpi = GetDpiForWindow(hwnd);
@@ -1561,46 +2551,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                         WriteLog("WM_LBUTTONDOWN: item clicked, id=%d, enabled=%d, sub_items.size()=%zu", 
                                 item.id, item.enabled, item.sub_items.size());
                         if (item.enabled) {
-                            // ✅ 实现子菜单弹出功能
                             if (!item.sub_items.empty()) {
-                                // 有子菜单，弹出子菜单
-                                if (!menubar->submenu) {
-                                    menubar->submenu = new SubMenuWindow();
-                                    menubar->submenu->Create(hwnd, 0);
-                                }
-                                
-                                // 计算子菜单显示位置：bounds 为 DIP，ClientToScreen 需要客户区像素
+                                // 顶部菜单统一复用稳定的 PopupMenu 实现
                                 float scaleToPx = (float)dpi / 96.0f;
                                 POINT pt = {
                                     (LONG)(bounds.left * scaleToPx),
                                     (LONG)(bounds.bottom * scaleToPx)
                                 };
                                 ClientToScreen(hwnd, &pt);
-                                
-                                // 显示子菜单
-                                menubar->opened_menu_id = item.id;
-                                menubar->submenu->Show(
-                                    item.sub_items,
-                                    pt.x,
-                                    pt.y,
-                                    [](int /*menu_id*/, int item_id) {
-                                        // 查找对应的菜单栏（当前有可见子菜单的那个）
-                                        for (auto& pair : g_menubars) {
-                                            MenuBarState* mb = pair.second;
-                                            if (mb->submenu && mb->submenu->IsVisible()) {
-                                                if (mb->callback) {
-                                                    // 回调参数：menu_id=顶级菜单ID，item_id=子菜单项ID
-                                                    mb->callback(mb->opened_menu_id, item_id);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    });
-                                
                                 menubar->opened_index = (int)i;
+                                ShowMenuBarPopup(menubar, item, pt.x, pt.y);
                             } else {
                                 // 没有子菜单，直接触发回调（顶级菜单本身被点击）
                                 WriteLog("WM_LBUTTONDOWN: calling callback, menubar->callback=%p, item.id=%d", menubar->callback, item.id);
+                                DestroyMenuBarPopup(menubar);
+                                menubar->opened_index = -1;
+                                menubar->opened_menu_id = 0;
                                 if (menubar->callback) {
                                     // 回调参数：menu_id=顶级菜单ID，item_id=顶级菜单ID
                                     menubar->callback(item.id, item.id);
@@ -1617,6 +2583,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
 
             for (auto& button : state->buttons) {
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (IsButtonOwnedByAnyGroupBox(button.id)) continue;
                 if (button.enabled && button.visible && button.ContainsPoint(x, y)) {
                     button.is_pressed = true;
                     InvalidateRect(hwnd, nullptr, FALSE);
@@ -1631,8 +2599,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         if (state) {
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
+            POINT screen_pt = { x, y };
+            ClientToScreen(hwnd, &screen_pt);
+            if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, true)) {
+                WriteLog("WM_LBUTTONUP: forwarded to visible popup menu");
+                return 0;
+            }
 
             for (auto& button : state->buttons) {
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (IsButtonOwnedByAnyGroupBox(button.id)) continue;
                 if (button.is_pressed && button.enabled && button.visible && button.ContainsPoint(x, y)) {
                     button.is_pressed = false;
 
@@ -1684,6 +2660,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
 
             for (auto& button : state->buttons) {
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (IsButtonOwnedByAnyGroupBox(button.id)) continue;
                 bool hovered = button.enabled && button.visible && button.ContainsPoint(x, y);
                 if (hovered != button.is_hovered) {
                     button.is_hovered = hovered;
@@ -1819,58 +2797,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORSTATIC: {
-        // ✅ 处理编辑框和标签的颜色消息
-        // 这些消息会发送到父窗口，我们需要查找对应的子控件状态
-        HWND hChild = (HWND)lparam;
-        
-        // 先查找编辑框
-        auto edit_it = g_editboxes.find(hChild);
-        if (edit_it != g_editboxes.end()) {
-            EditBoxState* edit_state = edit_it->second;
-            HDC hdc = (HDC)wparam;
-            SetTextColor(hdc, RGB(
-                (edit_state->fg_color >> 16) & 0xFF,
-                (edit_state->fg_color >> 8) & 0xFF,
-                edit_state->fg_color & 0xFF
-            ));
-            SetBkColor(hdc, RGB(
-                (edit_state->bg_color >> 16) & 0xFF,
-                (edit_state->bg_color >> 8) & 0xFF,
-                edit_state->bg_color & 0xFF
-            ));
-            return (LRESULT)edit_state->bg_brush;
+        LRESULT color_result = HandleManagedControlColorMessage(wparam, lparam);
+        if (color_result != 0) {
+            return color_result;
         }
-        
-        // 再查找标签
-        auto label_it = g_labels.find(hChild);
-        if (label_it != g_labels.end()) {
-            LabelState* label_state = label_it->second;
-            HDC hdc = (HDC)wparam;
-            // 解析主题颜色索引
-            UINT32 resolved_fg = ResolveThemeColor(label_state->fg_color);
-            UINT32 resolved_bg = ResolveThemeColor(label_state->bg_color);
-            SetTextColor(hdc, RGB(
-                (resolved_fg >> 16) & 0xFF,
-                (resolved_fg >> 8) & 0xFF,
-                resolved_fg & 0xFF
-            ));
-            SetBkColor(hdc, RGB(
-                (resolved_bg >> 16) & 0xFF,
-                (resolved_bg >> 8) & 0xFF,
-                resolved_bg & 0xFF
-            ));
-            // 如果使用主题颜色索引，需要动态重建画刷
-            if (IsThemeColorIndex(label_state->bg_color)) {
-                if (label_state->bg_brush) DeleteObject(label_state->bg_brush);
-                label_state->bg_brush = CreateSolidBrush(RGB(
-                    (resolved_bg >> 16) & 0xFF,
-                    (resolved_bg >> 8) & 0xFF,
-                    resolved_bg & 0xFF
-                ));
-            }
-            return (LRESULT)label_state->bg_brush;
-        }
-        
         break;
     }
 
@@ -1890,6 +2820,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             delete destroy_state;
             g_windows.erase(destroy_it);
         }
+        g_button_popup_menu_bindings.erase(hwnd);
 
         // 注意：子编辑框和标签的清理由各自的 SubclassProc 在 WM_NCDESTROY 中处理，
         // 不在此处清理，避免 double-free（DestroyWindow 销毁子窗口时会触发 WM_NCDESTROY）
@@ -2172,6 +3103,19 @@ int __stdcall create_emoji_button_bytes(
     int x, int y, int width, int height,
     UINT32 bg_color
 ) {
+    static const wchar_t* EMOJI_BUTTON_CLASS = L"EmojiWindowButtonClass";
+    static bool button_class_registered = false;
+    if (!button_class_registered) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = EmojiButtonWindowProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = EMOJI_BUTTON_CLASS;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        RegisterClassW(&wc);
+        button_class_registered = true;
+    }
+
     // 检查父窗口是否为分组框
     HWND actual_parent = parent;
     int actual_x = x;
@@ -2190,7 +3134,16 @@ int __stdcall create_emoji_button_bytes(
         actual_y = gb_state->y + y + 25;  // 标题高度约25px
     }
     
-    auto it = g_windows.find(actual_parent);
+    HWND state_host = actual_parent;
+    POINT host_pt = { actual_x, actual_y };
+    while (state_host && g_windows.find(state_host) == g_windows.end()) {
+        HWND next_parent = GetParent(state_host);
+        if (!next_parent) break;
+        MapWindowPoints(state_host, next_parent, &host_pt, 1);
+        state_host = next_parent;
+    }
+
+    auto it = g_windows.find(state_host);
     if (it == g_windows.end()) return 0;
 
     WindowState* state = it->second;
@@ -2199,8 +3152,8 @@ int __stdcall create_emoji_button_bytes(
     button.id = (int)state->buttons.size() + 1000;
     button.emoji = Utf8ToWide(emoji_bytes, emoji_len);
     button.text = Utf8ToWide(text_bytes, text_len);
-    button.x = actual_x;
-    button.y = actual_y + GetTitleBarOffset(actual_parent);
+    button.x = host_pt.x;
+    button.y = host_pt.y;
     button.width = width;
     button.height = height;
     button.bg_color = bg_color;
@@ -2208,17 +3161,45 @@ int __stdcall create_emoji_button_bytes(
     button.is_pressed = false;
 
     state->buttons.push_back(button);
+    EmojiButton& created = state->buttons.back();
+    POINT child_pt = { button.x, button.y };
+    if (actual_parent != state_host) {
+        MapWindowPoints(state_host, actual_parent, &child_pt, 1);
+    }
+
+    HWND hButton = CreateWindowExW(
+        0,
+        EMOJI_BUTTON_CLASS,
+        L"",
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        child_pt.x, child_pt.y, created.width, created.height,
+        actual_parent,
+        nullptr,
+        GetModuleHandle(nullptr),
+        nullptr
+    );
+    if (hButton) {
+        created.hwnd = hButton;
+        ButtonWindowBindingInfo binding = {};
+        binding.state_host = state_host;
+        binding.callback_parent = actual_parent;
+        binding.button_id = created.id;
+        g_button_window_bindings[hButton] = binding;
+        SyncEmojiButtonWindow(&created);
+    }
     
     // 如果按钮属于分组框，记录按钮ID
     if (parent_groupbox) {
-        parent_groupbox->button_ids.push_back(button.id);
+        parent_groupbox->button_ids.push_back(created.id);
+        InvalidateRect(parent_groupbox->hwnd, nullptr, FALSE);
+        UpdateWindow(parent_groupbox->hwnd);
     }
 
     // 立即触发重绘并更新，确保按钮立即显示
     InvalidateRect(actual_parent, nullptr, FALSE);
     UpdateWindow(actual_parent);
 
-    return button.id;
+    return created.id;
 }
 
 // Set button click callback
@@ -2226,17 +3207,36 @@ void __stdcall set_button_click_callback(ButtonClickCallback callback) {
     g_button_callback = callback;
 }
 
+static HWND ResolveButtonStateHostWindow(HWND hwnd) {
+    HWND current = hwnd;
+    while (current) {
+        auto it = g_windows.find(current);
+        if (it != g_windows.end()) {
+            return current;
+        }
+        current = GetParent(current);
+    }
+    return nullptr;
+}
+
 // 启用按钮
 void __stdcall EnableButton(HWND parent_hwnd, int button_id, BOOL enable) {
-    auto it = g_windows.find(parent_hwnd);
+    HWND state_host = ResolveButtonStateHostWindow(parent_hwnd);
+    if (!state_host) return;
+
+    auto it = g_windows.find(state_host);
     if (it == g_windows.end()) return;
 
     WindowState* state = it->second;
     for (auto& button : state->buttons) {
         if (button.id == button_id) {
             button.enabled = (enable != 0);
-            // 触发重绘
-            InvalidateRect(parent_hwnd, nullptr, FALSE);
+            if (button.hwnd && IsWindow(button.hwnd)) {
+                EnableWindow(button.hwnd, enable);
+                RedrawWindow(button.hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+            } else {
+                InvalidateRect(state_host, nullptr, FALSE);
+            }
             break;
         }
     }
@@ -2625,55 +3625,101 @@ extern "C" __declspec(dllexport) int __stdcall SetTitleBarAlignment(HWND hwnd, i
     return 1;
 }
 
-// Draw message box - Element UI Style
+static D2D1_RECT_F GetMsgBoxCloseButtonRect(float width) {
+    return D2D1::RectF(width - 42.0f, 14.0f, width - 14.0f, 42.0f);
+}
+
+// Draw message box - closer to Element Plus MessageBox
 void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState* state) {
-    RECT rc;
+    RECT rc = {};
     GetClientRect(state->hwnd, &rc);
-    float width = (float)(rc.right - rc.left);
-    float height = (float)(rc.bottom - rc.top);
+    const float width = (float)(rc.right - rc.left);
+    const float height = (float)(rc.bottom - rc.top);
+    const float radius = 8.0f;
+    const float header_h = 56.0f;
+    const float body_top = 64.0f;
+    const float footer_h = 64.0f;
+    const float content_pad_x = 24.0f;
+    const bool has_icon = !state->icon_emoji.empty();
 
-    // ========== 1. Background with subtle gradient (Element UI style) ==========
-    ID2D1SolidColorBrush* bg_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF, 1.0f), &bg_brush);  // Pure white
-
-    D2D1_ROUNDED_RECT bg_rect = D2D1::RoundedRect(
-        D2D1::RectF(0, 0, width, height),
-        4.0f, 4.0f  // 4px rounded corners (Element UI standard)
-    );
-    rt->FillRoundedRectangle(bg_rect, bg_brush);
-    bg_brush->Release();
-
-    // ========== 2. Border (1px, #DCDFE6 - Element UI border color) ==========
+    ID2D1SolidColorBrush* panel_brush = nullptr;
     ID2D1SolidColorBrush* border_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0xDCDFE6, 1.0f), &border_brush);
-    rt->DrawRoundedRectangle(bg_rect, border_brush, 1.0f);
-    border_brush->Release();
+    ID2D1SolidColorBrush* title_brush = nullptr;
+    ID2D1SolidColorBrush* text_brush = nullptr;
+    ID2D1SolidColorBrush* close_brush = nullptr;
+    ID2D1SolidColorBrush* icon_bg_brush = nullptr;
+    ID2D1SolidColorBrush* icon_fg_brush = nullptr;
 
-    // ========== 3. Top accent bar (Element UI primary color) ==========
-    ID2D1SolidColorBrush* accent_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x409EFF, 1.0f), &accent_brush);  // Element UI primary blue
-    
-    D2D1_ROUNDED_RECT accent_rect = D2D1::RoundedRect(
-        D2D1::RectF(0, 0, width, 3.0f),
-        4.0f, 4.0f
-    );
-    rt->FillRoundedRectangle(accent_rect, accent_brush);
-    accent_brush->Release();
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_Background()), &panel_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_BorderExtraLight()), &border_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_TextPrimary()), &title_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_TextRegular()), &text_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(state->close_hovered ? ThemeColor_TextRegular() : ThemeColor_TextPlaceholder()), &close_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_LightBg(ThemeColor_Primary())), &icon_bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_Primary()), &icon_fg_brush);
+    if (!panel_brush || !border_brush || !title_brush || !text_brush || !close_brush || !icon_bg_brush || !icon_fg_brush) {
+        if (panel_brush) panel_brush->Release();
+        if (border_brush) border_brush->Release();
+        if (title_brush) title_brush->Release();
+        if (text_brush) text_brush->Release();
+        if (close_brush) close_brush->Release();
+        if (icon_bg_brush) icon_bg_brush->Release();
+        if (icon_fg_brush) icon_fg_brush->Release();
+        return;
+    }
 
-    // ========== 4. Icon Emoji (28px, with colored background circle) ==========
-    if (!state->icon_emoji.empty()) {
-        // Draw colored circle background for icon
-        ID2D1SolidColorBrush* icon_bg_brush = nullptr;
-        rt->CreateSolidColorBrush(D2D1::ColorF(0xECF5FF, 1.0f), &icon_bg_brush);  // Light blue background
-        
-        D2D1_ELLIPSE icon_circle = D2D1::Ellipse(
-            D2D1::Point2F(width / 2, 45.0f),
-            24.0f, 24.0f
-        );
-        rt->FillEllipse(icon_circle, icon_bg_brush);
-        icon_bg_brush->Release();
+    D2D1_ROUNDED_RECT panel_rect = D2D1::RoundedRect(D2D1::RectF(0.5f, 0.5f, width - 0.5f, height - 0.5f), radius, radius);
+    rt->FillRoundedRectangle(panel_rect, panel_brush);
+    rt->DrawRoundedRectangle(panel_rect, border_brush, 1.0f);
 
-        // Draw icon emoji
+    IDWriteTextFormat* title_format = nullptr;
+    factory->CreateTextFormat(
+        L"Microsoft YaHei UI",
+        nullptr,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        18.0f,
+        L"zh-CN",
+        &title_format);
+    if (title_format) {
+        title_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        title_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        D2D1_RECT_F title_rect = D2D1::RectF(content_pad_x, 14.0f, width - 56.0f, header_h);
+        rt->DrawTextW(
+            state->title.c_str(),
+            (UINT32)state->title.length(),
+            title_format,
+            title_rect,
+            title_brush);
+        title_format->Release();
+    }
+
+    IDWriteTextFormat* close_format = nullptr;
+    factory->CreateTextFormat(
+        L"Segoe UI",
+        nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        20.0f,
+        L"en-US",
+        &close_format);
+    if (close_format) {
+        close_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        close_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        D2D1_RECT_F close_rect = GetMsgBoxCloseButtonRect(width);
+        rt->DrawTextW(L"\x00D7", 1, close_format, close_rect, close_brush);
+        close_format->Release();
+    }
+
+    float message_left = content_pad_x;
+    if (has_icon) {
+        const float icon_radius = 18.0f;
+        const float icon_center_x = content_pad_x + icon_radius;
+        const float icon_center_y = body_top + 14.0f;
+        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(icon_center_x, icon_center_y), icon_radius, icon_radius), icon_bg_brush);
+
         IDWriteTextFormat* icon_format = nullptr;
         factory->CreateTextFormat(
             L"Segoe UI Emoji",
@@ -2681,102 +3727,63 @@ void DrawMsgBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, MsgBoxState*
             DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
-            28.0f,  // Larger icon
+            20.0f,
             L"zh-CN",
-            &icon_format
-        );
-        icon_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        icon_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-        ID2D1SolidColorBrush* icon_brush = nullptr;
-        rt->CreateSolidColorBrush(D2D1::ColorF(0x409EFF, 1.0f), &icon_brush);  // Primary blue
-
-        D2D1_RECT_F icon_rect = D2D1::RectF(24, 20, width - 24, 70);
-        rt->DrawText(
-            state->icon_emoji.c_str(),
-            (UINT32)state->icon_emoji.length(),
-            icon_format,
-            icon_rect,
-            icon_brush,
-            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
-        );
-
-        icon_brush->Release();
-        icon_format->Release();
+            &icon_format);
+        if (icon_format) {
+            icon_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            icon_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            D2D1_RECT_F icon_rect = D2D1::RectF(icon_center_x - 18.0f, icon_center_y - 18.0f, icon_center_x + 18.0f, icon_center_y + 18.0f);
+            rt->DrawTextW(
+                state->icon_emoji.c_str(),
+                (UINT32)state->icon_emoji.length(),
+                icon_format,
+                icon_rect,
+                icon_fg_brush,
+                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            icon_format->Release();
+        }
+        message_left = content_pad_x + 52.0f;
     }
 
-    // ========== 5. Title (16px, Medium 500, #303133 - Element UI text color) ==========
-    IDWriteTextFormat* title_format = nullptr;
-    factory->CreateTextFormat(
-        L"Microsoft YaHei UI",  // 微软雅黑 UI (Element UI 推荐字体)
-        nullptr,
-        DWRITE_FONT_WEIGHT_MEDIUM,  // 500 weight
-        DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        16.0f,
-        L"zh-CN",
-        &title_format
-    );
-    title_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    title_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-    ID2D1SolidColorBrush* title_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x303133, 1.0f), &title_brush);  // Element UI primary text
-
-    D2D1_RECT_F title_rect = D2D1::RectF(24, 75, width - 24, 105);
-    rt->DrawText(
-        state->title.c_str(),
-        (UINT32)state->title.length(),
-        title_format,
-        title_rect,
-        title_brush,
-        D2D1_DRAW_TEXT_OPTIONS_NONE
-    );
-
-    title_brush->Release();
-    title_format->Release();
-
-    // ========== 6. Message (14px, Regular 400, #606266 - Element UI regular text) ==========
     IDWriteTextFormat* msg_format = nullptr;
     factory->CreateTextFormat(
         L"Microsoft YaHei UI",
         nullptr,
-        DWRITE_FONT_WEIGHT_NORMAL,  // 400 weight
+        DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL,
         14.0f,
         L"zh-CN",
-        &msg_format
-    );
-    msg_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    msg_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    msg_format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-    msg_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 22.0f, 14.0f);  // 1.57x line height
+        &msg_format);
+    if (msg_format) {
+        msg_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        msg_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        msg_format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        msg_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 22.0f, 16.0f);
+        D2D1_RECT_F msg_rect = D2D1::RectF(message_left, body_top, width - content_pad_x, height - footer_h);
+        rt->DrawTextW(
+            state->message.c_str(),
+            (UINT32)state->message.length(),
+            msg_format,
+            msg_rect,
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        msg_format->Release();
+    }
 
-    ID2D1SolidColorBrush* msg_brush = nullptr;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x606266, 1.0f), &msg_brush);  // Element UI regular text
-
-    float msg_top = 115;
-    float msg_bottom = (float)(state->ok_button.y - 20);
-    D2D1_RECT_F msg_rect = D2D1::RectF(30, msg_top, width - 30, msg_bottom);
-    rt->DrawText(
-        state->message.c_str(),
-        (UINT32)state->message.length(),
-        msg_format,
-        msg_rect,
-        msg_brush,
-        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
-    );
-
-    msg_brush->Release();
-    msg_format->Release();
-
-    // ========== 7. Buttons (Element UI style) ==========
     DrawButton(rt, factory, state->ok_button);
-
     if (state->button_type == MSGBOX_OKCANCEL) {
         DrawButton(rt, factory, state->cancel_button);
     }
+
+    panel_brush->Release();
+    border_brush->Release();
+    title_brush->Release();
+    text_brush->Release();
+    close_brush->Release();
+    icon_bg_brush->Release();
+    icon_fg_brush->Release();
 }
 
 // Message box window procedure
@@ -2803,6 +3810,14 @@ LRESULT CALLBACK MsgBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         if (state) {
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
+            RECT rc = {};
+            GetClientRect(hwnd, &rc);
+            D2D1_RECT_F close_rect = GetMsgBoxCloseButtonRect((float)(rc.right - rc.left));
+            if ((float)x >= close_rect.left && (float)x <= close_rect.right &&
+                (float)y >= close_rect.top && (float)y <= close_rect.bottom) {
+                CloseMessageBox(hwnd, false);
+                return 0;
+            }
 
             if (state->ok_button.ContainsPoint(x, y)) {
                 state->ok_button.is_pressed = true;
@@ -2845,6 +3860,16 @@ LRESULT CALLBACK MsgBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
             bool needs_redraw = false;
+            RECT client = {};
+            GetClientRect(hwnd, &client);
+            D2D1_RECT_F close_rect = GetMsgBoxCloseButtonRect((float)(client.right - client.left));
+            bool close_hovered =
+                (float)x >= close_rect.left && (float)x <= close_rect.right &&
+                (float)y >= close_rect.top && (float)y <= close_rect.bottom;
+            if (close_hovered != state->close_hovered) {
+                state->close_hovered = close_hovered;
+                needs_redraw = true;
+            }
 
             bool ok_hovered = state->ok_button.ContainsPoint(x, y);
             if (ok_hovered != state->ok_button.is_hovered) {
@@ -2907,6 +3932,8 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         
         // 同时添加到全局映射
         if (state) {
+            state->hwnd = hwnd;
+            state->visible = true;
             g_popup_menus[hwnd] = state;
         }
     } else {
@@ -2997,7 +4024,7 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
             int old_hovered = state->hovered_index;
-            state->hovered_index = -1;
+            int new_hovered = -1;
             
             float fx = (float)x;
             float fy = (float)y;
@@ -3005,22 +4032,44 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
                 const D2D1_RECT_F& bounds = state->items[i].bounds;
                 if (fx >= bounds.left && fx <= bounds.right && 
                     fy >= bounds.top && fy <= bounds.bottom) {
-                    state->hovered_index = (int)i;
+                    new_hovered = (int)i;
                     break;
                 }
             }
+
+            if (new_hovered < 0 && state->submenu) {
+                POINT screen_pt = { x, y };
+                ClientToScreen(hwnd, &screen_pt);
+                if (IsPointInsidePopupSubMenuTransit(state, hwnd, screen_pt)) {
+                    new_hovered = state->submenu_owner_index;
+                }
+            }
+
+            state->hovered_index = new_hovered;
             
             if (old_hovered != state->hovered_index) {
                 InvalidateRect(hwnd, nullptr, FALSE);
+            }
+
+            if (state->hovered_index >= 0 &&
+                state->hovered_index < (int)state->items.size() &&
+                !state->items[state->hovered_index].sub_items.empty()) {
+                ShowPopupSubMenu(state, hwnd, state->hovered_index);
+            } else if (state->submenu || state->child_popup_handle) {
+                ClosePopupSubMenu(state);
             }
         }
         return 0;
     }
 
-    case WM_LBUTTONDOWN: {
+    case WM_LBUTTONDOWN:
+        return 0;
+
+    case WM_LBUTTONUP: {
         if (state) {
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
+            WriteLog("PopupMenuProc: WM_LBUTTONUP hwnd=%p x=%d y=%d hovered=%d items=%zu", hwnd, x, y, state->hovered_index, state->items.size());
             float fx = (float)x;
             float fy = (float)y;
             
@@ -3029,20 +4078,19 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
                 if (fx >= bounds.left && fx <= bounds.right && 
                     fy >= bounds.top && fy <= bounds.bottom) {
                     MenuItem& item = state->items[i];
-                    if (item.enabled && !item.separator) {
-                        // 触发回调
-                        if (state->callback) {
-                            state->callback(0, item.id);
-                        }
-                        // 关闭菜单
-                        DestroyWindow(hwnd);
-                    }
+                    WriteLog("PopupMenuProc: clicked index=%zu id=%d enabled=%d separator=%d has_submenu=%d", i, item.id, item.enabled ? 1 : 0, item.separator ? 1 : 0, item.sub_items.empty() ? 0 : 1);
+                    ActivatePopupMenuItem(state, hwnd, (int)i);
                     return 0;
                 }
             }
+            DestroyWindow(hwnd);
         }
         return 0;
     }
+
+    case WM_RBUTTONDOWN:
+        DestroyWindow(hwnd);
+        return 0;
 
     case WM_KEYDOWN: {
         if (state) {
@@ -3083,15 +4131,18 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
             else if (wparam == VK_RETURN || wparam == VK_SPACE) {
                 // 触发当前选中项
                 if (state->hovered_index >= 0 && state->hovered_index < (int)state->items.size()) {
-                    MenuItem& item = state->items[state->hovered_index];
-                    if (item.enabled && !item.separator) {
-                        if (state->callback) {
-                            state->callback(0, item.id);
-                        }
-                        DestroyWindow(hwnd);
-                    }
+                    ActivatePopupMenuItem(state, hwnd, state->hovered_index);
                 }
                 return 0;
+            }
+            else if (wparam == VK_RIGHT) {
+                if (state->hovered_index >= 0 && state->hovered_index < (int)state->items.size()) {
+                    MenuItem& item = state->items[state->hovered_index];
+                    if (!item.sub_items.empty()) {
+                        ShowPopupSubMenu(state, hwnd, state->hovered_index);
+                        return 0;
+                    }
+                }
             }
             else if (wparam == VK_ESCAPE) {
                 // 关闭菜单
@@ -3103,14 +4154,23 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
     }
 
     case WM_KILLFOCUS: {
-        // 失去焦点时关闭菜单
-        DestroyWindow(hwnd);
+        // 不再依赖焦点切换自动关闭，避免主窗口吃到点击时把 popup 提前销毁。
         return 0;
     }
 
+    case WM_ACTIVATE:
+        if (LOWORD(wparam) == WA_INACTIVE) {
+            return 0;
+        }
+        break;
+
     case WM_DESTROY: {
         // 清理资源
+        if (GetCapture() == hwnd) {
+            ReleaseCapture();
+        }
         if (state) {
+            ClosePopupSubMenu(state);
             if (state->render_target) {
                 state->render_target->Release();
                 state->render_target = nullptr;
@@ -3119,8 +4179,27 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
                 state->dwrite_factory->Release();
                 state->dwrite_factory = nullptr;
             }
-            delete state;
+            state->hwnd = nullptr;
+            state->visible = false;
+            state->hovered_index = -1;
             g_popup_menus.erase(hwnd);
+            if (state->owner_menubar) {
+                auto menu_it = g_menubars.find(state->owner_menubar);
+                if (menu_it != g_menubars.end() && menu_it->second &&
+                    menu_it->second->popup_menu_handle == state->handle_key) {
+                    menu_it->second->popup_menu_handle = nullptr;
+                    menu_it->second->opened_index = -1;
+                    menu_it->second->opened_menu_id = 0;
+                    InvalidateRect(state->owner_menubar, nullptr, FALSE);
+                }
+            }
+            if (state->auto_destroy) {
+                HWND handle_key = state->handle_key;
+                if (handle_key) {
+                    g_popup_menus.erase(handle_key);
+                }
+                delete state;
+            }
         }
         return 0;
     }
@@ -3164,13 +4243,17 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     }
 
     // ========== Calculate text height for auto-sizing ==========
-    int box_width = 400;   // Fixed width for readability
+    int box_width = 420;
+    float header_height = 56.0f;
+    float footer_height = 64.0f;
+    float content_top = 64.0f;
+    float content_padding_x = 24.0f;
+    float message_offset_x = icon.empty() ? 0.0f : 52.0f;
 
     // Create temporary text format to measure message height
-    // ⚠️ CRITICAL: Use the SAME font as actual rendering (Microsoft YaHei UI)
     IDWriteTextFormat* temp_format = nullptr;
     g_dwrite_factory->CreateTextFormat(
-        L"Microsoft YaHei UI",  // ✅ Same as DrawMsgBox
+        L"Microsoft YaHei UI",
         nullptr,
         DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL,
@@ -3179,10 +4262,10 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
         L"zh-CN",
         &temp_format
     );
-    temp_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    temp_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     temp_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     temp_format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-    temp_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 22.0f, 14.0f);  // ✅ Same as DrawMsgBox (1.57x line height)
+    temp_format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 22.0f, 16.0f);
 
     // Create text layout to measure actual text height
     IDWriteTextLayout* text_layout = nullptr;
@@ -3190,8 +4273,8 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
         message.c_str(),
         (UINT32)message.length(),
         temp_format,
-        (float)(box_width - 60),  // ✅ Text area width: 30px padding on each side (same as DrawMsgBox)
-        2000.0f,  // Max height for measurement (increased for long messages)
+        max(1.0f, (float)box_width - content_padding_x * 2.0f - message_offset_x),
+        2000.0f,
         &text_layout
     );
 
@@ -3202,14 +4285,11 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     text_layout->Release();
     temp_format->Release();
 
-    // Calculate window height based on content
-    // Layout: Top bar(3px) + Icon area(70px: 20px top + 50px icon) + Title(30px) + Message top spacing(10px) + Message(variable) + Message bottom spacing(20px) + Button(40px) + Bottom padding(15px)
-    float content_height = 3 + 70 + 30 + 10 + measured_text_height + 20 + 40 + 15;
-    int min_height = (type == MSGBOX_OKCANCEL) ? 240 : 220;  // Minimum height
-    int box_height = (int)max(content_height, (float)min_height);
+    float content_height = max(22.0f, measured_text_height);
+    int min_height = (type == MSGBOX_OKCANCEL) ? 186 : 170;
+    int box_height = (int)max(content_top + content_height + 24.0f + footer_height, (float)min_height);
 
-    // Calculate button Y position based on actual window height
-    int btn_y = box_height - 55;  // 40px button + 15px bottom padding
+    int btn_y = box_height - 20 - 34;
 
     RECT parent_rect = {0};
     if (parent && IsWindow(parent)) {
@@ -3225,7 +4305,7 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     int y = parent_rect.top + (parent_rect.bottom - parent_rect.top - box_height) / 2;
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         class_name,
         nullptr,
         WS_POPUP,
@@ -3237,12 +4317,8 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
 
     if (!hwnd) return nullptr;
 
-    // Rounded corners (10px)
-    HRGN hRgn = CreateRoundRectRgn(0, 0, box_width + 1, box_height + 1, 20, 20);
+    HRGN hRgn = CreateRoundRectRgn(0, 0, box_width + 1, box_height + 1, 16, 16);
     SetWindowRgn(hwnd, hRgn, TRUE);
-
-    // Set window opacity for soft appearance
-    SetLayeredWindowAttributes(hwnd, 0, 250, LWA_ALPHA);
 
     RECT rc;
     GetClientRect(hwnd, &rc);
@@ -3264,46 +4340,47 @@ HWND CreateMessageBoxWindow(HWND parent, const std::wstring& title, const std::w
     state->icon_emoji = icon.empty() ? L"" : icon;  // No default icon
     state->button_type = type;
     state->callback = callback;
+    state->close_hovered = false;
     state->result = false;
 
-    // ========== Element UI style buttons with Emoji ==========
-    // OK button - Primary button (Element UI #409EFF blue, white text, with emoji)
+    // ========== Element-like action buttons ==========
     state->ok_button.id = 1;
-    state->ok_button.emoji = L"\u2713";  // ✓ checkmark emoji
-    state->ok_button.text = L"\u786E\u5B9A";  // "确定"
-    state->ok_button.bg_color = ThemeColor_Primary();  // Element UI primary (theme)
+    state->ok_button.emoji.clear();
+    state->ok_button.text = L"\u786E\u5B9A";
+    state->ok_button.bg_color = ThemeColor_Primary();
     state->ok_button.is_hovered = false;
     state->ok_button.is_pressed = false;
+    state->ok_button.enabled = true;
+    state->ok_button.visible = true;
 
     if (type == MSGBOX_OKCANCEL) {
-        // Two buttons layout
-        int btn_width = 140;
-        int btn_height = 40;
-        int btn_spacing = 12;  // 12px spacing between buttons
+        int btn_width = 76;
+        int btn_height = 34;
+        int btn_spacing = 12;
 
-        // Cancel button on left (default style, with emoji)
         state->cancel_button.id = 2;
-        state->cancel_button.emoji = L"\u2717";  // ✗ cross emoji
-        state->cancel_button.text = L"\u53D6\u6D88";  // "取消"
-        state->cancel_button.bg_color = 0xFFFFFFFF;  // Element UI default button (white background)
-        state->cancel_button.x = (box_width / 2) - btn_width - (btn_spacing / 2);
-        state->cancel_button.y = btn_y;  // Use calculated position
+        state->cancel_button.emoji.clear();
+        state->cancel_button.text = L"\u53D6\u6D88";
+        state->cancel_button.bg_color = 0xFFFFFFFF;
+        state->cancel_button.x = box_width - 24 - btn_width - btn_spacing - btn_width;
+        state->cancel_button.y = btn_y;
         state->cancel_button.width = btn_width;
         state->cancel_button.height = btn_height;
         state->cancel_button.is_hovered = false;
         state->cancel_button.is_pressed = false;
+        state->cancel_button.enabled = true;
+        state->cancel_button.visible = true;
 
-        // OK button on right (primary style)
-        state->ok_button.x = (box_width / 2) + (btn_spacing / 2);
-        state->ok_button.y = btn_y;  // Use calculated position
+        state->ok_button.x = box_width - 24 - btn_width;
+        state->ok_button.y = btn_y;
         state->ok_button.width = btn_width;
         state->ok_button.height = btn_height;
     } else {
-        // Single button layout (centered)
-        int btn_width = 160;
-        int btn_height = 40;
-        state->ok_button.x = (box_width - btn_width) / 2;
-        state->ok_button.y = btn_y;  // Use calculated position
+        int btn_width = 76;
+        int btn_height = 34;
+        state->cancel_button.visible = false;
+        state->ok_button.x = box_width - 24 - btn_width;
+        state->ok_button.y = btn_y;
         state->ok_button.width = btn_width;
         state->ok_button.height = btn_height;
     }
@@ -3407,18 +4484,99 @@ void __stdcall show_confirm_box_bytes(
 
 // ========== TabControl 实现 ==========
 
-// EnumChildWindows 回调：显示子窗口并强制重绘（解决 Tab 切换后 TreeView 等不显示）
-static BOOL CALLBACK ShowAndInvalidateChildProc(HWND hChild, LPARAM) {
-    if (IsWindow(hChild)) {
-        ShowWindow(hChild, SW_SHOW);
-        SendMessage(hChild, WM_EW_TABPAGE_VISIBLE, 0, 0);  // 通知 D2D 控件重建渲染目标
-        InvalidateRect(hChild, nullptr, TRUE);
+// 仅刷新当前可见子树，避免在嵌套 Tab 中把非当前页也强制 Show 出来。
+static void RefreshVisibleTabWindowTree(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+
+    auto tab_it = g_tab_controls.find(hwnd);
+    if (tab_it != g_tab_controls.end()) {
+        UpdateTabLayout(tab_it->second);
+        return;
     }
-    return TRUE;
+
+    bool is_page_window = (g_windows.find(hwnd) != g_windows.end());
+    if (is_page_window) {
+        SendMessage(hwnd, WM_EW_TABPAGE_VISIBLE, 0, 0);
+    }
+
+    for (HWND hChild = GetWindow(hwnd, GW_CHILD); hChild; hChild = GetWindow(hChild, GW_HWNDNEXT)) {
+        if (!IsWindow(hChild) || !IsWindowVisible(hChild)) continue;
+        if (g_tab_controls.find(hChild) != g_tab_controls.end()) {
+            RefreshVisibleTabWindowTree(hChild);
+        }
+    }
+}
+
+static bool IsButtonOwnedByAnyGroupBox(int button_id, GroupBoxState** out_groupbox) {
+    for (const auto& gb_pair : g_groupboxes) {
+        GroupBoxState* gb = gb_pair.second;
+        if (!gb) continue;
+        if (std::find(gb->button_ids.begin(), gb->button_ids.end(), button_id) != gb->button_ids.end()) {
+            if (out_groupbox) *out_groupbox = gb;
+            return true;
+        }
+    }
+    return false;
+}
+
+static EmojiButton* FindGroupBoxButtonAtPoint(GroupBoxState* gb, int x, int y) {
+    if (!gb) return nullptr;
+    auto win_it = g_windows.find(gb->parent);
+    if (win_it == g_windows.end()) return nullptr;
+    WindowState* parent_state = win_it->second;
+    if (!parent_state) return nullptr;
+
+    int parent_offset_y = gb->y;
+    for (auto it = parent_state->buttons.rbegin(); it != parent_state->buttons.rend(); ++it) {
+        EmojiButton& button = *it;
+        if (std::find(gb->button_ids.begin(), gb->button_ids.end(), button.id) == gb->button_ids.end()) continue;
+        if (button.hwnd && IsWindow(button.hwnd)) continue;
+        int local_x = button.x - gb->x;
+        int local_y = button.y - parent_offset_y;
+        if (button.enabled && button.visible &&
+            x >= local_x && x <= local_x + button.width &&
+            y >= local_y && y <= local_y + button.height) {
+            return &button;
+        }
+    }
+    return nullptr;
+}
+
+static void DrawGroupBoxOwnedButtons(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxState* gb) {
+    if (!rt || !factory || !gb || !gb->visible) return;
+    auto win_it = g_windows.find(gb->parent);
+    if (win_it == g_windows.end()) return;
+    WindowState* parent_state = win_it->second;
+    if (!parent_state) return;
+
+    int parent_offset_y = gb->y;
+    for (const auto& button : parent_state->buttons) {
+        if (std::find(gb->button_ids.begin(), gb->button_ids.end(), button.id) == gb->button_ids.end()) continue;
+        if (button.hwnd && IsWindow(button.hwnd)) continue;
+        if (!button.visible) continue;
+        EmojiButton local_button = button;
+        local_button.x -= gb->x;
+        local_button.y -= parent_offset_y;
+        DrawButton(rt, factory, local_button);
+    }
 }
 
 // Tab 内容窗口过程：支持 D2D 渲染和 Emoji 按钮
 static const wchar_t* TAB_CONTENT_D2D_CLASS = L"TabContentD2DClass";
+
+static bool IsTabLayoutBatchingForPage(HWND hwnd) {
+    HWND hTab = GetParent(hwnd);
+    auto it = g_tab_controls.find(hTab);
+    return (it != g_tab_controls.end() && it->second && it->second->layoutBatchInProgress);
+}
+
+static void InvalidateVisibleWindowTree(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) return;
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE | RDW_NOCHILDREN);
+    for (HWND child = GetWindow(hwnd, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+        InvalidateVisibleWindowTree(child);
+    }
+}
 
 static void TabContentEnsureRenderTarget(HWND hwnd, WindowState* state) {
     if (!state || !g_d2d_factory) return;
@@ -3452,6 +4610,10 @@ static LRESULT CALLBACK TabContentWindowProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     WindowState* state = (it != g_windows.end()) ? it->second : nullptr;
 
+    if (state && HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events)) {
+        return 0;
+    }
+
     switch (msg) {
     case WM_CREATE: {
         WindowState* new_state = new WindowState();
@@ -3467,31 +4629,45 @@ static LRESULT CALLBACK TabContentWindowProc(HWND hwnd, UINT msg, WPARAM wparam,
         break;
     }
     case WM_SHOWWINDOW:
-        if (wparam && state) TabContentEnsureRenderTarget(hwnd, state);
+        if (wparam && state) {
+            TabContentEnsureRenderTarget(hwnd, state);
+            if (!IsTabLayoutBatchingForPage(hwnd)) {
+                RedrawWindow(hwnd, nullptr, nullptr,
+                    RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
+            }
+        }
         break;
     case WM_EW_TABPAGE_VISIBLE:
-        if (state) TabContentEnsureRenderTarget(hwnd, state);
+        if (state) {
+            TabContentEnsureRenderTarget(hwnd, state);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         return 0;
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORSTATIC: {
+        LRESULT color_result = HandleManagedControlColorMessage(wparam, lparam);
+        if (color_result != 0) {
+            return color_result;
+        }
+        break;
+    }
+    case WM_ERASEBKGND:
+        return 1;
     case WM_PAINT: {
         if (state && state->render_target) {
             PAINTSTRUCT ps;
             BeginPaint(hwnd, &ps);
             state->render_target->BeginDraw();
-            UINT32 win_bg = (state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background();
+            UINT32 win_bg = ResolveThemeColor((state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background());
             state->render_target->Clear(D2D1::ColorF(
                 ((win_bg >> 16) & 0xFF) / 255.0f,
                 ((win_bg >> 8) & 0xFF) / 255.0f,
                 (win_bg & 0xFF) / 255.0f, 1.0f));
             for (const auto& button : state->buttons) {
-                bool should_draw = true;
-                for (const auto& gb_pair : g_groupboxes) {
-                    GroupBoxState* gb = gb_pair.second;
-                    if (std::find(gb->button_ids.begin(), gb->button_ids.end(), button.id) != gb->button_ids.end()) {
-                        should_draw = gb->visible;
-                        break;
-                    }
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (!IsButtonOwnedByAnyGroupBox(button.id)) {
+                    DrawButton(state->render_target, state->dwrite_factory, button);
                 }
-                if (should_draw) DrawButton(state->render_target, state->dwrite_factory, button);
             }
             for (const auto& pair : g_labels) {
                 LabelState* label = pair.second;
@@ -3509,6 +4685,8 @@ static LRESULT CALLBACK TabContentWindowProc(HWND hwnd, UINT msg, WPARAM wparam,
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
             for (auto& button : state->buttons) {
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (IsButtonOwnedByAnyGroupBox(button.id)) continue;
                 if (button.enabled && button.visible && button.ContainsPoint(x, y)) {
                     button.is_pressed = true;
                     InvalidateRect(hwnd, nullptr, FALSE);
@@ -3523,6 +4701,8 @@ static LRESULT CALLBACK TabContentWindowProc(HWND hwnd, UINT msg, WPARAM wparam,
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
             for (auto& button : state->buttons) {
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (IsButtonOwnedByAnyGroupBox(button.id)) continue;
                 if (button.is_pressed && button.enabled && button.visible && button.ContainsPoint(x, y)) {
                     button.is_pressed = false;
                     if (g_button_callback) g_button_callback(button.id, hwnd);
@@ -3540,6 +4720,8 @@ static LRESULT CALLBACK TabContentWindowProc(HWND hwnd, UINT msg, WPARAM wparam,
             int y = HIWORD(lparam);
             bool needs_redraw = false;
             for (auto& button : state->buttons) {
+                if (button.hwnd && IsWindow(button.hwnd)) continue;
+                if (IsButtonOwnedByAnyGroupBox(button.id)) continue;
                 bool hovered = button.enabled && button.visible && button.ContainsPoint(x, y);
                 if (hovered != button.is_hovered) {
                     button.is_hovered = hovered;
@@ -3567,34 +4749,159 @@ static LRESULT CALLBACK TabContentWindowProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 // 更新 Tab 布局（显示/隐藏内容窗口）
 // 所有内容窗口保持在同一位置叠加，仅用 ShowWindow 控制可见性
+static int GetCustomTabHeaderStyle(TabControlState* state) {
+    if (!state) return TAB_HEADER_STYLE_LINE;
+    auto it = g_tab_header_styles.find(state->hTabControl);
+    return it != g_tab_header_styles.end() ? it->second : TAB_HEADER_STYLE_LINE;
+}
+
+static int GetCustomTabHeaderHeight(TabControlState* state) {
+    if (!state) return 36;
+    int base = max(28, state->tabHeight);
+    switch (GetCustomTabHeaderStyle(state)) {
+    case TAB_HEADER_STYLE_SEGMENTED:
+        return base + 10;
+    case TAB_HEADER_STYLE_LINE:
+        return base + 8;
+    case TAB_HEADER_STYLE_CARD:
+    case TAB_HEADER_STYLE_CARD_PLAIN:
+    default:
+        return base + 2;
+    }
+}
+
+static int GetVisibleTabCount(TabControlState* state) {
+    if (!state) return 0;
+    int count = 0;
+    for (const auto& page : state->pages) {
+        if (page.visible) count++;
+    }
+    return count;
+}
+
+static int PageIndexToVisibleIndex(TabControlState* state, int pageIdx) {
+    if (!state || pageIdx < 0 || pageIdx >= (int)state->pages.size()) return -1;
+    if (!state->pages[pageIdx].visible) return -1;
+    int visibleIdx = 0;
+    for (int i = 0; i < pageIdx; ++i) {
+        if (state->pages[i].visible) visibleIdx++;
+    }
+    return visibleIdx;
+}
+
+static RECT GetCustomTabContentRect(TabControlState* state) {
+    RECT rc = { 0, 0, 1, 1 };
+    if (!state || !state->hTabControl) return rc;
+
+    GetClientRect(state->hTabControl, &rc);
+    int headerHeight = GetCustomTabHeaderHeight(state);
+    if (state->tabPosition == 1) {
+        rc.bottom = max(rc.top + 1, rc.bottom - headerHeight);
+    } else {
+        rc.top = min(rc.bottom - 1, rc.top + headerHeight);
+    }
+
+    rc.left += 1;
+    rc.right -= 1;
+    rc.bottom -= 1;
+    return rc;
+}
+
+static bool GetCustomTabItemRect(TabControlState* state, int pageIdx, RECT* outRect) {
+    if (!state || !outRect) return false;
+    int visibleIdx = PageIndexToVisibleIndex(state, pageIdx);
+    if (visibleIdx < 0) return false;
+
+    RECT client = {};
+    GetClientRect(state->hTabControl, &client);
+    int headerHeight = GetCustomTabHeaderHeight(state);
+    int visibleCount = GetVisibleTabCount(state);
+    if (visibleCount <= 0) return false;
+
+    int totalWidth = visibleCount * state->tabWidth;
+    int clientWidth = client.right - client.left;
+    int startX = 0;
+    if (totalWidth < clientWidth) {
+        if (state->tabAlignment == 1) startX = (clientWidth - totalWidth) / 2;
+        else if (state->tabAlignment == 2) startX = clientWidth - totalWidth;
+    }
+    startX -= state->scrollOffset;
+
+    int top = (state->tabPosition == 1) ? (client.bottom - headerHeight) : 0;
+    int verticalInset = max(0, headerHeight - state->tabHeight);
+    if (GetCustomTabHeaderStyle(state) == TAB_HEADER_STYLE_SEGMENTED) {
+        verticalInset = max(4, verticalInset / 2);
+    }
+
+    outRect->left = startX + visibleIdx * state->tabWidth;
+    outRect->top = top + verticalInset;
+    outRect->right = outRect->left + state->tabWidth;
+    outRect->bottom = outRect->top + state->tabHeight;
+    return true;
+}
+
+static bool GetCustomTabCloseButtonRect(TabControlState* state, int pageIdx, RECT* outRect) {
+    if (!state || !outRect || !state->closable) return false;
+    RECT tabRect = {};
+    if (!GetCustomTabItemRect(state, pageIdx, &tabRect)) return false;
+    int closeBtnSize = 18;
+    int closeBtnMargin = 6;
+    outRect->left = tabRect.right - closeBtnSize - closeBtnMargin;
+    outRect->top = tabRect.top + ((tabRect.bottom - tabRect.top) - closeBtnSize) / 2;
+    outRect->right = outRect->left + closeBtnSize;
+    outRect->bottom = outRect->top + closeBtnSize;
+    return true;
+}
+
+static int HitTestCustomTab(TabControlState* state, POINT pt) {
+    if (!state) return -1;
+    for (int i = 0; i < (int)state->pages.size(); ++i) {
+        if (!state->pages[i].visible) continue;
+        RECT tabRect = {};
+        if (GetCustomTabItemRect(state, i, &tabRect) && PtInRect(&tabRect, pt)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void UpdateTabLayout(TabControlState* state) {
     if (!state || !state->hTabControl) return;
 
-    RECT rcTab;
-    GetClientRect(state->hTabControl, &rcTab);
-    TabCtrl_AdjustRect(state->hTabControl, FALSE, &rcTab);
-
+    RECT rcTab = GetCustomTabContentRect(state);
     int w = rcTab.right - rcTab.left;
     int h = rcTab.bottom - rcTab.top;
     if (w < 1) w = 1;
     if (h < 1) h = 1;
 
+    HWND current_page = nullptr;
+    state->layoutBatchInProgress = true;
+    HDWP hdwp = BeginDeferWindowPos((int)state->pages.size());
     for (size_t i = 0; i < state->pages.size(); i++) {
         TabPageInfo& page = state->pages[i];
         if (page.hContentWindow && IsWindow(page.hContentWindow)) {
-            SetWindowPos(page.hContentWindow, nullptr, rcTab.left, rcTab.top, w, h,
-                SWP_NOZORDER | SWP_NOACTIVATE);
+            UINT flags = SWP_NOACTIVATE | SWP_NOREDRAW;
             if ((int)i == state->currentIndex) {
-                SetWindowPos(page.hContentWindow, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                ShowWindow(page.hContentWindow, SW_SHOW);  // 确保子控件收到 WM_SHOWWINDOW
-                SendMessage(page.hContentWindow, WM_EW_TABPAGE_VISIBLE, 0, 0);  // Tab 内容窗口 D2D 重建
-                EnumChildWindows(page.hContentWindow, ShowAndInvalidateChildProc, 0);
-                RedrawWindow(page.hContentWindow, nullptr, nullptr,
-                    RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+                current_page = page.hContentWindow;
+                flags |= SWP_SHOWWINDOW;
+                hdwp = DeferWindowPos(hdwp, page.hContentWindow, HWND_TOP, rcTab.left, rcTab.top, w, h, flags);
             } else {
-                ShowWindow(page.hContentWindow, SW_HIDE);  // 隐藏以让 D2D 控件在显示时重建渲染目标
+                flags |= SWP_HIDEWINDOW;
+                hdwp = DeferWindowPos(hdwp, page.hContentWindow, nullptr, rcTab.left, rcTab.top, w, h,
+                    flags | SWP_NOZORDER);
             }
         }
+    }
+    if (hdwp) {
+        EndDeferWindowPos(hdwp);
+    }
+    state->layoutBatchInProgress = false;
+
+    if (current_page && IsWindow(current_page)) {
+        RefreshVisibleTabWindowTree(current_page);
+        RedrawWindow(current_page, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_NOCHILDREN | RDW_FRAME);
+        InvalidateVisibleWindowTree(current_page);
     }
 }
 
@@ -3634,6 +4941,478 @@ static ID2D1Bitmap* CreateBitmapFromPNGData(ID2D1RenderTarget* rt, const std::ve
     hr = rt->CreateBitmapFromWicBitmap(converter, nullptr, &bitmap);
     converter->Release();
     return SUCCEEDED(hr) ? bitmap : nullptr;
+}
+
+static bool ReadBinaryFileBytes(const std::wstring& file_path, std::vector<unsigned char>& out_data) {
+    out_data.clear();
+
+    HANDLE file = CreateFileW(
+        file_path.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (file == INVALID_HANDLE_VALUE) return false;
+
+    LARGE_INTEGER size = {};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > MAXDWORD) {
+        CloseHandle(file);
+        return false;
+    }
+
+    out_data.resize((size_t)size.QuadPart);
+    DWORD bytes_read = 0;
+    BOOL ok = ReadFile(file, out_data.data(), (DWORD)out_data.size(), &bytes_read, nullptr);
+    CloseHandle(file);
+
+    if (!ok || bytes_read != out_data.size()) {
+        out_data.clear();
+        return false;
+    }
+    return true;
+}
+
+static void DrawCustomTabControl(ID2D1DCRenderTarget* rt, TabControlState* state, int width, int height) {
+    if (!rt || !state || !g_dwrite_factory) return;
+
+    int headerStyle = GetCustomTabHeaderStyle(state);
+    RECT contentRect = GetCustomTabContentRect(state);
+    float contentTop = (float)max(0, contentRect.top - 1);
+    float contentLeft = (float)max(0, contentRect.left);
+    float contentRight = (float)max(contentRect.right, contentRect.left + 1);
+    float contentBottom = (float)max(contentRect.bottom, contentRect.top + 1);
+
+    UINT32 hostBgArgb = ThemeColor_Background();
+    UINT32 stripBgArgb = (headerStyle == TAB_HEADER_STYLE_LINE) ? ThemeColor_Background()
+        : (headerStyle == TAB_HEADER_STYLE_SEGMENTED ? ThemeColor_Background() : ThemeColor_BackgroundLight());
+    UINT32 borderArgb = ThemeColor_BorderBase();
+    UINT32 dividerArgb = ThemeColor_BorderLight();
+
+    ID2D1SolidColorBrush* hostBrush = nullptr;
+    ID2D1SolidColorBrush* stripBrush = nullptr;
+    ID2D1SolidColorBrush* borderBrush = nullptr;
+    ID2D1SolidColorBrush* dividerBrush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(hostBgArgb), &hostBrush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(stripBgArgb), &stripBrush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(borderArgb), &borderBrush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(dividerArgb), &dividerBrush);
+
+    if (hostBrush) rt->FillRectangle(D2D1::RectF(0, 0, (FLOAT)width, (FLOAT)height), hostBrush);
+
+    int headerHeight = GetCustomTabHeaderHeight(state);
+    float headerTop = (state->tabPosition == 1) ? (FLOAT)(height - headerHeight) : 0.0f;
+    float headerBottom = headerTop + (FLOAT)headerHeight;
+    if (stripBrush) rt->FillRectangle(D2D1::RectF(0, headerTop, (FLOAT)width, headerBottom), stripBrush);
+
+    if (borderBrush) {
+        rt->DrawRectangle(
+            D2D1::RectF(contentLeft, contentTop, contentRight, contentBottom),
+            borderBrush,
+            1.0f
+        );
+    }
+
+    if (headerStyle == TAB_HEADER_STYLE_CARD || headerStyle == TAB_HEADER_STYLE_CARD_PLAIN) {
+        if (dividerBrush) {
+            rt->DrawLine(D2D1::Point2F(0.0f, headerTop), D2D1::Point2F((FLOAT)width, headerTop), dividerBrush, 1.0f);
+            rt->DrawLine(D2D1::Point2F(0.0f, contentTop), D2D1::Point2F((FLOAT)width, contentTop), dividerBrush, 1.0f);
+        }
+    } else if (headerStyle == TAB_HEADER_STYLE_LINE && dividerBrush) {
+        rt->DrawLine(D2D1::Point2F(0.0f, contentTop), D2D1::Point2F((FLOAT)width, contentTop), dividerBrush, 1.0f);
+    }
+
+    IDWriteTextFormat* fmt = nullptr;
+    g_dwrite_factory->CreateTextFormat(
+        state->fontName.c_str(),
+        nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        state->fontSize,
+        L"zh-CN",
+        &fmt
+    );
+    if (!fmt) {
+        if (hostBrush) hostBrush->Release();
+        if (stripBrush) stripBrush->Release();
+        if (borderBrush) borderBrush->Release();
+        if (dividerBrush) dividerBrush->Release();
+        return;
+    }
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    for (int i = 0; i < (int)state->pages.size(); ++i) {
+        if (!state->pages[i].visible) continue;
+
+        RECT tabRectWin = {};
+        if (!GetCustomTabItemRect(state, i, &tabRectWin)) continue;
+
+        bool isSelected = (i == state->currentIndex);
+        bool isEnabled = state->pages[i].enabled;
+        bool isHovered = (i == state->hoveredTabIndex);
+        float opacity = isEnabled ? 1.0f : 0.5f;
+        D2D1_RECT_F tabRect = D2D1::RectF((FLOAT)tabRectWin.left, (FLOAT)tabRectWin.top, (FLOAT)tabRectWin.right, (FLOAT)tabRectWin.bottom);
+
+        if (headerStyle == TAB_HEADER_STYLE_CARD || headerStyle == TAB_HEADER_STYLE_CARD_PLAIN) {
+            if (isSelected) {
+                ID2D1SolidColorBrush* activeBrush = nullptr;
+                rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_Background()), &activeBrush);
+                if (activeBrush) {
+                    rt->FillRectangle(tabRect, activeBrush);
+                    activeBrush->Release();
+                }
+                if (borderBrush) {
+                    rt->DrawLine(D2D1::Point2F(tabRect.left, tabRect.top), D2D1::Point2F(tabRect.right, tabRect.top), borderBrush, 1.0f);
+                    rt->DrawLine(D2D1::Point2F(tabRect.left, tabRect.top), D2D1::Point2F(tabRect.left, tabRect.bottom), borderBrush, 1.0f);
+                    rt->DrawLine(D2D1::Point2F(tabRect.right, tabRect.top), D2D1::Point2F(tabRect.right, tabRect.bottom), borderBrush, 1.0f);
+                    ID2D1SolidColorBrush* maskBrush = nullptr;
+                    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_Background()), &maskBrush);
+                    if (maskBrush) {
+                        rt->FillRectangle(D2D1::RectF(tabRect.left, tabRect.bottom - 2.0f, tabRect.right, tabRect.bottom + 1.0f), maskBrush);
+                        maskBrush->Release();
+                    }
+                }
+            } else if (dividerBrush) {
+                rt->DrawLine(
+                    D2D1::Point2F(tabRect.right, tabRect.top + 7.0f),
+                    D2D1::Point2F(tabRect.right, tabRect.bottom - 7.0f),
+                    dividerBrush,
+                    1.0f
+                );
+                if (PageIndexToVisibleIndex(state, i) == 0) {
+                    rt->DrawLine(
+                        D2D1::Point2F(tabRect.left, tabRect.top + 7.0f),
+                        D2D1::Point2F(tabRect.left, tabRect.bottom - 7.0f),
+                        dividerBrush,
+                        1.0f
+                    );
+                }
+            }
+        } else if (headerStyle == TAB_HEADER_STYLE_SEGMENTED) {
+            ID2D1SolidColorBrush* tabBgBrush = nullptr;
+            UINT32 bg = isSelected ? ThemeColor_Background() : ThemeColor_BorderExtraLight();
+            rt->CreateSolidColorBrush(ColorFromUInt32(bg), &tabBgBrush);
+            if (tabBgBrush) {
+                D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(tabRect, 4.0f, 4.0f);
+                rt->FillRoundedRectangle(rr, tabBgBrush);
+                if (isSelected && borderBrush) rt->DrawRoundedRectangle(rr, borderBrush, 1.0f);
+                tabBgBrush->Release();
+            }
+        } else {
+            if (isHovered && !isSelected) {
+                ID2D1SolidColorBrush* hoverBrush = nullptr;
+                rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_BackgroundLight()), &hoverBrush);
+                if (hoverBrush) {
+                    rt->FillRectangle(D2D1::RectF(tabRect.left + 2, tabRect.top + 2, tabRect.right - 2, tabRect.bottom - 2), hoverBrush);
+                    hoverBrush->Release();
+                }
+            }
+        }
+
+        UINT32 textArgb = state->unselectedTextColor;
+        if (headerStyle == TAB_HEADER_STYLE_CARD || headerStyle == TAB_HEADER_STYLE_CARD_PLAIN) {
+            textArgb = isSelected
+                ? ((headerStyle == TAB_HEADER_STYLE_CARD_PLAIN) ? state->indicatorColor : state->selectedTextColor)
+                : ThemeColor_TextSecondary();
+        } else if (headerStyle == TAB_HEADER_STYLE_SEGMENTED) {
+            textArgb = isSelected ? state->indicatorColor : ThemeColor_TextRegular();
+        } else {
+            textArgb = isSelected ? state->selectedTextColor : ThemeColor_TextRegular();
+        }
+
+        D2D1_COLOR_F textColor = ColorFromUInt32(textArgb);
+        textColor.a *= opacity;
+        ID2D1SolidColorBrush* textBrush = nullptr;
+        rt->CreateSolidColorBrush(textColor, &textBrush);
+
+        float textLeft = tabRect.left + (FLOAT)state->paddingH + 10.0f;
+        float textRight = tabRect.right - (FLOAT)state->paddingH - 10.0f;
+        RECT closeRectWin = {};
+        if (state->closable && GetCustomTabCloseButtonRect(state, i, &closeRectWin)) {
+            textRight = min(textRight, (FLOAT)closeRectWin.left - 4.0f);
+        }
+
+        if (!state->pages[i].iconData.empty()) {
+            ID2D1Bitmap* iconBitmap = CreateBitmapFromPNGData(rt, state->pages[i].iconData);
+            if (iconBitmap) {
+                float iconY = tabRect.top + ((tabRect.bottom - tabRect.top) - 16.0f) / 2.0f;
+                D2D1_RECT_F iconRect = D2D1::RectF(textLeft, iconY, textLeft + 16.0f, iconY + 16.0f);
+                rt->DrawBitmap(iconBitmap, iconRect, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                iconBitmap->Release();
+                textLeft += 20.0f;
+            }
+        }
+
+        if (textBrush) {
+            rt->DrawText(
+                state->pages[i].title.c_str(),
+                (UINT32)state->pages[i].title.length(),
+                fmt,
+                D2D1::RectF(textLeft, tabRect.top, textRight, tabRect.bottom),
+                textBrush,
+                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
+            );
+            textBrush->Release();
+        }
+
+        if (state->closable && GetCustomTabCloseButtonRect(state, i, &closeRectWin)) {
+            D2D1_COLOR_F closeColor = ColorFromUInt32((state->hoveredCloseTabIndex == i) ? ThemeColor_Danger() : ThemeColor_TextSecondary());
+            closeColor.a *= opacity;
+            ID2D1SolidColorBrush* closeBrush = nullptr;
+            rt->CreateSolidColorBrush(closeColor, &closeBrush);
+            if (closeBrush) {
+                float left = (FLOAT)closeRectWin.left;
+                float top = (FLOAT)closeRectWin.top;
+                float right = (FLOAT)closeRectWin.right;
+                float bottom = (FLOAT)closeRectWin.bottom;
+                if (state->hoveredCloseTabIndex == i) {
+                    ID2D1SolidColorBrush* hoverCloseBrush = nullptr;
+                    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_LightBg(ThemeColor_Danger())), &hoverCloseBrush);
+                    if (hoverCloseBrush) {
+                        rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left - 1, top - 1, right + 1, bottom + 1), 3.0f, 3.0f), hoverCloseBrush);
+                        hoverCloseBrush->Release();
+                    }
+                }
+                rt->DrawLine(D2D1::Point2F(left + 4.0f, top + 4.0f), D2D1::Point2F(right - 4.0f, bottom - 4.0f), closeBrush, 1.2f);
+                rt->DrawLine(D2D1::Point2F(right - 4.0f, top + 4.0f), D2D1::Point2F(left + 4.0f, bottom - 4.0f), closeBrush, 1.2f);
+                closeBrush->Release();
+            }
+        }
+
+        if (headerStyle == TAB_HEADER_STYLE_LINE && isSelected && borderBrush) {
+            ID2D1SolidColorBrush* indicatorBrush = nullptr;
+            rt->CreateSolidColorBrush(ColorFromUInt32(state->indicatorColor), &indicatorBrush);
+            if (indicatorBrush) {
+                float inset = min(18.0f, max(10.0f, (float)(tabRect.right - tabRect.left) * 0.16f));
+                rt->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(tabRect.left + inset, tabRect.bottom - 3.0f, tabRect.right - inset, tabRect.bottom),
+                        1.5f,
+                        1.5f
+                    ),
+                    indicatorBrush
+                );
+                indicatorBrush->Release();
+            }
+        }
+    }
+
+    if (state->isDragging && state->draggable && state->dragTargetIndex >= 0 && borderBrush) {
+        RECT targetRect = {};
+        if (GetCustomTabItemRect(state, state->dragTargetIndex, &targetRect)) {
+            float lineX = (FLOAT)targetRect.left;
+            rt->DrawLine(D2D1::Point2F(lineX, (FLOAT)targetRect.top), D2D1::Point2F(lineX, (FLOAT)targetRect.bottom), borderBrush, 2.0f);
+        }
+    }
+
+    fmt->Release();
+    if (hostBrush) hostBrush->Release();
+    if (stripBrush) stripBrush->Release();
+    if (borderBrush) borderBrush->Release();
+    if (dividerBrush) dividerBrush->Release();
+}
+
+LRESULT CALLBACK CustomTabControlProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    auto it = g_tab_controls.find(hwnd);
+    TabControlState* state = (it != g_tab_controls.end()) ? it->second : nullptr;
+
+    if (state && HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events)) {
+        return 0;
+    }
+
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_SIZE:
+        if (state) UpdateTabLayout(state);
+        return 0;
+
+    case WM_MOUSEMOVE:
+        if (state) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            int hoveredTab = HitTestCustomTab(state, pt);
+            int hoveredClose = -1;
+            if (state->closable && hoveredTab >= 0) {
+                RECT closeRect = {};
+                if (GetCustomTabCloseButtonRect(state, hoveredTab, &closeRect) && PtInRect(&closeRect, pt)) {
+                    hoveredClose = hoveredTab;
+                }
+            }
+            bool redraw = false;
+            if (hoveredTab != state->hoveredTabIndex) {
+                state->hoveredTabIndex = hoveredTab;
+                redraw = true;
+            }
+            if (hoveredClose != state->hoveredCloseTabIndex) {
+                state->hoveredCloseTabIndex = hoveredClose;
+                redraw = true;
+            }
+            if (state->isDragging && state->draggable) {
+                int target = HitTestCustomTab(state, pt);
+                if (target >= 0) {
+                    state->dragTargetIndex = target;
+                    redraw = true;
+                }
+            }
+            if (redraw) InvalidateRect(hwnd, NULL, FALSE);
+
+            TRACKMOUSEEVENT tme = {};
+            tme.cbSize = sizeof(tme);
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            TrackMouseEvent(&tme);
+        }
+        return 0;
+
+    case WM_MOUSELEAVE:
+        if (state) {
+            state->hoveredTabIndex = -1;
+            state->hoveredCloseTabIndex = -1;
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        if (state) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            int pageIdx = HitTestCustomTab(state, pt);
+            if (pageIdx >= 0) {
+                RECT closeRect = {};
+                if (state->closable && GetCustomTabCloseButtonRect(state, pageIdx, &closeRect) && PtInRect(&closeRect, pt)) {
+                    if (state->closeCallback) state->closeCallback(hwnd, pageIdx);
+                    return 0;
+                }
+                if (state->draggable) {
+                    state->isDragging = true;
+                    state->dragStartIndex = pageIdx;
+                    state->dragTargetIndex = pageIdx;
+                    state->dragStartPoint = pt;
+                    SetCapture(hwnd);
+                }
+            }
+        }
+        return 0;
+
+    case WM_LBUTTONUP:
+        if (state) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            int pageIdx = HitTestCustomTab(state, pt);
+            if (state->isDragging && state->draggable) {
+                ReleaseCapture();
+                state->isDragging = false;
+                int fromIdx = state->dragStartIndex;
+                int toIdx = state->dragTargetIndex;
+                if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx &&
+                    fromIdx < (int)state->pages.size() && toIdx < (int)state->pages.size()) {
+                    TabPageInfo movedPage = state->pages[fromIdx];
+                    state->pages.erase(state->pages.begin() + fromIdx);
+                    if (toIdx > fromIdx) toIdx--;
+                    state->pages.insert(state->pages.begin() + toIdx, movedPage);
+                    for (int i = 0; i < (int)state->pages.size(); i++) state->pages[i].index = i;
+                    state->currentIndex = toIdx;
+                    UpdateTabLayout(state);
+                } else if (pageIdx >= 0 && state->pages[pageIdx].enabled) {
+                    ApplySelectTab(hwnd, pageIdx);
+                }
+                state->dragStartIndex = -1;
+                state->dragTargetIndex = -1;
+                InvalidateRect(hwnd, NULL, TRUE);
+                return 0;
+            }
+            if (pageIdx >= 0 && state->pages[pageIdx].enabled) {
+                ApplySelectTab(hwnd, pageIdx);
+            }
+        }
+        return 0;
+
+    case WM_RBUTTONUP:
+        if (state) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            int pageIdx = HitTestCustomTab(state, pt);
+            POINT screen_pt = pt;
+            ClientToScreen(hwnd, &screen_pt);
+            if (pageIdx >= 0 && state->rightClickCallback) {
+                state->rightClickCallback(hwnd, pageIdx, screen_pt.x, screen_pt.y);
+            }
+            if (TryShowBoundPopupMenu(hwnd, screen_pt.x, screen_pt.y, true)) {
+                return 0;
+            }
+        }
+        return 0;
+
+    case WM_LBUTTONDBLCLK:
+        if (state && state->dblClickCallback) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            int pageIdx = HitTestCustomTab(state, pt);
+            if (pageIdx >= 0) {
+                state->dblClickCallback(hwnd, pageIdx);
+                return 0;
+            }
+        }
+        return 0;
+
+    case WM_PAINT:
+        if (state) {
+            PAINTSTRUCT ps = {};
+            HDC hdc = BeginPaint(hwnd, &ps);
+            RECT client = {};
+            GetClientRect(hwnd, &client);
+            int w = client.right - client.left;
+            int h = client.bottom - client.top;
+
+            HDC memDC = CreateCompatibleDC(hdc);
+            if (memDC && w > 0 && h > 0) {
+                BITMAPINFO bmi = {};
+                bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                bmi.bmiHeader.biWidth = w;
+                bmi.bmiHeader.biHeight = -h;
+                bmi.bmiHeader.biPlanes = 1;
+                bmi.bmiHeader.biBitCount = 32;
+                bmi.bmiHeader.biCompression = BI_RGB;
+                void* pvBits = nullptr;
+                HBITMAP hBmp = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &pvBits, nullptr, 0);
+                if (hBmp) {
+                    HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, hBmp);
+                    ID2D1DCRenderTarget* dcRT = nullptr;
+                    D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties(
+                        D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+                    );
+                    if (SUCCEEDED(g_d2d_factory->CreateDCRenderTarget(&rtProps, &dcRT))) {
+                        RECT bindRc = { 0, 0, w, h };
+                        dcRT->BindDC(memDC, &bindRc);
+                        dcRT->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+                        dcRT->BeginDraw();
+                        DrawCustomTabControl(dcRT, state, w, h);
+                        dcRT->EndDraw();
+                        dcRT->Release();
+                    }
+                    BitBlt(hdc, 0, 0, w, h, memDC, 0, 0, SRCCOPY);
+                    SelectObject(memDC, oldBmp);
+                    DeleteObject(hBmp);
+                }
+                DeleteDC(memDC);
+            }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        break;
+
+    case WM_NCDESTROY:
+        if (state) {
+            g_tab_header_styles.erase(hwnd);
+            g_tab_controls.erase(hwnd);
+            delete state;
+        }
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 // 父窗口子类化过程（处理 TabControl 的通知消息）
@@ -3713,6 +5492,11 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
         const std::wstring& title = state->pages[tabIdx].title;
         bool isSelected = (dis->itemState & ODS_SELECTED) != 0;
         bool isEnabled = state->pages[tabIdx].enabled;  // 2.4: 禁用状态
+        int header_style = TAB_HEADER_STYLE_LINE;
+        auto header_style_it = g_tab_header_styles.find(hTabControl);
+        if (header_style_it != g_tab_header_styles.end()) {
+            header_style = header_style_it->second;
+        }
 
         int w = dis->rcItem.right  - dis->rcItem.left;
         int h = dis->rcItem.bottom - dis->rcItem.top;
@@ -3752,22 +5536,210 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
             // 2.4: 禁用标签页使用 50% 透明度
             float opacity = isEnabled ? 1.0f : 0.5f;
 
-            // ── 3. 背景填充（2.1: 从 state 读取颜色）──
+            // ── 3. 背景填充（支持多种标签头风格）──
+            UINT32 stripBgArgb = ThemeColor_Background();
             UINT32 bgArgb = isSelected ? state->selectedBgColor : state->unselectedBgColor;
-            D2D1_COLOR_F bgColor = ColorFromUInt32(bgArgb);
-            bgColor.a *= opacity;  // 禁用时半透明
+            UINT32 textArgb = isSelected ? state->selectedTextColor : state->unselectedTextColor;
+            UINT32 borderArgb = ThemeColor_BorderLighter();
+            UINT32 dividerArgb = ThemeColor_BorderExtraLight();
+            bool card_tabs_minimal = false;
+            bool draw_outline = false;
+            bool draw_border = false;
+            bool draw_indicator = isSelected;
+            bool draw_divider = false;
+            bool merge_with_content = false;
+            bool draw_card_tab_edges = false;
+            float card_inset_x = 0.0f;
+            float card_inset_y = 0.0f;
+            float corner_radius = 0.0f;
+            float border_width = 1.0f;
 
+            switch (header_style) {
+            case TAB_HEADER_STYLE_CARD:
+                stripBgArgb = ThemeColor_BackgroundLight();
+                bgArgb = ThemeColor_Background();
+                borderArgb = ThemeColor_BorderBase();
+                dividerArgb = ThemeColor_BorderBase();
+                textArgb = isSelected ? state->selectedTextColor : ThemeColor_TextSecondary();
+                card_tabs_minimal = true;
+                draw_outline = isSelected;
+                draw_border = isSelected;
+                draw_indicator = false;
+                draw_divider = true;
+                merge_with_content = isSelected;
+                draw_card_tab_edges = true;
+                card_inset_x = 0.0f;
+                card_inset_y = 0.0f;
+                corner_radius = 0.0f;
+                break;
+            case TAB_HEADER_STYLE_CARD_PLAIN:
+                stripBgArgb = ThemeColor_BackgroundLight();
+                bgArgb = ThemeColor_Background();
+                borderArgb = ThemeColor_BorderBase();
+                dividerArgb = ThemeColor_BorderBase();
+                textArgb = isSelected ? state->indicatorColor : ThemeColor_TextSecondary();
+                card_tabs_minimal = true;
+                draw_outline = isSelected;
+                draw_border = isSelected;
+                draw_indicator = false;
+                draw_divider = true;
+                merge_with_content = isSelected;
+                draw_card_tab_edges = true;
+                card_inset_x = 0.0f;
+                card_inset_y = 0.0f;
+                corner_radius = 0.0f;
+                break;
+            case TAB_HEADER_STYLE_SEGMENTED:
+                stripBgArgb = ThemeColor_BorderExtraLight();
+                bgArgb = isSelected ? ThemeColor_Background() : ThemeColor_BorderExtraLight();
+                borderArgb = isSelected ? ThemeColor_BorderLight() : ThemeColor_BorderExtraLight();
+                textArgb = isSelected ? state->indicatorColor : ThemeColor_TextRegular();
+                draw_outline = true;
+                draw_border = isSelected;
+                draw_indicator = false;
+                card_inset_x = 3.0f;
+                card_inset_y = 7.0f;
+                corner_radius = 4.0f;
+                break;
+            case TAB_HEADER_STYLE_LINE:
+            default:
+                stripBgArgb = ThemeColor_Background();
+                bgArgb = ThemeColor_Background();
+                textArgb = isSelected ? state->selectedTextColor : ThemeColor_TextRegular();
+                borderArgb = ThemeColor_BorderExtraLight();
+                draw_outline = false;
+                draw_border = false;
+                draw_indicator = isSelected;
+                draw_divider = true;
+                card_inset_x = 0.0f;
+                card_inset_y = 0.0f;
+                corner_radius = 0.0f;
+                break;
+            }
+
+            D2D1_COLOR_F stripBgColor = ColorFromUInt32(stripBgArgb);
+            stripBgColor.a *= opacity;
+            D2D1_COLOR_F bgColor = ColorFromUInt32(bgArgb);
+            bgColor.a *= opacity;
+            D2D1_COLOR_F borderColor = ColorFromUInt32(borderArgb);
+            borderColor.a *= opacity;
+            D2D1_COLOR_F dividerColor = ColorFromUInt32(dividerArgb);
+            dividerColor.a *= opacity;
+
+            ID2D1SolidColorBrush* stripBgBrush = nullptr;
             ID2D1SolidColorBrush* bgBrush = nullptr;
+            ID2D1SolidColorBrush* borderBrush = nullptr;
+            ID2D1SolidColorBrush* dividerBrush = nullptr;
+            dcRT->CreateSolidColorBrush(stripBgColor, &stripBgBrush);
             dcRT->CreateSolidColorBrush(bgColor, &bgBrush);
-            D2D1_RECT_F fillRect = D2D1::RectF(0.0f, 0.0f, (FLOAT)w, (FLOAT)h);
-            dcRT->FillRectangle(fillRect, bgBrush);
-            bgBrush->Release();
+            dcRT->CreateSolidColorBrush(borderColor, &borderBrush);
+            dcRT->CreateSolidColorBrush(dividerColor, &dividerBrush);
+            D2D1_RECT_F fullRect = D2D1::RectF(0.0f, 0.0f, (FLOAT)w, (FLOAT)h);
+            D2D1_RECT_F fillRect = D2D1::RectF(card_inset_x, card_inset_y, (FLOAT)w - card_inset_x, (FLOAT)h);
+
+            if (stripBgBrush) {
+                dcRT->FillRectangle(fullRect, stripBgBrush);
+            }
+
+            if (draw_divider && dividerBrush) {
+                dcRT->DrawLine(
+                    D2D1::Point2F(0.0f, (FLOAT)h - 1.0f),
+                    D2D1::Point2F((FLOAT)w, (FLOAT)h - 1.0f),
+                    dividerBrush,
+                    1.0f
+                );
+            }
+
+            if (card_tabs_minimal && dividerBrush) {
+                dcRT->DrawLine(
+                    D2D1::Point2F((FLOAT)w - 1.0f, 0.0f),
+                    D2D1::Point2F((FLOAT)w - 1.0f, (FLOAT)h - 1.0f),
+                    dividerBrush,
+                    1.0f
+                );
+                if (visibleTabIdx == 0) {
+                    dcRT->DrawLine(
+                        D2D1::Point2F(0.0f, 0.0f),
+                        D2D1::Point2F(0.0f, (FLOAT)h - 1.0f),
+                        dividerBrush,
+                        1.0f
+                    );
+                }
+            }
+
+            if (draw_outline) {
+                D2D1_RECT_F outlineRect = D2D1::RectF(
+                    card_inset_x,
+                    card_inset_y,
+                    (FLOAT)w - card_inset_x - 1.0f,
+                    (FLOAT)h - 1.0f
+                );
+                if (corner_radius > 0.0f) {
+                    D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(
+                        outlineRect,
+                        corner_radius,
+                        corner_radius
+                    );
+                    if (bgBrush) dcRT->FillRoundedRectangle(rounded, bgBrush);
+                    if (draw_border && borderBrush) dcRT->DrawRoundedRectangle(rounded, borderBrush, border_width);
+                }
+                else {
+                    if (bgBrush) dcRT->FillRectangle(outlineRect, bgBrush);
+                    if (draw_border && borderBrush) {
+                        if (draw_card_tab_edges) {
+                            bool drawLeftEdge = card_tabs_minimal ? true : (visibleTabIdx == 0);
+                            dcRT->DrawLine(
+                                D2D1::Point2F(outlineRect.left, outlineRect.top),
+                                D2D1::Point2F(outlineRect.right, outlineRect.top),
+                                borderBrush,
+                                border_width
+                            );
+                            if (drawLeftEdge) {
+                                dcRT->DrawLine(
+                                    D2D1::Point2F(outlineRect.left, outlineRect.top),
+                                    D2D1::Point2F(outlineRect.left, outlineRect.bottom),
+                                    borderBrush,
+                                    border_width
+                                );
+                            }
+                            dcRT->DrawLine(
+                                D2D1::Point2F(outlineRect.right, outlineRect.top),
+                                D2D1::Point2F(outlineRect.right, outlineRect.bottom),
+                                borderBrush,
+                                border_width
+                            );
+                        }
+                        else {
+                            dcRT->DrawRectangle(outlineRect, borderBrush, border_width);
+                        }
+                    }
+                }
+
+                if (merge_with_content && bgBrush) {
+                    D2D1_RECT_F mergeRect = D2D1::RectF(
+                        outlineRect.left,
+                        (FLOAT)h - 2.0f,
+                        outlineRect.right + 1.0f,
+                        (FLOAT)h
+                    );
+                    dcRT->FillRectangle(mergeRect, bgBrush);
+                }
+            }
+            else if (bgBrush) {
+                dcRT->FillRectangle(fillRect, bgBrush);
+            }
+
+            if (stripBgBrush) stripBgBrush->Release();
+            if (bgBrush) bgBrush->Release();
+            if (borderBrush) borderBrush->Release();
+            if (dividerBrush) dividerBrush->Release();
 
             // ── 4. 图标绘制（2.5）+ 文字（2.2）+ 关闭按钮（2.6）──
-            float textLeft = (float)state->paddingH;   // 2.2: 使用 paddingH
-            float textRight = (float)(w - state->paddingH);
-            float closeBtnSize = 16.0f;  // 关闭按钮区域大小
-            float closeBtnMargin = 4.0f; // 关闭按钮与文字间距
+            float textInset = draw_card_tab_edges ? 0.0f : (draw_outline ? 4.0f : 0.0f);
+            float textLeft = (float)state->paddingH + card_inset_x + textInset;   // 2.2: 使用 paddingH
+            float textRight = (float)(w - state->paddingH) - card_inset_x - textInset;
+            float closeBtnSize = 18.0f;  // 关闭按钮区域大小
+            float closeBtnMargin = 6.0f; // 关闭按钮与文字间距
 
             // 2.5: 图标绘制
             float iconSize = 16.0f;
@@ -3806,8 +5778,7 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
                     fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-                    // 2.2: 从 state 读取文字颜色
-                    UINT32 textArgb = isSelected ? state->selectedTextColor : state->unselectedTextColor;
+                    // 2.2: 从 style 解析文字颜色
                     D2D1_COLOR_F textColor = ColorFromUInt32(textArgb);
                     textColor.a *= opacity;  // 禁用时半透明
 
@@ -3816,8 +5787,8 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
 
                     // 2.2: 使用 paddingH/paddingV 计算文字绘制区域
                     D2D1_RECT_F textRect = D2D1::RectF(
-                        textLeft, (float)state->paddingV,
-                        textRight, (FLOAT)(h - (isSelected ? 2.0f : 0.0f) - state->paddingV)
+                        textLeft, (float)state->paddingV + card_inset_y,
+                        textRight, (FLOAT)(h - (draw_indicator ? 2.0f : 0.0f) - state->paddingV)
                     );
 
                     // D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT: 关键 —— 彩色 Emoji 渲染
@@ -3858,28 +5829,34 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
                 ID2D1SolidColorBrush* closeBrush = nullptr;
                 D2D1_COLOR_F closeColor = isCloseHovered
                     ? D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity)   // 悬停时白色
-                    : D2D1::ColorF(0.6f, 0.6f, 0.6f, opacity);  // 默认灰色
+                    : ColorFromUInt32(ThemeColor_TextRegular());  // 默认更明显
+                closeColor.a *= opacity;
                 dcRT->CreateSolidColorBrush(closeColor, &closeBrush);
-                float crossMargin = 4.0f;
+                float crossMargin = 4.5f;
                 dcRT->DrawLine(
                     D2D1::Point2F(btnX + crossMargin, btnY + crossMargin),
                     D2D1::Point2F(btnX + closeBtnSize - crossMargin, btnY + closeBtnSize - crossMargin),
-                    closeBrush, 1.2f);
+                    closeBrush, 1.5f);
                 dcRT->DrawLine(
                     D2D1::Point2F(btnX + closeBtnSize - crossMargin, btnY + crossMargin),
                     D2D1::Point2F(btnX + crossMargin, btnY + closeBtnSize - crossMargin),
-                    closeBrush, 1.2f);
+                    closeBrush, 1.5f);
                 closeBrush->Release();
             }
 
             // ── 5. 选中指示条（2.3: 从 state 读取颜色）──
-            if (isSelected) {
+            if (draw_indicator) {
                 D2D1_COLOR_F indicatorColor = ColorFromUInt32(state->indicatorColor);
                 indicatorColor.a *= opacity;
                 ID2D1SolidColorBrush* lineBrush = nullptr;
                 dcRT->CreateSolidColorBrush(indicatorColor, &lineBrush);
-                D2D1_RECT_F lineRect = D2D1::RectF(0.0f, (FLOAT)(h - 2), (FLOAT)w, (FLOAT)h);
-                dcRT->FillRectangle(lineRect, lineBrush);
+                float indicatorInset = min(18.0f, max(10.0f, (float)w * 0.16f));
+                D2D1_ROUNDED_RECT lineRect = D2D1::RoundedRect(
+                    D2D1::RectF(indicatorInset, (FLOAT)(h - 3), (FLOAT)w - indicatorInset, (FLOAT)h),
+                    1.5f,
+                    1.5f
+                );
+                dcRT->FillRoundedRectangle(lineRect, lineBrush);
                 lineBrush->Release();
             }
 
@@ -3916,24 +5893,35 @@ LRESULT CALLBACK TabControlParentSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
 
 // 创建 TabControl
 HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int height) {
-    // 初始化 Common Controls
-    static bool comctl_initialized = false;
-    if (!comctl_initialized) {
-        INITCOMMONCONTROLSEX icex;
-        icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
-        icex.dwICC = ICC_TAB_CLASSES | ICC_TREEVIEW_CLASSES;
-        InitCommonControlsEx(&icex);
-        comctl_initialized = true;
+    if (!g_d2d_factory) {
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_d2d_factory);
+    }
+    if (!g_dwrite_factory) {
+        DWriteCreateFactory(
+            DWRITE_FACTORY_TYPE_SHARED,
+            __uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(&g_dwrite_factory)
+        );
     }
 
-    // 创建 Tab Control（TCS_OWNERDRAWFIXED：父窗口自绘标签；TCS_FLATBUTTONS：扁平样式，与设计器一致）
+    static bool custom_tab_class_registered = false;
+    if (!custom_tab_class_registered) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = CustomTabControlProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = CUSTOM_TAB_CONTROL_CLASS;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        RegisterClassW(&wc);
+        custom_tab_class_registered = true;
+    }
+
     int tb_offset = GetTitleBarOffset(hParent);
     HWND hTabControl = CreateWindowExW(
         0,
-        WC_TABCONTROLW,
+        CUSTOM_TAB_CONTROL_CLASS,
         L"",
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | TCS_TABS | TCS_FOCUSNEVER
-        | TCS_OWNERDRAWFIXED | TCS_FIXEDWIDTH | TCS_FLATBUTTONS,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
         x, y + tb_offset, width, height,
         hParent,
         nullptr,
@@ -3942,31 +5930,6 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
     );
 
     if (!hTabControl) return nullptr;
-
-    // 设置固定标签尺寸（宽=120px 能容纳 Emoji + 中文；高=34px 给 Emoji 足够空间）
-    SendMessage(hTabControl, TCM_SETITEMSIZE, 0, MAKELPARAM(120, 34));
-
-    // 扁平化内容区边框，与设计器一致（去除 3D 凹陷）
-    SetWindowTheme(hTabControl, L"", L"");
-
-    // 设置字体（使用 Segoe UI 以获得现代外观）
-    HFONT hFont = CreateFontW(
-        -14,                        // 字体高度
-        0,                          // 字体宽度
-        0,                          // 倾斜角度
-        0,                          // 基线角度
-        FW_NORMAL,                  // 字体粗细
-        FALSE,                      // 斜体
-        FALSE,                      // 下划线
-        FALSE,                      // 删除线
-        DEFAULT_CHARSET,            // 字符集
-        OUT_DEFAULT_PRECIS,         // 输出精度
-        CLIP_DEFAULT_PRECIS,        // 裁剪精度
-        CLEARTYPE_QUALITY,          // 输出质量（ClearType 抗锯齿）
-        DEFAULT_PITCH | FF_DONTCARE,// 字体间距和族
-        L"Segoe UI"                 // 字体名称
-    );
-    SendMessage(hTabControl, WM_SETFONT, (WPARAM)hFont, TRUE);
 
     // 创建状态对象
     TabControlState* state = new TabControlState();
@@ -4003,6 +5966,8 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
 
     // 绘制辅助字段默认值
     state->hoveredCloseTabIndex = -1;
+    state->hoveredTabIndex = -1;
+    state->layoutBatchInProgress = false;
 
     // 拖拽状态字段默认值
     state->isDragging = false;
@@ -4012,13 +5977,7 @@ HWND __stdcall CreateTabControl(HWND hParent, int x, int y, int width, int heigh
 
     // 保存到全局映射表
     g_tab_controls[hTabControl] = state;
-
-    // 子类化父窗口以接收 WM_NOTIFY 消息
-    // 注意：WM_NOTIFY 消息是发送给父窗口的，不是发送给 TabControl 的
-    SetWindowSubclass(hParent, TabControlParentSubclassProc, (UINT_PTR)hTabControl, (DWORD_PTR)hTabControl);
-
-    // 子类化 TabControl 自身以处理鼠标事件（右键、双击、拖拽）
-    SetWindowSubclass(hTabControl, TabControlSubclassProc, 0, (DWORD_PTR)hTabControl);
+    g_tab_header_styles[hTabControl] = TAB_HEADER_STYLE_LINE;
 
     return hTabControl;
 }
@@ -4064,7 +6023,7 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
             0,
             TAB_CONTENT_D2D_CLASS,
             L"",
-            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
             0, 0, 0, 0,
             state->hTabControl,
             nullptr,
@@ -4074,20 +6033,15 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
         if (!hContentWindow) return -1;
     }
 
-    // 添加 Tab 项到 TabControl
-    TCITEMW tci = {};
-    tci.mask = TCIF_TEXT;
-    tci.pszText = (LPWSTR)title.c_str();
-
-    int index = TabCtrl_GetItemCount(hTabControl);
-    int result = TabCtrl_InsertItem(hTabControl, index, &tci);
-
-    if (result == -1) {
-        if (hContentWindow && IsWindow(hContentWindow)) {
-            DestroyWindow(hContentWindow);
-        }
-        return -1;
+    LONG_PTR content_style = GetWindowLongPtrW(hContentWindow, GWL_STYLE);
+    LONG_PTR desired_style = content_style | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+    if (desired_style != content_style) {
+        SetWindowLongPtrW(hContentWindow, GWL_STYLE, desired_style);
+        SetWindowPos(hContentWindow, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
+
+    int index = (int)state->pages.size();
 
     // 保存 Tab 页信息
     TabPageInfo pageInfo;
@@ -4103,9 +6057,9 @@ int __stdcall AddTabItem(HWND hTabControl, const unsigned char* title_bytes, int
 
     // 如果是第一个 Tab，自动选中
     if (index == 0) {
-        TabCtrl_SetCurSel(hTabControl, 0);
         state->currentIndex = 0;
         UpdateTabLayout(state);
+        InvalidateRect(hTabControl, NULL, TRUE);
 
         if (state->callback) {
             state->callback(hTabControl, 0);
@@ -4140,7 +6094,6 @@ BOOL __stdcall RemoveTabItem(HWND hTabControl, int index) {
         DestroyWindow(pageInfo.hContentWindow);
     }
 
-    TabCtrl_DeleteItem(hTabControl, index);
     state->pages.erase(state->pages.begin() + index);
 
     for (size_t i = index; i < state->pages.size(); i++) {
@@ -4151,7 +6104,6 @@ BOOL __stdcall RemoveTabItem(HWND hTabControl, int index) {
     if (tabCount > 0) {
         if (index == state->currentIndex) {
             int newIndex = (index > 0) ? (index - 1) : 0;
-            TabCtrl_SetCurSel(hTabControl, newIndex);
             state->currentIndex = newIndex;
             UpdateTabLayout(state);
 
@@ -4160,11 +6112,12 @@ BOOL __stdcall RemoveTabItem(HWND hTabControl, int index) {
             }
         } else if (index < state->currentIndex) {
             state->currentIndex--;
-            TabCtrl_SetCurSel(hTabControl, state->currentIndex);
         }
     } else {
         state->currentIndex = -1;
     }
+
+    InvalidateRect(hTabControl, NULL, TRUE);
 
     return TRUE;
 }
@@ -4195,9 +6148,11 @@ static BOOL ApplySelectTab(HWND hTabControl, int index) {
 
     if (index < 0 || index >= (int)state->pages.size()) return FALSE;
 
-    TabCtrl_SetCurSel(hTabControl, index);
     state->currentIndex = index;
     UpdateTabLayout(state);
+    InvalidateRect(hTabControl, NULL, FALSE);
+    RedrawWindow(hTabControl, nullptr, nullptr,
+        RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_FRAME | RDW_NOCHILDREN);
 
     if (state->callback) {
         state->callback(hTabControl, index);
@@ -4249,12 +6204,6 @@ void __stdcall DestroyTabControl(HWND hTabControl) {
 
     TabControlState* state = it->second;
 
-    // 清理父窗口的子类化
-    RemoveWindowSubclass(state->hParent, TabControlParentSubclassProc, (UINT_PTR)hTabControl);
-
-    // 清理 TabControl 自身的子类化
-    RemoveWindowSubclass(hTabControl, TabControlSubclassProc, 0);
-
     for (auto& page : state->pages) {
         if (page.hContentWindow && IsWindow(page.hContentWindow)) {
             // 清理内容窗口的 WindowState（如果存在）
@@ -4273,6 +6222,7 @@ void __stdcall DestroyTabControl(HWND hTabControl) {
 
     delete state;
     g_tab_controls.erase(it);
+    g_tab_header_styles.erase(hTabControl);
 
     DestroyWindow(hTabControl);
 }
@@ -4283,6 +6233,33 @@ void __stdcall UpdateTabControlLayout(HWND hTabControl) {
     if (it == g_tab_controls.end()) return;
 
     UpdateTabLayout(it->second);
+}
+
+BOOL __stdcall RedrawTabControl(HWND hTabControl) {
+    auto it = g_tab_controls.find(hTabControl);
+    if (it == g_tab_controls.end()) return FALSE;
+    if (!IsWindow(hTabControl)) return FALSE;
+
+    TabControlState* state = it->second;
+    if (!state) return FALSE;
+
+    UpdateTabLayout(state);
+
+    InvalidateRect(hTabControl, nullptr, FALSE);
+    RedrawWindow(hTabControl, nullptr, nullptr,
+        RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_FRAME | RDW_ALLCHILDREN);
+
+    if (state->currentIndex >= 0 && state->currentIndex < (int)state->pages.size()) {
+        HWND current_page = state->pages[state->currentIndex].hContentWindow;
+        if (current_page && IsWindow(current_page)) {
+            RefreshVisibleTabWindowTree(current_page);
+            RedrawWindow(current_page, nullptr, nullptr,
+                RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+            InvalidateVisibleWindowTree(current_page);
+        }
+    }
+
+    return TRUE;
 }
 
 // ========================================
@@ -4330,14 +6307,27 @@ static void UpdateEditBoxFormatRect(HWND hwnd) {
         int line_height = tm.tmHeight;
         int top = (client.bottom - line_height) / 2;
         if (top < 0) top = 0;
-        RECT format_rect = { 0, top, client.right, top + line_height };
+        int horizontal_padding = (int)tm.tmAveCharWidth;
+        if (horizontal_padding < 12) horizontal_padding = 12;
+        LONG right = client.right - horizontal_padding;
+        if (right <= horizontal_padding) right = horizontal_padding + 1;
+        RECT format_rect = {
+            horizontal_padding,
+            top,
+            right,
+            top + line_height
+        };
         SendMessageW(hwnd, EM_SETRECTNP, 0, (LPARAM)&format_rect);
-        // 左右边距设为 0，避免多行编辑框默认留白造成两侧白边
-        SendMessageW(hwnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(0, 0));
+        SendMessageW(hwnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(horizontal_padding, horizontal_padding));
         InvalidateRect(hwnd, NULL, TRUE);
     }
     if (oldFont) SelectObject(hdc, oldFont);
     ReleaseDC(hwnd, hdc);
+}
+
+static D2DEditBoxState* FindD2DEditState(HWND hwnd) {
+    auto it = g_d2d_editboxes.find(hwnd);
+    return it != g_d2d_editboxes.end() ? it->second : nullptr;
 }
 
 // 编辑框子类化处理
@@ -4348,16 +6338,21 @@ LRESULT CALLBACK EditBoxSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORSTATIC: {
             HDC hdc = (HDC)wparam;
+            UINT32 resolved_fg = ResolveThemeColor(state->fg_color);
+            UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
             SetTextColor(hdc, RGB(
-                (state->fg_color >> 16) & 0xFF,
-                (state->fg_color >> 8) & 0xFF,
-                state->fg_color & 0xFF
+                (resolved_fg >> 16) & 0xFF,
+                (resolved_fg >> 8) & 0xFF,
+                resolved_fg & 0xFF
             ));
             SetBkColor(hdc, RGB(
-                (state->bg_color >> 16) & 0xFF,
-                (state->bg_color >> 8) & 0xFF,
-                state->bg_color & 0xFF
+                (resolved_bg >> 16) & 0xFF,
+                (resolved_bg >> 8) & 0xFF,
+                resolved_bg & 0xFF
             ));
+            if (IsThemeColorIndex(state->bg_color)) {
+                RebuildBrush(state->bg_brush, state->bg_color);
+            }
             return (LRESULT)state->bg_brush;
         }
         case WM_SIZE: {
@@ -4403,6 +6398,9 @@ LRESULT CALLBACK EditBoxSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
 // 标签子类化处理
 LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
     LabelState* state = (LabelState*)dwRefData;
+    if (HandleCommonEvents(hwnd, msg, wparam, lparam, state ? &state->events : nullptr)) {
+        return 0;
+    }
     
     switch (msg) {
         case WM_PAINT: {
@@ -4444,7 +6442,7 @@ LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
                             rt->BeginDraw();
 
                             // 绘制背景（解析主题颜色索引）
-                            D2D1_COLOR_F bg_color = ColorFromUInt32(ResolveThemeColor(state->bg_color));
+                            D2D1_COLOR_F bg_color = ColorFromUInt32(ResolveLegacyLabelBackgroundColor(state));
                             ID2D1SolidColorBrush* bg_brush = nullptr;
                             rt->CreateSolidColorBrush(bg_color, &bg_brush);
                             if (bg_brush) {
@@ -4498,7 +6496,8 @@ LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 
                                 if (SUCCEEDED(hr) && text_layout) {
                                     ID2D1SolidColorBrush* brush = nullptr;
-                                    D2D1_COLOR_F fg_color = ColorFromUInt32(ResolveThemeColor(state->fg_color));
+                                    const UINT32 text_argb = IsWindowEnabled(hwnd) ? ResolveLegacyLabelTextColor(state->fg_color) : ThemeColor_TextPlaceholder();
+                                    D2D1_COLOR_F fg_color = ColorFromUInt32(text_argb);
                                     rt->CreateSolidColorBrush(fg_color, &brush);
                                     if (brush) {
                                         rt->DrawTextLayout(
@@ -4527,8 +6526,8 @@ LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
             } else {
                 // 降级到GDI渲染（如果Direct2D不可用）
                 // 解析主题颜色索引
-                UINT32 resolved_bg_gdi = ResolveThemeColor(state->bg_color);
-                UINT32 resolved_fg_gdi = ResolveThemeColor(state->fg_color);
+                UINT32 resolved_bg_gdi = ResolveLegacyLabelBackgroundColor(state);
+                UINT32 resolved_fg_gdi = IsWindowEnabled(hwnd) ? ResolveLegacyLabelTextColor(state->fg_color) : ThemeColor_TextPlaceholder();
                 HBRUSH hBrGdi = CreateSolidBrush(RGB(
                     (resolved_bg_gdi >> 16) & 0xFF,
                     (resolved_bg_gdi >> 8) & 0xFF,
@@ -4571,6 +6570,9 @@ LRESULT CALLBACK LabelSubclassProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
         }
         case WM_ERASEBKGND:
             return 1;  // 防止布局调整时标签先被系统擦背景导致闪烁
+        case WM_ENABLE:
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
         case WM_NCDESTROY: {
             RemoveWindowSubclass(hwnd, LabelSubclassProc, uIdSubclass);
             g_labels.erase(hwnd);
@@ -4682,11 +6684,7 @@ __declspec(dllexport) HWND __stdcall CreateEditBox(
     state->key_callback = nullptr;
 
     // ✅ 创建背景画刷（只创建一次，避免重复创建导致闪烁）
-    state->bg_brush = CreateSolidBrush(RGB(
-        (bg_color >> 16) & 0xFF,
-        (bg_color >> 8) & 0xFF,
-        bg_color & 0xFF
-    ));
+    RebuildBrush(state->bg_brush, bg_color);
     
     g_editboxes[hEdit] = state;
     
@@ -4697,8 +6695,8 @@ __declspec(dllexport) HWND __stdcall CreateEditBox(
     // 子类化以处理颜色、垂直居中、按键回调
     SetWindowSubclass(hEdit, EditBoxSubclassProc, 0, (DWORD_PTR)state);
 
-    // 所有编辑框：左右边距设为 0，去掉系统默认留白（消除左右白边）
-    SendMessageW(hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(0, 0));
+    // 给单行输入框保留基础左右内边距，避免大字号时文本贴边。
+    SendMessageW(hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(12, 12));
 
     if (state->vertical_center && !state->multiline) {
         UpdateEditBoxFormatRect(hEdit);
@@ -4712,10 +6710,22 @@ __declspec(dllexport) int __stdcall GetEditBoxText(
     unsigned char* buffer,
     int buffer_size
 ) {
-    if (!hEdit || !buffer || buffer_size <= 0) {
+    if (!hEdit) {
         return 0;
     }
-    
+
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, d2d->text.c_str(), -1, NULL, 0, NULL, NULL);
+        if (buffer == nullptr) {
+            return utf8_len > 0 ? utf8_len - 1 : 0;
+        }
+        if (buffer_size <= 0 || utf8_len <= 0 || utf8_len > buffer_size) {
+            return 0;
+        }
+        WideCharToMultiByte(CP_UTF8, 0, d2d->text.c_str(), -1, (LPSTR)buffer, buffer_size, NULL, NULL);
+        return utf8_len - 1;
+    }
+
     int len = GetWindowTextLengthW(hEdit);
     if (len <= 0) {
         return 0;
@@ -4726,7 +6736,10 @@ __declspec(dllexport) int __stdcall GetEditBoxText(
     
     // 转换为 UTF-8
     int utf8_len = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, NULL, 0, NULL, NULL);
-    if (utf8_len <= 0 || utf8_len > buffer_size) {
+    if (buffer == nullptr) {
+        return utf8_len > 0 ? utf8_len - 1 : 0;
+    }
+    if (buffer_size <= 0 || utf8_len <= 0 || utf8_len > buffer_size) {
         return 0;
     }
     
@@ -4740,6 +6753,17 @@ __declspec(dllexport) void __stdcall SetEditBoxText(
     int text_len
 ) {
     if (!hEdit) return;
+
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        d2d->text = NormalizeD2DEditText(Utf8ToWide(text_bytes, text_len), d2d->multiline);
+        d2d->cursor_pos = (int)d2d->text.length();
+        d2d->selection_start = -1;
+        d2d->selection_end = -1;
+        d2d->scroll_offset_x = 0;
+        d2d->scroll_offset_y = 0;
+        InvalidateRect(hEdit, NULL, FALSE);
+        return;
+    }
     
     std::wstring text = Utf8ToWide(text_bytes, text_len);
     SetWindowTextW(hEdit, text.c_str());
@@ -4754,6 +6778,16 @@ __declspec(dllexport) void __stdcall SetEditBoxFont(
     BOOL italic,
     BOOL underline
 ) {
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        d2d->font.font_name = Utf8ToWide(font_name_bytes, font_name_len);
+        d2d->font.font_size = font_size;
+        d2d->font.bold = bold != 0;
+        d2d->font.italic = italic != 0;
+        d2d->font.underline = underline != 0;
+        InvalidateRect(hEdit, NULL, FALSE);
+        return;
+    }
+
     auto it = g_editboxes.find(hEdit);
     if (it == g_editboxes.end()) return;
     
@@ -4776,6 +6810,13 @@ __declspec(dllexport) void __stdcall SetEditBoxColor(
     UINT32 fg_color,
     UINT32 bg_color
 ) {
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        d2d->fg_color = fg_color;
+        d2d->bg_color = bg_color;
+        InvalidateRect(hEdit, NULL, FALSE);
+        return;
+    }
+
     auto it = g_editboxes.find(hEdit);
     if (it == g_editboxes.end()) return;
     
@@ -4784,14 +6825,7 @@ __declspec(dllexport) void __stdcall SetEditBoxColor(
     state->bg_color = bg_color;
     
     // ✅ 重新创建背景画刷
-    if (state->bg_brush) {
-        DeleteObject(state->bg_brush);
-    }
-    state->bg_brush = CreateSolidBrush(RGB(
-        (bg_color >> 16) & 0xFF,
-        (bg_color >> 8) & 0xFF,
-        bg_color & 0xFF
-    ));
+    RebuildBrush(state->bg_brush, bg_color);
     
     InvalidateRect(hEdit, NULL, TRUE);
 }
@@ -4801,6 +6835,12 @@ __declspec(dllexport) void __stdcall SetEditBoxBounds(
     int x, int y, int width, int height
 ) {
     if (!hEdit) return;
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        d2d->x = x;
+        d2d->y = y;
+        d2d->width = width;
+        d2d->height = height;
+    }
     SetWindowPos(hEdit, NULL, x, y, width, height, SWP_NOZORDER);
     auto it = g_editboxes.find(hEdit);
     if (it != g_editboxes.end() && it->second->vertical_center && !it->second->multiline) {
@@ -4813,6 +6853,12 @@ __declspec(dllexport) void __stdcall EnableEditBox(
     BOOL enable
 ) {
     if (!hEdit) return;
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        d2d->enabled = enable != 0;
+        EnableWindow(hEdit, enable);
+        InvalidateRect(hEdit, NULL, FALSE);
+        return;
+    }
     EnableWindow(hEdit, enable);
 }
 
@@ -4822,6 +6868,9 @@ __declspec(dllexport) void __stdcall ShowEditBox(
 ) {
     if (!hEdit) return;
     ShowWindow(hEdit, show ? SW_SHOW : SW_HIDE);
+    if (FindD2DEditState(hEdit)) {
+        InvalidateRect(hEdit, NULL, FALSE);
+    }
 }
 
 __declspec(dllexport) void __stdcall SetEditBoxVerticalCenter(
@@ -4861,6 +6910,20 @@ __declspec(dllexport) int __stdcall GetEditBoxFont(
     int* italic,
     int* underline
 ) {
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        std::string utf8_name = WindowWideToUtf8(d2d->font.font_name);
+        if (font_size) *font_size = d2d->font.font_size;
+        if (bold) *bold = d2d->font.bold ? 1 : 0;
+        if (italic) *italic = d2d->font.italic ? 1 : 0;
+        if (underline) *underline = d2d->font.underline ? 1 : 0;
+        if (font_name_buffer == nullptr) {
+            return (int)utf8_name.size();
+        }
+        if (font_name_buffer_size < (int)utf8_name.size()) return -1;
+        memcpy(font_name_buffer, utf8_name.c_str(), utf8_name.size());
+        return (int)utf8_name.size();
+    }
+
     auto it = g_editboxes.find(hEdit);
     if (it == g_editboxes.end()) return -1;
 
@@ -4886,6 +6949,12 @@ __declspec(dllexport) int __stdcall GetEditBoxColor(
     UINT32* fg_color,
     UINT32* bg_color
 ) {
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        if (fg_color) *fg_color = d2d->fg_color;
+        if (bg_color) *bg_color = d2d->bg_color;
+        return 0;
+    }
+
     auto it = g_editboxes.find(hEdit);
     if (it == g_editboxes.end()) return -1;
 
@@ -4927,9 +6996,60 @@ __declspec(dllexport) int __stdcall GetEditBoxBounds(
 __declspec(dllexport) int __stdcall GetEditBoxAlignment(
     HWND hEdit
 ) {
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        return (int)d2d->alignment;
+    }
+
     auto it = g_editboxes.find(hEdit);
     if (it == g_editboxes.end()) return -1;
     return (int)it->second->alignment;
+}
+
+__declspec(dllexport) void __stdcall SetEditBoxAlignment(
+    HWND hEdit,
+    int alignment
+) {
+    if (!hEdit || alignment < 0 || alignment > 2) return;
+
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        d2d->alignment = (TextAlignment)alignment;
+        InvalidateRect(hEdit, NULL, FALSE);
+        return;
+    }
+
+    auto it = g_editboxes.find(hEdit);
+    if (it == g_editboxes.end()) return;
+
+    it->second->alignment = (TextAlignment)alignment;
+    LONG_PTR style = GetWindowLongPtrW(hEdit, GWL_STYLE);
+    style &= ~(ES_LEFT | ES_CENTER | ES_RIGHT);
+    switch (alignment) {
+    case ALIGN_CENTER:
+        style |= ES_CENTER;
+        break;
+    case ALIGN_RIGHT:
+        style |= ES_RIGHT;
+        break;
+    default:
+        style |= ES_LEFT;
+        break;
+    }
+
+    SetWindowLongPtrW(hEdit, GWL_STYLE, style);
+    SetWindowPos(
+        hEdit,
+        NULL,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+    );
+
+    if (it->second->vertical_center && !it->second->multiline) {
+        UpdateEditBoxFormatRect(hEdit);
+    }
+    InvalidateRect(hEdit, NULL, TRUE);
 }
 
 // 获取编辑框启用状态
@@ -4937,6 +7057,9 @@ __declspec(dllexport) int __stdcall GetEditBoxEnabled(
     HWND hEdit
 ) {
     if (!hEdit) return -1;
+    if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
+        return d2d->enabled ? 1 : 0;
+    }
     return IsWindowEnabled(hEdit) ? 1 : 0;
 }
 
@@ -4948,11 +7071,25 @@ __declspec(dllexport) int __stdcall GetEditBoxVisible(
     return IsWindowVisible(hEdit) ? 1 : 0;
 }
 
-// 创建彩色Emoji编辑框（使用RichEdit控件）
-// ⚠️ 注意：RichEdit 4.1 (MSFTEDIT_CLASS) 不支持彩色emoji！
-// 彩色emoji需要RichEdit 8.0+（Windows 10 1809+）
-// 当前实现：使用RichEdit 4.1，emoji显示为黑白
-// 未来改进：检测Windows版本，如果支持则使用RichEdit 8.0
+extern "C" __declspec(dllexport) HWND __stdcall CreateD2DColorEmojiEditBox(
+    HWND hParent,
+    int x, int y, int width, int height,
+    const unsigned char* text_bytes, int text_len,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    const unsigned char* font_name_bytes, int font_name_len,
+    int font_size,
+    bool bold, bool italic, bool underline,
+    int alignment,
+    bool multiline,
+    bool readonly,
+    bool password,
+    bool has_border,
+    bool vertical_center
+);
+
+// 创建彩色Emoji编辑框
+// 这里直接复用 D2D 自绘编辑框，确保 emoji 按彩色字体渲染。
 __declspec(dllexport) HWND __stdcall CreateColorEmojiEditBox(
     HWND hParent,
     int x, int y, int width, int height,
@@ -4973,159 +7110,22 @@ __declspec(dllexport) HWND __stdcall CreateColorEmojiEditBox(
     BOOL has_border,
     BOOL vertical_center
 ) {
-    // 转换文本
-    std::wstring text = Utf8ToWide(text_bytes, text_len);
-    std::wstring font_name = Utf8ToWide(font_name_bytes, font_name_len);
-    
-    // 创建RichEdit控件样式
-    DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NOHIDESEL;
-    
-    if (multiline) {
-        style |= ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL;
-    } else {
-        style |= ES_AUTOHSCROLL;
-    }
-    
-    if (readonly) {
-        style |= ES_READONLY;
-    }
-    
-    if (password) {
-        style |= ES_PASSWORD;
-    }
-    
-    if (has_border) {
-        style |= WS_BORDER;
-    }
-    
-    // 设置对齐方式
-    switch (alignment) {
-        case ALIGN_LEFT: style |= ES_LEFT; break;
-        case ALIGN_CENTER: style |= ES_CENTER; break;
-        case ALIGN_RIGHT: style |= ES_RIGHT; break;
-    }
-    
-    // 创建RichEdit控件
-    int tb_offset = GetTitleBarOffset(hParent);
-    int id = g_next_control_id++;
-    HWND hEdit = CreateWindowExW(
-        0,
-        MSFTEDIT_CLASS,  // "RICHEDIT50W" - RichEdit 4.1
-        text.c_str(),
-        style,
-        x, y + tb_offset, width, height,
+    return CreateD2DColorEmojiEditBox(
         hParent,
-        (HMENU)(INT_PTR)id,
-        GetModuleHandle(NULL),
-        NULL
+        x, y, width, height,
+        text_bytes, text_len,
+        fg_color,
+        bg_color,
+        font_name_bytes, font_name_len,
+        font_size,
+        bold != 0, italic != 0, underline != 0,
+        alignment,
+        multiline != 0,
+        readonly != 0,
+        password != 0,
+        has_border != 0,
+        vertical_center != 0
     );
-    
-    if (!hEdit) {
-        return NULL;
-    }
-    
-    // ⚠️ 关键修复：启用彩色emoji支持
-    // 设置为纯文本模式（不需要RTF格式）
-    SendMessageW(hEdit, EM_SETTEXTMODE, TM_PLAINTEXT, 0);
-    
-    // 启用彩色emoji渲染（Windows 10 1809+）
-    // 使用EM_SETEDITSTYLE消息启用彩色emoji
-    SendMessageW(hEdit, EM_SETEDITSTYLE, SES_EMULATESYSEDIT, 0);
-    
-    // 设置选项以支持彩色emoji
-    LRESULT options = SendMessageW(hEdit, EM_GETOPTIONS, 0, 0);
-    options |= ECO_NOHIDESEL;  // 失去焦点时保持选择
-    SendMessageW(hEdit, EM_SETOPTIONS, ECOOP_SET, options);
-    
-    // 设置字体和样式
-    CHARFORMAT2W cf = { 0 };
-    cf.cbSize = sizeof(CHARFORMAT2W);
-    cf.dwMask = CFM_FACE | CFM_SIZE | CFM_BOLD | CFM_ITALIC | CFM_UNDERLINE | CFM_COLOR;
-    
-    // 字体名称
-    wcsncpy_s(cf.szFaceName, font_name.c_str(), LF_FACESIZE - 1);
-    
-    // 字体大小（单位是twips，1点 = 20 twips）
-    cf.yHeight = font_size * 20;
-    
-    // 字体样式
-    cf.dwEffects = 0;
-    if (bold) cf.dwEffects |= CFE_BOLD;
-    if (italic) cf.dwEffects |= CFE_ITALIC;
-    if (underline) cf.dwEffects |= CFE_UNDERLINE;
-    
-    // 文本颜色
-    cf.crTextColor = RGB(
-        (fg_color >> 16) & 0xFF,
-        (fg_color >> 8) & 0xFF,
-        fg_color & 0xFF
-    );
-    
-    SendMessageW(hEdit, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
-    
-    // 设置背景色
-    SendMessageW(hEdit, EM_SETBKGNDCOLOR, 0, RGB(
-        (bg_color >> 16) & 0xFF,
-        (bg_color >> 8) & 0xFF,
-        bg_color & 0xFF
-    ));
-    
-    // 创建状态对象
-    EditBoxState* state = new EditBoxState();
-    state->hwnd = hEdit;
-    state->parent = hParent;
-    state->id = id;
-    state->fg_color = fg_color;
-    state->bg_color = bg_color;
-    state->font.font_name = font_name;
-    state->font.font_size = font_size;
-    state->font.bold = bold != 0;
-    state->font.italic = italic != 0;
-    state->font.underline = underline != 0;
-    state->alignment = (TextAlignment)alignment;
-    state->multiline = multiline != 0;
-    state->readonly = readonly != 0;
-    state->password = password != 0;
-    state->has_border = has_border != 0;
-    state->vertical_center = (vertical_center != 0);
-    state->key_callback = nullptr;
-    
-    // 创建背景画刷
-    state->bg_brush = CreateSolidBrush(RGB(
-        (bg_color >> 16) & 0xFF,
-        (bg_color >> 8) & 0xFF,
-        bg_color & 0xFF
-    ));
-    
-    g_editboxes[hEdit] = state;
-    
-    // 子类化以处理按键回调
-    SetWindowSubclass(hEdit, EditBoxSubclassProc, 0, (DWORD_PTR)state);
-    
-    // 设置边距
-    SendMessageW(hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(2, 2));
-    
-    // 如果需要垂直居中（单行模式）
-    if (vertical_center && !multiline) {
-        // RichEdit的垂直居中需要通过段落格式设置
-        PARAFORMAT2 pf = { 0 };
-        pf.cbSize = sizeof(PARAFORMAT2);
-        pf.dwMask = PFM_SPACEBEFORE | PFM_SPACEAFTER;
-        
-        // 计算垂直居中所需的上下间距
-        RECT rect;
-        GetClientRect(hEdit, &rect);
-        int client_height = rect.bottom - rect.top;
-        int line_height = font_size + 4;  // 估算行高
-        int space = (client_height - line_height) / 2;
-        if (space > 0) {
-            pf.dySpaceBefore = space * 20;  // 转换为twips
-        }
-        
-        SendMessageW(hEdit, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
-    }
-    
-    return hEdit;
 }
 
 // ========================================
@@ -5159,7 +7159,7 @@ __declspec(dllexport) HWND __stdcall CreateLabel(
         0,
         L"STATIC",
         text.c_str(),
-        WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
+        WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY,
         x, y + tb_offset, width, height,
         hParent,
         (HMENU)(INT_PTR)id,
@@ -5191,13 +7191,7 @@ __declspec(dllexport) HWND __stdcall CreateLabel(
     state->alignment = (TextAlignment)alignment;
     state->word_wrap = word_wrap != 0;  // ✅ 保存换行设置
 
-    // ✅ 创建背景画刷（解析主题颜色索引）
-    UINT32 resolved_bg_init = ResolveThemeColor(bg_color);
-    state->bg_brush = CreateSolidBrush(RGB(
-        (resolved_bg_init >> 16) & 0xFF,
-        (resolved_bg_init >> 8) & 0xFF,
-        resolved_bg_init & 0xFF
-    ));
+    RebuildLabelBackgroundBrush(state);
     
     g_labels[hLabel] = state;
     
@@ -5279,15 +7273,7 @@ __declspec(dllexport) void __stdcall SetLabelColor(
     state->fg_color = fg_color;
     state->bg_color = bg_color;
 
-    // ✅ 重新创建背景画刷
-    if (state->bg_brush) {
-        DeleteObject(state->bg_brush);
-    }
-    state->bg_brush = CreateSolidBrush(RGB(
-        (bg_color >> 16) & 0xFF,
-        (bg_color >> 8) & 0xFF,
-        bg_color & 0xFF
-    ));
+    RebuildLabelBackgroundBrush(state);
 
     if (state->parent_drawn) InvalidateRect(state->parent, NULL, FALSE);
     else InvalidateRect(hLabel, NULL, TRUE);
@@ -5308,6 +7294,7 @@ __declspec(dllexport) void __stdcall SetLabelBounds(
         InvalidateRect(state->parent, NULL, FALSE);
     } else {
         SetWindowPos(hLabel, NULL, x, y, width, height, SWP_NOZORDER);
+        RedrawWindow(hLabel, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
     }
 }
 
@@ -5317,6 +7304,12 @@ __declspec(dllexport) void __stdcall EnableLabel(
 ) {
     if (!hLabel) return;
     EnableWindow(hLabel, enable);
+    auto it = g_labels.find(hLabel);
+    if (it != g_labels.end() && it->second->parent_drawn) {
+        InvalidateRect(it->second->parent, NULL, FALSE);
+    } else {
+        RedrawWindow(hLabel, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    }
 }
 
 __declspec(dllexport) void __stdcall ShowLabel(
@@ -5450,11 +7443,112 @@ void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxSt
     UINT32 border_color = ThemeColor_BorderBase();
     UINT32 disabled_color = ThemeColor_TextPlaceholder();
     UINT32 hover_border = ThemeColor_Primary();
+    UINT32 accent_color = state->check_color ? ResolveThemeColor(state->check_color) : primary_color;
+    auto check_color_it = g_checkbox_check_colors.find(state->hwnd);
+    if (check_color_it != g_checkbox_check_colors.end()) {
+        accent_color = ResolveThemeColor(check_color_it->second);
+    }
+    int style = CHECKBOX_STYLE_DEFAULT;
+    auto style_it = g_checkbox_styles.find(state->hwnd);
+    if (style_it != g_checkbox_styles.end()) {
+        style = style_it->second;
+    }
 
     // 复选框尺寸（Element UI标准）
-    int box_size = 14;
+    int box_size = style == CHECKBOX_STYLE_FILL ? 16 : 14;
     int box_x = state->x;
     int box_y = state->y + (state->height - box_size) / 2;
+
+    if (style == CHECKBOX_STYLE_BUTTON || style == CHECKBOX_STYLE_CARD) {
+        UINT32 fill_color = ResolveThemeColor(state->bg_color);
+        UINT32 outline_color = border_color;
+        UINT32 text_color = state->enabled ? ResolveThemeColor(state->fg_color) : disabled_color;
+        if (!state->enabled) {
+            fill_color = ThemeColor_BackgroundLight();
+            outline_color = disabled_color;
+        } else if (state->checked) {
+            fill_color = (style == CHECKBOX_STYLE_BUTTON) ? accent_color : ThemeColor_LightBg(accent_color);
+            outline_color = accent_color;
+            text_color = (style == CHECKBOX_STYLE_BUTTON) ? AutoContrastText(fill_color) : accent_color;
+        } else if (state->hovered) {
+            outline_color = accent_color;
+            if (style == CHECKBOX_STYLE_BUTTON) {
+                fill_color = ThemeColor_LightBg(accent_color);
+            }
+        }
+
+        ID2D1SolidColorBrush* fill_brush = nullptr;
+        ID2D1SolidColorBrush* outline_brush = nullptr;
+        ID2D1SolidColorBrush* text_brush = nullptr;
+        rt->CreateSolidColorBrush(ColorFromUInt32(fill_color), &fill_brush);
+        rt->CreateSolidColorBrush(ColorFromUInt32(outline_color), &outline_brush);
+        rt->CreateSolidColorBrush(ColorFromUInt32(text_color), &text_brush);
+        if (!fill_brush || !outline_brush || !text_brush) {
+            if (fill_brush) fill_brush->Release();
+            if (outline_brush) outline_brush->Release();
+            if (text_brush) text_brush->Release();
+            return;
+        }
+
+        D2D1_ROUNDED_RECT container = D2D1::RoundedRect(
+            D2D1::RectF(1.0f, 1.0f, (FLOAT)state->width - 1.0f, (FLOAT)state->height - 1.0f),
+            style == CHECKBOX_STYLE_BUTTON ? 6.0f : 8.0f,
+            style == CHECKBOX_STYLE_BUTTON ? 6.0f : 8.0f
+        );
+        rt->FillRoundedRectangle(container, fill_brush);
+        rt->DrawRoundedRectangle(container, outline_brush, 1.0f);
+
+        float text_left = 12.0f;
+        if (style == CHECKBOX_STYLE_CARD) {
+            float inner_top = ((FLOAT)state->height - 16.0f) / 2.0f;
+            D2D1_ROUNDED_RECT inner_box = D2D1::RoundedRect(D2D1::RectF(12.0f, inner_top, 28.0f, inner_top + 16.0f), 3.0f, 3.0f);
+            ID2D1SolidColorBrush* inner_brush = nullptr;
+            rt->CreateSolidColorBrush(ColorFromUInt32(state->checked ? accent_color : ThemeColor_Background()), &inner_brush);
+            if (inner_brush) {
+                rt->FillRoundedRectangle(inner_box, inner_brush);
+                inner_brush->Release();
+            }
+            rt->DrawRoundedRectangle(inner_box, outline_brush, 1.0f);
+            if (state->checked) {
+                ID2D1SolidColorBrush* mark_brush = nullptr;
+                rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &mark_brush);
+                if (mark_brush) {
+                    rt->DrawLine(D2D1::Point2F(16.0f, inner_top + 8.0f), D2D1::Point2F(19.0f, inner_top + 11.0f), mark_brush, 1.6f);
+                    rt->DrawLine(D2D1::Point2F(19.0f, inner_top + 11.0f), D2D1::Point2F(24.0f, inner_top + 5.0f), mark_brush, 1.6f);
+                    mark_brush->Release();
+                }
+            }
+            text_left = 36.0f;
+        } else if (state->checked) {
+            rt->DrawLine(D2D1::Point2F(12.0f, (FLOAT)state->height / 2.0f), D2D1::Point2F(16.0f, (FLOAT)state->height / 2.0f + 4.0f), text_brush, 1.6f);
+            rt->DrawLine(D2D1::Point2F(16.0f, (FLOAT)state->height / 2.0f + 4.0f), D2D1::Point2F(24.0f, (FLOAT)state->height / 2.0f - 4.0f), text_brush, 1.6f);
+            text_left = 30.0f;
+        }
+
+        IDWriteTextFormat* text_format = nullptr;
+        factory->CreateTextFormat(
+            state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+            nullptr,
+            state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            (FLOAT)(state->font.font_size > 0 ? state->font.font_size : 14),
+            L"zh-CN",
+            &text_format
+        );
+        if (text_format) {
+            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            D2D1_RECT_F text_rect = D2D1::RectF(text_left, 0.0f, (FLOAT)state->width - 8.0f, (FLOAT)state->height);
+            rt->DrawText(state->text.c_str(), (UINT32)state->text.length(), text_format, text_rect, text_brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            text_format->Release();
+        }
+
+        fill_brush->Release();
+        outline_brush->Release();
+        text_brush->Release();
+        return;
+    }
 
     // 确定复选框颜色（解析主题颜色索引）
     UINT32 current_bg = ResolveThemeColor(state->bg_color);
@@ -5464,10 +7558,13 @@ void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxSt
         current_bg = ThemeColor_BackgroundLight();
         current_border = disabled_color;
     } else if (state->checked) {
-        current_bg = primary_color;
-        current_border = primary_color;
+        current_bg = accent_color;
+        current_border = accent_color;
     } else if (state->hovered) {
         current_border = hover_border;
+        if (style == CHECKBOX_STYLE_FILL) {
+            current_bg = ThemeColor_LightBg(accent_color);
+        }
     }
 
     // 绘制复选框背景
@@ -5669,6 +7766,8 @@ LRESULT CALLBACK CheckBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
             // 清理资源
             RemoveWindowSubclass(hwnd, CheckBoxProc, uIdSubclass);
             g_checkboxes.erase(hwnd);
+            g_checkbox_styles.erase(hwnd);
+            g_checkbox_check_colors.erase(hwnd);
             delete state;
             return 0;
         }
@@ -5769,6 +7868,8 @@ HWND __stdcall CreateCheckBox(
     
     // 保存到全局map
     g_checkboxes[hwnd] = state;
+    g_checkbox_styles[hwnd] = CHECKBOX_STYLE_DEFAULT;
+    g_checkbox_check_colors[hwnd] = state->check_color;
     
     // 如果父窗口是分组框，自动添加到分组框的子控件列表
     if (is_groupbox_child) {
@@ -5809,8 +7910,18 @@ void __stdcall SetCheckBoxCallback(HWND hCheckBox, CheckBoxCallback callback) {
 void __stdcall EnableCheckBox(HWND hCheckBox, BOOL enable) {
     auto it = g_checkboxes.find(hCheckBox);
     if (it == g_checkboxes.end()) return;
-    
-    it->second->enabled = (enable != 0);
+
+    CheckBoxState* state = it->second;
+    state->enabled = (enable != 0);
+    state->hovered = false;
+    if (!state->enabled && state->pressed) {
+        state->pressed = false;
+        if (GetCapture() == hCheckBox) {
+            ReleaseCapture();
+        }
+    }
+
+    EnableWindow(hCheckBox, enable);
     InvalidateRect(hCheckBox, nullptr, FALSE);
 }
 
@@ -5928,6 +8039,46 @@ __declspec(dllexport) void __stdcall SetCheckBoxColor(
     InvalidateRect(hCheckBox, nullptr, FALSE);
 }
 
+__declspec(dllexport) void __stdcall SetCheckBoxCheckColor(
+    HWND hCheckBox,
+    UINT32 check_color
+) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return;
+
+    it->second->check_color = check_color;
+    g_checkbox_check_colors[hCheckBox] = check_color;
+    InvalidateRect(hCheckBox, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetCheckBoxCheckColor(
+    HWND hCheckBox,
+    UINT32* check_color
+) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return -1;
+    if (check_color) *check_color = it->second->check_color;
+    return 0;
+}
+
+__declspec(dllexport) void __stdcall SetCheckBoxStyle(
+    HWND hCheckBox,
+    int style
+) {
+    auto it = g_checkboxes.find(hCheckBox);
+    if (it == g_checkboxes.end()) return;
+
+    g_checkbox_styles[hCheckBox] = style;
+    InvalidateRect(hCheckBox, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetCheckBoxStyle(
+    HWND hCheckBox
+) {
+    auto it = g_checkbox_styles.find(hCheckBox);
+    return it != g_checkbox_styles.end() ? it->second : CHECKBOX_STYLE_DEFAULT;
+}
+
 // 获取复选框颜色（返回0成功，-1失败）
 __declspec(dllexport) int __stdcall GetCheckBoxColor(
     HWND hCheckBox,
@@ -5963,8 +8114,6 @@ void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Progres
     // Element UI 风格配色（解析主题颜色索引）
     UINT32 bg_color = ResolveThemeColor(state->bg_color);
     UINT32 fg_color = ResolveThemeColor(state->fg_color);
-    UINT32 border_color = ResolveThemeColor(state->border_color);
-    
     // 如果禁用，使用灰色
     if (!state->enabled) {
         fg_color = ThemeColor_TextPlaceholder();  // 主题禁用色
@@ -5974,15 +8123,11 @@ void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Progres
     // 绘制背景（圆角矩形）
     D2D1_ROUNDED_RECT bg_rect = D2D1::RoundedRect(
         D2D1::RectF(0, 0, width, height),
-        4.0f, 4.0f  // 4px 圆角
+        6.0f, 6.0f
     );
     brush->SetColor(ColorFromUInt32(bg_color));
     rt->FillRoundedRectangle(bg_rect, brush);
-    
-    // 绘制边框
-    brush->SetColor(ColorFromUInt32(border_color));
-    rt->DrawRoundedRectangle(bg_rect, brush, 1.0f);
-    
+
     // 计算进度条宽度
     float progress_width = 0;
     
@@ -5999,74 +8144,24 @@ void DrawProgressBar(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Progres
             
             if (visible_width > 0) {
                 D2D1_ROUNDED_RECT progress_rect = D2D1::RoundedRect(
-                    D2D1::RectF(visible_start + 2, 2, visible_end - 2, height - 2),
-                    3.0f, 3.0f
+                    D2D1::RectF(visible_start, 0, visible_end, height),
+                    6.0f, 6.0f
                 );
-                
-                // 使用渐变色
-                ID2D1GradientStopCollection* gradient_stops = nullptr;
-                D2D1_GRADIENT_STOP stops[2];
-                stops[0].position = 0.0f;
-                stops[0].color = ColorFromUInt32(LightenColor(fg_color, 1.2f));
-                stops[1].position = 1.0f;
-                stops[1].color = ColorFromUInt32(fg_color);
-                
-                rt->CreateGradientStopCollection(stops, 2, &gradient_stops);
-                if (gradient_stops) {
-                    ID2D1LinearGradientBrush* gradient_brush = nullptr;
-                    rt->CreateLinearGradientBrush(
-                        D2D1::LinearGradientBrushProperties(
-                            D2D1::Point2F(0, 0),
-                            D2D1::Point2F(0, height)
-                        ),
-                        gradient_stops,
-                        &gradient_brush
-                    );
-                    
-                    if (gradient_brush) {
-                        rt->FillRoundedRectangle(progress_rect, gradient_brush);
-                        gradient_brush->Release();
-                    }
-                    gradient_stops->Release();
-                }
+                brush->SetColor(ColorFromUInt32(fg_color));
+                rt->FillRoundedRectangle(progress_rect, brush);
             }
         }
     } else {
         // 确定模式：根据动画值绘制进度
-        progress_width = (state->animation_value / 100.0f) * (width - 4);
+        progress_width = (state->animation_value / 100.0f) * width;
         
         if (progress_width > 0) {
             D2D1_ROUNDED_RECT progress_rect = D2D1::RoundedRect(
-                D2D1::RectF(2, 2, 2 + progress_width, height - 2),
-                3.0f, 3.0f
+                D2D1::RectF(0, 0, progress_width, height),
+                6.0f, 6.0f
             );
-            
-            // 使用渐变色
-            ID2D1GradientStopCollection* gradient_stops = nullptr;
-            D2D1_GRADIENT_STOP stops[2];
-            stops[0].position = 0.0f;
-            stops[0].color = ColorFromUInt32(LightenColor(fg_color, 1.2f));
-            stops[1].position = 1.0f;
-            stops[1].color = ColorFromUInt32(fg_color);
-            
-            rt->CreateGradientStopCollection(stops, 2, &gradient_stops);
-            if (gradient_stops) {
-                ID2D1LinearGradientBrush* gradient_brush = nullptr;
-                rt->CreateLinearGradientBrush(
-                    D2D1::LinearGradientBrushProperties(
-                        D2D1::Point2F(0, 0),
-                        D2D1::Point2F(0, height)
-                    ),
-                    gradient_stops,
-                    &gradient_brush
-                );
-                
-                if (gradient_brush) {
-                    rt->FillRoundedRectangle(progress_rect, gradient_brush);
-                    gradient_brush->Release();
-                }
-                gradient_stops->Release();
-            }
+            brush->SetColor(ColorFromUInt32(fg_color));
+            rt->FillRoundedRectangle(progress_rect, brush);
         }
     }
     
@@ -6133,13 +8228,15 @@ LRESULT CALLBACK ProgressBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
             
             if (rt && g_dwrite_factory) {
                 rt->BeginDraw();
-
-                UINT32 clear_color = ResolveThemeColor(state->bg_color);
-                rt->Clear(D2D1::ColorF(
-                    ((clear_color >> 16) & 0xFF) / 255.0f,
-                    ((clear_color >> 8) & 0xFF) / 255.0f,
-                    (clear_color & 0xFF) / 255.0f,
-                    1.0f));
+                UINT32 clear_color = ThemeColor_Background();
+                auto parent_it = g_windows.find(state->parent);
+                if (parent_it != g_windows.end() && parent_it->second) {
+                    UINT32 parent_bg = parent_it->second->client_bg_color;
+                    if (parent_bg != 0) {
+                        clear_color = ResolveThemeColor(parent_bg);
+                    }
+                }
+                rt->Clear(ColorFromUInt32(clear_color));
 
                 DrawProgressBar(rt, g_dwrite_factory, state);
                 
@@ -6365,6 +8462,17 @@ __declspec(dllexport) void __stdcall SetProgressBarColor(
     InvalidateRect(hProgressBar, NULL, FALSE);
 }
 
+__declspec(dllexport) void __stdcall SetProgressBarTextColor(
+    HWND hProgressBar,
+    UINT32 text_color
+) {
+    auto it = g_progressbars.find(hProgressBar);
+    if (it == g_progressbars.end()) return;
+
+    it->second->text_color = text_color;
+    InvalidateRect(hProgressBar, NULL, FALSE);
+}
+
 // 设置进度条回调
 __declspec(dllexport) void __stdcall SetProgressBarCallback(
     HWND hProgressBar,
@@ -6577,9 +8685,18 @@ LRESULT CALLBACK PictureBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     PictureBoxState* state = (PictureBoxState*)dwRefData;
 
     // 通用事件处理
-    HandleCommonEvents(hwnd, msg, wparam, lparam, state ? &state->events : nullptr);
+    bool allow_common_events = state && (state->enabled || msg == WM_MOUSELEAVE || msg == WM_KILLFOCUS || msg == WM_NCDESTROY);
+    if (allow_common_events && HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events)) {
+        return 0;
+    }
 
     switch (msg) {
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_GETDLGCODE:
+            return DLGC_WANTALLKEYS | DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTTAB;
+
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
@@ -6633,7 +8750,11 @@ LRESULT CALLBACK PictureBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         }
         
         case WM_LBUTTONDOWN: {
-            if (state->enabled && state->callback) {
+            if (!state->enabled) {
+                return 0;
+            }
+            SetFocus(hwnd);
+            if (state->callback) {
                 state->callback(hwnd);
             }
             return 0;
@@ -6696,7 +8817,7 @@ HWND __stdcall CreatePictureBox(
         0,
         L"STATIC",
         L"",
-        WS_CHILD | WS_VISIBLE | SS_NOTIFY,
+        WS_CHILD | WS_VISIBLE | SS_NOTIFY | WS_TABSTOP,
         x, y + tb_offset, width, height,
         hParent,
         (HMENU)(INT_PTR)g_next_control_id++,
@@ -6711,8 +8832,8 @@ HWND __stdcall CreatePictureBox(
     state->hwnd = hwnd;
     state->parent = hParent;
     state->id = (int)(INT_PTR)GetMenu(hwnd);
-    state->x = 0;  // 相对于控件自身
-    state->y = 0;
+    state->x = x;
+    state->y = y;
     state->width = width;
     state->height = height;
     state->bitmap = nullptr;
@@ -6802,6 +8923,9 @@ BOOL __stdcall LoadImageFromFile(
     // ⚠️ 关键修复：只保存WIC源，不在这里创建D2D位图
     // D2D位图会在WM_PAINT时从WIC源创建，这样可以确保位图与渲染目标匹配
     state->wic_source = converter;
+    if (state->events.on_value_changed) {
+        state->events.on_value_changed(hPictureBox);
+    }
     
     // 触发重绘
     InvalidateRect(hPictureBox, nullptr, TRUE);
@@ -6915,6 +9039,9 @@ BOOL __stdcall LoadImageFromMemory(
     // 只保存WIC源，不创建D2D位图
     // D2D位图将在WM_PAINT中从WIC源创建，确保与当前渲染目标兼容
     state->wic_source = converter;
+    if (state->events.on_value_changed) {
+        state->events.on_value_changed(hPictureBox);
+    }
     
     // 刷新显示（TRUE表示擦除背景）
     InvalidateRect(hPictureBox, nullptr, TRUE);
@@ -6929,6 +9056,7 @@ void __stdcall ClearImage(HWND hPictureBox) {
     if (it == g_pictureboxes.end()) return;
     
     PictureBoxState* state = it->second;
+    bool changed = (state->bitmap != nullptr) || (state->wic_source != nullptr);
     
     // 释放图片资源
     if (state->bitmap) {
@@ -6940,6 +9068,10 @@ void __stdcall ClearImage(HWND hPictureBox) {
         state->wic_source = nullptr;
     }
     
+    if (changed && state->events.on_value_changed) {
+        state->events.on_value_changed(hPictureBox);
+    }
+
     // 刷新显示
     InvalidateRect(hPictureBox, nullptr, FALSE);
 }
@@ -6950,12 +9082,16 @@ void __stdcall SetImageOpacity(HWND hPictureBox, float opacity) {
     if (it == g_pictureboxes.end()) return;
     
     PictureBoxState* state = it->second;
+    float old_opacity = state->opacity;
     
     // 限制范围在0.0-1.0之间
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
     
     state->opacity = opacity;
+    if (state->events.on_value_changed && old_opacity != state->opacity) {
+        state->events.on_value_changed(hPictureBox);
+    }
     
     // 刷新显示
     InvalidateRect(hPictureBox, nullptr, FALSE);
@@ -6975,12 +9111,20 @@ void __stdcall EnablePictureBox(HWND hPictureBox, BOOL enable) {
     if (it == g_pictureboxes.end()) return;
     
     it->second->enabled = (enable != 0);
+    if (!it->second->enabled && GetFocus() == hPictureBox) {
+        HWND parent = GetParent(hPictureBox);
+        if (parent) SetFocus(parent);
+    }
     InvalidateRect(hPictureBox, nullptr, FALSE);
 }
 
 // 显示/隐藏图片框
 void __stdcall ShowPictureBox(HWND hPictureBox, BOOL show) {
     if (!hPictureBox) return;
+    if (!show && GetFocus() == hPictureBox) {
+        HWND parent = GetParent(hPictureBox);
+        if (parent) SetFocus(parent);
+    }
     ShowWindow(hPictureBox, show ? SW_SHOW : SW_HIDE);
 }
 
@@ -6989,8 +9133,15 @@ void __stdcall SetPictureBoxBounds(HWND hPictureBox, int x, int y, int width, in
     auto it = g_pictureboxes.find(hPictureBox);
     if (it == g_pictureboxes.end()) return;
     
-    it->second->width = width;
-    it->second->height = height;
+    PictureBoxState* state = it->second;
+    bool changed = (state->x != x) || (state->y != y) || (state->width != width) || (state->height != height);
+    state->x = x;
+    state->y = y;
+    state->width = width;
+    state->height = height;
+    if (changed && state->events.on_value_changed) {
+        state->events.on_value_changed(hPictureBox);
+    }
     SetWindowPos(hPictureBox, nullptr, x, y, width, height, SWP_NOZORDER);
     InvalidateRect(hPictureBox, nullptr, FALSE);
 }
@@ -7000,7 +9151,12 @@ void __stdcall SetPictureBoxScaleMode(HWND hPictureBox, int scale_mode) {
     auto it = g_pictureboxes.find(hPictureBox);
     if (it == g_pictureboxes.end()) return;
     
-    it->second->scale_mode = (ImageScaleMode)scale_mode;
+    PictureBoxState* state = it->second;
+    ImageScaleMode old_mode = state->scale_mode;
+    state->scale_mode = (ImageScaleMode)scale_mode;
+    if (state->events.on_value_changed && old_mode != state->scale_mode) {
+        state->events.on_value_changed(hPictureBox);
+    }
     InvalidateRect(hPictureBox, nullptr, FALSE);
 }
 
@@ -7009,7 +9165,12 @@ void __stdcall SetPictureBoxBackgroundColor(HWND hPictureBox, UINT32 bg_color) {
     auto it = g_pictureboxes.find(hPictureBox);
     if (it == g_pictureboxes.end()) return;
     
-    it->second->bg_color = bg_color;
+    PictureBoxState* state = it->second;
+    UINT32 old_color = state->bg_color;
+    state->bg_color = bg_color;
+    if (state->events.on_value_changed && old_color != state->bg_color) {
+        state->events.on_value_changed(hPictureBox);
+    }
     InvalidateRect(hPictureBox, nullptr, FALSE);
 }
 
@@ -7019,18 +9180,84 @@ void __stdcall SetPictureBoxBackgroundColor(HWND hPictureBox, UINT32 bg_color) {
 void DrawRadioButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, RadioButtonState* state) {
     if (!rt || !factory || !state) return;
 
-    // Element UI 配色（使用主题颜色）
     UINT32 primary_color = ThemeColor_Primary();
     UINT32 border_color = ThemeColor_BorderBase();
     UINT32 disabled_color = ThemeColor_TextPlaceholder();
-    UINT32 hover_border = ThemeColor_Primary();
+    UINT32 active_color = ResolveThemeColor(state->dot_color ? state->dot_color : primary_color);
+    int style = RADIO_STYLE_DEFAULT;
+    auto style_it = g_radio_styles.find(state->hwnd);
+    if (style_it != g_radio_styles.end()) style = style_it->second;
 
-    // 单选按钮尺寸（Element UI标准）
+    if (style == RADIO_STYLE_BUTTON || style == RADIO_STYLE_BORDER) {
+        UINT32 fill_color = ResolveThemeColor(state->bg_color);
+        UINT32 outline_color = border_color;
+        UINT32 text_color = state->enabled ? ResolveThemeColor(state->fg_color) : disabled_color;
+        if (!state->enabled) {
+            fill_color = ThemeColor_BackgroundLight();
+            outline_color = disabled_color;
+        } else if (state->checked) {
+            fill_color = (style == RADIO_STYLE_BUTTON) ? active_color : ThemeColor_LightBg(active_color);
+            outline_color = active_color;
+            text_color = (style == RADIO_STYLE_BUTTON) ? AutoContrastText(fill_color) : active_color;
+        } else if (state->hovered) {
+            outline_color = active_color;
+            if (style == RADIO_STYLE_BUTTON) fill_color = ThemeColor_LightBg(active_color);
+        }
+
+        ID2D1SolidColorBrush* fill_brush = nullptr;
+        ID2D1SolidColorBrush* outline_brush = nullptr;
+        ID2D1SolidColorBrush* text_brush = nullptr;
+        rt->CreateSolidColorBrush(ColorFromUInt32(fill_color), &fill_brush);
+        rt->CreateSolidColorBrush(ColorFromUInt32(outline_color), &outline_brush);
+        rt->CreateSolidColorBrush(ColorFromUInt32(text_color), &text_brush);
+        if (!fill_brush || !outline_brush || !text_brush) {
+            if (fill_brush) fill_brush->Release();
+            if (outline_brush) outline_brush->Release();
+            if (text_brush) text_brush->Release();
+            return;
+        }
+
+        D2D1_ROUNDED_RECT container = D2D1::RoundedRect(
+            D2D1::RectF(1.0f, 1.0f, (FLOAT)state->width - 1.0f, (FLOAT)state->height - 1.0f),
+            6.0f, 6.0f
+        );
+        rt->FillRoundedRectangle(container, fill_brush);
+        rt->DrawRoundedRectangle(container, outline_brush, 1.0f);
+
+        IDWriteTextFormat* text_format = nullptr;
+        factory->CreateTextFormat(
+            state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+            nullptr,
+            state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            (FLOAT)(state->font.font_size > 0 ? state->font.font_size : 14),
+            L"zh-CN",
+            &text_format
+        );
+        if (text_format) {
+            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            rt->DrawText(
+                state->text.c_str(),
+                (UINT32)state->text.length(),
+                text_format,
+                D2D1::RectF(10.0f, 0.0f, (FLOAT)state->width - 10.0f, (FLOAT)state->height),
+                text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
+            );
+            text_format->Release();
+        }
+
+        fill_brush->Release();
+        outline_brush->Release();
+        text_brush->Release();
+        return;
+    }
+
     int circle_size = 14;
     int circle_x = state->x + circle_size / 2;
     int circle_y = state->y + state->height / 2;
-
-    // 确定单选按钮颜色（解析主题颜色索引）
     UINT32 current_bg = ResolveThemeColor(state->bg_color);
     UINT32 current_border = border_color;
 
@@ -7038,15 +9265,14 @@ void DrawRadioButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, RadioBu
         current_bg = ThemeColor_BackgroundLight();
         current_border = disabled_color;
     } else if (state->checked) {
-        current_border = primary_color;
+        current_border = active_color;
     } else if (state->hovered) {
-        current_border = hover_border;
+        current_border = active_color;
     }
 
-    // 绘制单选按钮背景（圆形）
     ID2D1SolidColorBrush* bg_brush = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(current_bg), &bg_brush);
-    
+
     D2D1_ELLIPSE circle = D2D1::Ellipse(
         D2D1::Point2F((FLOAT)circle_x, (FLOAT)circle_y),
         circle_size / 2.0f,
@@ -7055,21 +9281,19 @@ void DrawRadioButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, RadioBu
     rt->FillEllipse(circle, bg_brush);
     bg_brush->Release();
 
-    // 绘制边框
     ID2D1SolidColorBrush* border_brush = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(current_border), &border_brush);
     rt->DrawEllipse(circle, border_brush, 1.0f);
     border_brush->Release();
 
-    // 如果选中，绘制内部圆点
     if (state->checked) {
         ID2D1SolidColorBrush* dot_brush = nullptr;
-        rt->CreateSolidColorBrush(ColorFromUInt32(state->dot_color), &dot_brush);
+        rt->CreateSolidColorBrush(ColorFromUInt32(active_color), &dot_brush);
 
         D2D1_ELLIPSE dot = D2D1::Ellipse(
             D2D1::Point2F((FLOAT)circle_x, (FLOAT)circle_y),
-            circle_size / 2.0f - 3.0f,  // 内圆半径
-            circle_size / 2.0f - 3.0f
+            circle_size / 2.0f - 4.0f,
+            circle_size / 2.0f - 4.0f
         );
         rt->FillEllipse(dot, dot_brush);
         dot_brush->Release();
@@ -7146,7 +9370,7 @@ LRESULT CALLBACK RadioButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
             if (rt) {
                 rt->BeginDraw();
-                rt->Clear(ColorFromUInt32(state->bg_color));
+                rt->Clear(ColorFromUInt32(ResolveThemeColor(state->bg_color)));
                 DrawRadioButton(rt, g_dwrite_factory, state);
                 rt->EndDraw();
                 rt->Release();
@@ -7249,6 +9473,7 @@ LRESULT CALLBACK RadioButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
             // 清理资源
             RemoveWindowSubclass(hwnd, RadioButtonProc, uIdSubclass);
+            g_radio_styles.erase(hwnd);
             g_radiobuttons.erase(hwnd);
             delete state;
             return 0;
@@ -7353,6 +9578,7 @@ HWND __stdcall CreateRadioButton(
     
     // 保存到全局map
     g_radiobuttons[hwnd] = state;
+    g_radio_styles[hwnd] = RADIO_STYLE_DEFAULT;
     
     // 添加到分组
     g_radio_groups[group_id].push_back(hwnd);
@@ -7425,8 +9651,18 @@ void __stdcall SetRadioButtonCallback(HWND hRadioButton, RadioButtonCallback cal
 void __stdcall EnableRadioButton(HWND hRadioButton, BOOL enable) {
     auto it = g_radiobuttons.find(hRadioButton);
     if (it == g_radiobuttons.end()) return;
-    
-    it->second->enabled = (enable != 0);
+
+    RadioButtonState* state = it->second;
+    state->enabled = (enable != 0);
+    state->hovered = false;
+    if (!state->enabled && state->pressed) {
+        state->pressed = false;
+        if (GetCapture() == hRadioButton) {
+            ReleaseCapture();
+        }
+    }
+
+    EnableWindow(hRadioButton, enable);
     InvalidateRect(hRadioButton, nullptr, FALSE);
 }
 
@@ -7557,6 +9793,1619 @@ __declspec(dllexport) int __stdcall GetRadioButtonColor(
     if (fg_color) *fg_color = state->fg_color;
     if (bg_color) *bg_color = state->bg_color;
     return 0;
+}
+
+__declspec(dllexport) void __stdcall SetRadioButtonDotColor(
+    HWND hRadioButton,
+    UINT32 dot_color
+) {
+    auto it = g_radiobuttons.find(hRadioButton);
+    if (it == g_radiobuttons.end()) return;
+    it->second->dot_color = dot_color;
+    InvalidateRect(hRadioButton, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetRadioButtonDotColor(
+    HWND hRadioButton,
+    UINT32* dot_color
+) {
+    auto it = g_radiobuttons.find(hRadioButton);
+    if (it == g_radiobuttons.end()) return -1;
+    if (dot_color) *dot_color = it->second->dot_color;
+    return 0;
+}
+
+__declspec(dllexport) void __stdcall SetRadioButtonStyle(
+    HWND hRadioButton,
+    int style
+) {
+    auto it = g_radiobuttons.find(hRadioButton);
+    if (it == g_radiobuttons.end()) return;
+    g_radio_styles[hRadioButton] = style;
+    InvalidateRect(hRadioButton, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetRadioButtonStyle(
+    HWND hRadioButton
+) {
+    auto it = g_radio_styles.find(hRadioButton);
+    if (it == g_radio_styles.end()) return RADIO_STYLE_DEFAULT;
+    return it->second;
+}
+
+static int SliderValueFromPoint(SliderState* state, int x) {
+    if (!state) return 0;
+    int left = 10;
+    int right = (std::max)(left + 1, state->width - 10);
+    float ratio = (float)(x - left) / (float)(right - left);
+    ratio = (std::max)(0.0f, (std::min)(1.0f, ratio));
+    int raw = state->min_value + (int)std::round(ratio * (state->max_value - state->min_value));
+    int step = (std::max)(1, state->step);
+    int snapped = state->min_value + (int)std::round((raw - state->min_value) / (double)step) * step;
+    snapped = (std::max)(state->min_value, (std::min)(state->max_value, snapped));
+    return snapped;
+}
+
+void DrawSlider(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, SliderState* state) {
+    if (!rt || !factory || !state) return;
+
+    float track_left = 12.0f;
+    float track_right = (FLOAT)state->width - 12.0f;
+    float track_h = state->height >= 28 ? 6.0f : 4.0f;
+    float track_y = (FLOAT)state->height - 12.0f;
+    track_y = (std::max)(track_h * 0.5f + 2.0f, (std::min)(track_y, (FLOAT)state->height - track_h * 0.5f - 2.0f));
+    float ratio = 0.0f;
+    if (state->max_value > state->min_value) {
+        ratio = (float)(state->value - state->min_value) / (float)(state->max_value - state->min_value);
+    }
+    ratio = (std::max)(0.0f, (std::min)(1.0f, ratio));
+    float thumb_x = track_left + ratio * (track_right - track_left);
+
+    UINT32 bg_argb = ResolveThemeColor(state->bg_color);
+    UINT32 active_argb = ResolveThemeColor(state->active_color);
+    UINT32 thumb_argb = ResolveThemeColor(state->button_color);
+    UINT32 stop_argb = ThemeColor_BorderBase();
+    if (!state->enabled) {
+        bg_argb = ResolveThemeColor(state->bg_color);
+        active_argb = ThemeColor_TextPlaceholder();
+        thumb_argb = ThemeColor_Background();
+        stop_argb = ThemeColor_BorderLight();
+    }
+
+    ID2D1SolidColorBrush* bg_brush = nullptr;
+    ID2D1SolidColorBrush* active_brush = nullptr;
+    ID2D1SolidColorBrush* thumb_brush = nullptr;
+    ID2D1SolidColorBrush* stop_brush = nullptr;
+    ID2D1SolidColorBrush* bubble_text_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(bg_argb), &bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(active_argb), &active_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(thumb_argb), &thumb_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(stop_argb), &stop_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(AutoContrastText(active_argb)), &bubble_text_brush);
+    if (!bg_brush || !active_brush || !thumb_brush || !stop_brush || !bubble_text_brush) {
+        if (bg_brush) bg_brush->Release();
+        if (active_brush) active_brush->Release();
+        if (thumb_brush) thumb_brush->Release();
+        if (stop_brush) stop_brush->Release();
+        if (bubble_text_brush) bubble_text_brush->Release();
+        return;
+    }
+
+    D2D1_ROUNDED_RECT track = D2D1::RoundedRect(
+        D2D1::RectF(track_left, track_y - track_h * 0.5f, track_right, track_y + track_h * 0.5f), track_h * 0.5f, track_h * 0.5f);
+    rt->FillRoundedRectangle(track, bg_brush);
+
+    D2D1_ROUNDED_RECT active = D2D1::RoundedRect(
+        D2D1::RectF(track_left, track_y - track_h * 0.5f, thumb_x, track_y + track_h * 0.5f), track_h * 0.5f, track_h * 0.5f);
+    rt->FillRoundedRectangle(active, active_brush);
+
+    if (state->show_stops && state->step > 0 && state->max_value > state->min_value) {
+        int count = (state->max_value - state->min_value) / state->step;
+        for (int i = 0; i <= count; ++i) {
+            float stop_x = track_left + ((track_right - track_left) * i / (FLOAT)(count == 0 ? 1 : count));
+            ID2D1SolidColorBrush* current_stop = stop_x <= thumb_x ? active_brush : stop_brush;
+            float stop_r = stop_x <= thumb_x ? 1.6f : 1.8f;
+            rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(stop_x, track_y), stop_r, stop_r), current_stop);
+        }
+    }
+
+    float thumb_r = state->hovered || state->dragging ? 10.0f : 9.0f;
+    rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x, track_y), thumb_r, thumb_r), thumb_brush);
+    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x, track_y), thumb_r, thumb_r), active_brush, state->dragging ? 2.0f : 1.2f);
+
+    if (state->dragging) {
+        wchar_t value_text[32];
+        swprintf_s(value_text, 32, L"%d", state->value);
+
+        IDWriteTextFormat* text_format = nullptr;
+        factory->CreateTextFormat(
+            L"Microsoft YaHei UI",
+            nullptr,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            11.0f,
+            L"zh-CN",
+            &text_format
+        );
+        if (text_format) {
+            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+            UINT32 text_len = (UINT32)wcslen(value_text);
+            float bubble_h = 22.0f;
+            float bubble_w = (std::max)(32.0f, 18.0f + text_len * 8.0f);
+            float bubble_bottom = track_y - thumb_r - 10.0f;
+            float bubble_top = bubble_bottom - bubble_h;
+            if (bubble_top < 2.0f) {
+                bubble_top = 2.0f;
+                bubble_bottom = bubble_top + bubble_h;
+            }
+            float bubble_left = thumb_x - bubble_w * 0.5f;
+            bubble_left = (std::max)(2.0f, (std::min)(bubble_left, (FLOAT)state->width - bubble_w - 2.0f));
+            float bubble_right = bubble_left + bubble_w;
+            float arrow_x = (std::max)(bubble_left + 8.0f, (std::min)(thumb_x, bubble_right - 8.0f));
+
+            D2D1_ROUNDED_RECT bubble = D2D1::RoundedRect(
+                D2D1::RectF(bubble_left, bubble_top, bubble_right, bubble_bottom),
+                11.0f,
+                11.0f
+            );
+            rt->FillRoundedRectangle(bubble, active_brush);
+
+            if (g_d2d_factory) {
+                ID2D1PathGeometry* arrow = nullptr;
+                ID2D1GeometrySink* sink = nullptr;
+                if (SUCCEEDED(g_d2d_factory->CreatePathGeometry(&arrow)) && arrow &&
+                    SUCCEEDED(arrow->Open(&sink)) && sink) {
+                    sink->BeginFigure(D2D1::Point2F(arrow_x - 5.0f, bubble_bottom - 1.0f), D2D1_FIGURE_BEGIN_FILLED);
+                    sink->AddLine(D2D1::Point2F(arrow_x, bubble_bottom + 5.0f));
+                    sink->AddLine(D2D1::Point2F(arrow_x + 5.0f, bubble_bottom - 1.0f));
+                    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                    sink->Close();
+                    rt->FillGeometry(arrow, active_brush);
+                }
+                if (sink) sink->Release();
+                if (arrow) arrow->Release();
+            }
+
+            rt->DrawText(
+                value_text,
+                text_len,
+                text_format,
+                D2D1::RectF(bubble_left, bubble_top - 0.5f, bubble_right, bubble_bottom),
+                bubble_text_brush
+            );
+            text_format->Release();
+        }
+    }
+
+    bg_brush->Release();
+    active_brush->Release();
+    thumb_brush->Release();
+    stop_brush->Release();
+    bubble_text_brush->Release();
+}
+
+LRESULT CALLBACK SliderProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    SliderState* state = (SliderState*)dwRefData;
+    HandleCommonEvents(hwnd, msg, wparam, lparam, state ? &state->events : nullptr);
+
+    switch (msg) {
+    case WM_NCHITTEST:
+        return HTCLIENT;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        ID2D1HwndRenderTarget* rt = nullptr;
+        if (g_d2d_factory) {
+            g_d2d_factory->CreateHwndRenderTarget(
+                D2D1::RenderTargetProperties(),
+                D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(state->width, state->height)),
+                &rt);
+        }
+        if (rt) {
+            rt->BeginDraw();
+            UINT32 clear_color = ResolveContainerBackgroundColor(hwnd, 13);
+            rt->Clear(ColorFromUInt32(clear_color));
+            DrawSlider(rt, g_dwrite_factory, state);
+            rt->EndDraw();
+            rt->Release();
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+        if (!state->enabled) return 0;
+        state->dragging = true;
+        state->hovered = true;
+        state->value = SliderValueFromPoint(state, GET_X_LPARAM(lparam));
+        SetCapture(hwnd);
+        if (state->callback) state->callback(hwnd, state->value);
+        if (state->events.on_value_changed) state->events.on_value_changed(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_MOUSEMOVE:
+        if (!state->enabled) return 0;
+        if (!state->hovered) {
+            state->hovered = true;
+            TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0 };
+            TrackMouseEvent(&tme);
+        }
+        if (state->dragging) {
+            int value = SliderValueFromPoint(state, GET_X_LPARAM(lparam));
+            if (value != state->value) {
+                state->value = value;
+                if (state->callback) state->callback(hwnd, state->value);
+                if (state->events.on_value_changed) state->events.on_value_changed(hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (state->dragging) {
+            state->dragging = false;
+            ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        if (state->dragging) return 0;
+        state->hovered = false;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (state->dragging) {
+            state->dragging = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, SliderProc, uIdSubclass);
+        g_sliders.erase(hwnd);
+        delete state;
+        return 0;
+    }
+
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+__declspec(dllexport) HWND __stdcall CreateSlider(
+    HWND hParent,
+    int x, int y, int width, int height,
+    int min_value,
+    int max_value,
+    int value,
+    int step,
+    UINT32 active_color,
+    UINT32 bg_color
+) {
+    if (!hParent || max_value <= min_value) return nullptr;
+    int tb_offset = GetTitleBarOffset(hParent);
+    HWND hwnd = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_NOTIFY,
+        x, y + tb_offset, width, height, hParent, (HMENU)(INT_PTR)g_next_control_id++, GetModuleHandle(nullptr), nullptr);
+    if (!hwnd) return nullptr;
+    SliderState* state = new SliderState();
+    state->hwnd = hwnd;
+    state->parent = hParent;
+    state->id = (int)(INT_PTR)GetMenu(hwnd);
+    state->x = 0; state->y = 0; state->width = width; state->height = height;
+    state->min_value = min_value;
+    state->max_value = max_value;
+    state->value = (std::max)(min_value, (std::min)(max_value, value));
+    state->step = (std::max)(1, step);
+    state->dragging = false;
+    state->enabled = true;
+    state->hovered = false;
+    state->show_stops = false;
+    state->bg_color = bg_color ? bg_color : ThemeColor_BorderLighter();
+    state->active_color = active_color ? active_color : ThemeColor_Primary();
+    state->button_color = 0xFFFFFFFF;
+    state->callback = nullptr;
+    g_sliders[hwnd] = state;
+    SetWindowSubclass(hwnd, SliderProc, 0, (DWORD_PTR)state);
+    return hwnd;
+}
+
+__declspec(dllexport) int __stdcall GetSliderValue(HWND hSlider) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return 0;
+    return it->second->value;
+}
+
+__declspec(dllexport) void __stdcall SetSliderValue(HWND hSlider, int value) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return;
+    SliderState* state = it->second;
+    state->value = (std::max)(state->min_value, (std::min)(state->max_value, value));
+    InvalidateRect(hSlider, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall SetSliderRange(HWND hSlider, int min_value, int max_value) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end() || max_value <= min_value) return;
+    it->second->min_value = min_value;
+    it->second->max_value = max_value;
+    it->second->value = (std::max)(min_value, (std::min)(max_value, it->second->value));
+    InvalidateRect(hSlider, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall SetSliderStep(HWND hSlider, int step) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return;
+    it->second->step = (std::max)(1, step);
+}
+
+__declspec(dllexport) void __stdcall SetSliderShowStops(HWND hSlider, BOOL show_stops) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return;
+    it->second->show_stops = show_stops ? true : false;
+    InvalidateRect(hSlider, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall SetSliderColors(HWND hSlider, UINT32 active_color, UINT32 bg_color, UINT32 button_color) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return;
+    it->second->active_color = active_color;
+    it->second->bg_color = bg_color;
+    it->second->button_color = button_color;
+    InvalidateRect(hSlider, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetSliderColors(HWND hSlider, UINT32* active_color, UINT32* bg_color, UINT32* button_color) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return -1;
+    if (active_color) *active_color = it->second->active_color;
+    if (bg_color) *bg_color = it->second->bg_color;
+    if (button_color) *button_color = it->second->button_color;
+    return 0;
+}
+
+__declspec(dllexport) void __stdcall SetSliderCallback(HWND hSlider, SliderCallback callback) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return;
+    it->second->callback = callback;
+}
+
+__declspec(dllexport) void __stdcall EnableSlider(HWND hSlider, BOOL enable) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return;
+
+    SliderState* state = it->second;
+    state->enabled = enable ? true : false;
+    state->hovered = false;
+    if (!state->enabled && state->dragging) {
+        state->dragging = false;
+        if (GetCapture() == hSlider) {
+            ReleaseCapture();
+        }
+    }
+
+    EnableWindow(hSlider, enable);
+    InvalidateRect(hSlider, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall ShowSlider(HWND hSlider, BOOL show) {
+    if (!hSlider) return;
+    ShowWindow(hSlider, show ? SW_SHOW : SW_HIDE);
+}
+
+__declspec(dllexport) void __stdcall SetSliderBounds(HWND hSlider, int x, int y, int width, int height) {
+    auto it = g_sliders.find(hSlider);
+    if (it == g_sliders.end()) return;
+    it->second->width = width;
+    it->second->height = height;
+    SetWindowPos(hSlider, nullptr, x, y, width, height, SWP_NOZORDER);
+    InvalidateRect(hSlider, nullptr, FALSE);
+}
+
+void DrawSwitch(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, SwitchState* state) {
+    if (!rt || !factory || !state) return;
+    UINT32 active = ResolveThemeColor(state->active_color ? state->active_color : ThemeColor_Primary());
+    UINT32 inactive = ResolveThemeColor(state->inactive_color ? state->inactive_color : 0xFFC0CCDA);
+    UINT32 track = state->checked ? active : inactive;
+    if (state->checked && state->hovered) track = LightenColor(track, 1.03f);
+    if (!state->checked && state->hovered) track = DarkenColor(track, 0.97f);
+    if (state->pressed) track = DarkenColor(track, 0.95f);
+    UINT32 border = state->checked ? DarkenColor(track, 0.92f) : ThemeColor_BorderBase();
+    UINT32 text_color = state->checked
+        ? ResolveOptionalColor(state->active_text_color, 0xFFFFFFFF)
+        : ResolveOptionalColor(state->inactive_text_color, ThemeColor_TextSecondary());
+    UINT32 thumb_color = 0xFFFFFFFF;
+    UINT32 thumb_border = state->checked ? 0x26FFFFFF : ThemeColor_BorderLight();
+    UINT32 shadow_color = 0x22000000;
+    if (!state->enabled) {
+        track = ThemeColor_BorderExtraLight();
+        border = ThemeColor_BorderLight();
+        text_color = ThemeColor_TextPlaceholder();
+        thumb_color = 0xFFF7F8FA;
+        thumb_border = ThemeColor_BorderLight();
+        shadow_color = 0x12000000;
+    }
+
+    float track_h = (std::min)((FLOAT)state->height - 4.0f, 26.0f);
+    float track_top = ((FLOAT)state->height - track_h) * 0.5f;
+    float radius = track_h * 0.5f;
+    float thumb_r = radius - 2.5f;
+    float thumb_x = state->checked ? ((FLOAT)state->width - radius - 2.0f) : (radius + 2.0f);
+    float thumb_y = track_top + radius;
+
+    ID2D1SolidColorBrush* track_brush = nullptr;
+    ID2D1SolidColorBrush* border_brush = nullptr;
+    ID2D1SolidColorBrush* thumb_brush = nullptr;
+    ID2D1SolidColorBrush* thumb_border_brush = nullptr;
+    ID2D1SolidColorBrush* shadow_brush = nullptr;
+    ID2D1SolidColorBrush* text_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(track), &track_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(border), &border_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(thumb_color), &thumb_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(thumb_border), &thumb_border_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(shadow_color), &shadow_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(text_color), &text_brush);
+    if (!track_brush || !border_brush || !thumb_brush || !thumb_border_brush || !shadow_brush || !text_brush) {
+        if (track_brush) track_brush->Release();
+        if (border_brush) border_brush->Release();
+        if (thumb_brush) thumb_brush->Release();
+        if (thumb_border_brush) thumb_border_brush->Release();
+        if (shadow_brush) shadow_brush->Release();
+        if (text_brush) text_brush->Release();
+        return;
+    }
+
+    D2D1_ROUNDED_RECT track_rect = D2D1::RoundedRect(
+        D2D1::RectF(1.0f, track_top, (FLOAT)state->width - 1.0f, track_top + track_h), radius, radius);
+    rt->FillRoundedRectangle(track_rect, track_brush);
+    rt->DrawRoundedRectangle(track_rect, border_brush, state->checked ? 1.0f : 1.2f);
+    rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x, thumb_y + 0.8f), thumb_r + 0.2f, thumb_r + 0.2f), shadow_brush);
+    rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x, thumb_y), thumb_r, thumb_r), thumb_brush);
+    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x, thumb_y), thumb_r, thumb_r), thumb_border_brush, 1.0f);
+
+    const std::wstring& text = state->checked ? state->active_text : state->inactive_text;
+    if (!text.empty() && state->width >= state->height + 20) {
+        IDWriteTextFormat* text_format = nullptr;
+        factory->CreateTextFormat(
+            state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+            nullptr,
+            state->checked ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            (FLOAT)(state->font.font_size > 0 ? state->font.font_size : 11),
+            L"zh-CN",
+            &text_format
+        );
+        if (text_format) {
+            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            D2D1_RECT_F text_rect = state->checked
+                ? D2D1::RectF(8.0f, track_top, (FLOAT)state->width - radius * 1.65f, track_top + track_h)
+                : D2D1::RectF(radius * 1.65f, track_top, (FLOAT)state->width - 8.0f, track_top + track_h);
+            rt->DrawText(text.c_str(), (UINT32)text.length(), text_format, text_rect, text_brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            text_format->Release();
+        }
+    }
+
+    track_brush->Release();
+    border_brush->Release();
+    thumb_brush->Release();
+    thumb_border_brush->Release();
+    shadow_brush->Release();
+    text_brush->Release();
+}
+
+LRESULT CALLBACK SwitchProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    SwitchState* state = (SwitchState*)dwRefData;
+    HandleCommonEvents(hwnd, msg, wparam, lparam, state ? &state->events : nullptr);
+    switch (msg) {
+    case WM_NCHITTEST:
+        return HTCLIENT;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        ID2D1HwndRenderTarget* rt = nullptr;
+        if (g_d2d_factory) {
+            g_d2d_factory->CreateHwndRenderTarget(
+                D2D1::RenderTargetProperties(),
+                D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(state->width, state->height)),
+                &rt);
+        }
+        if (rt) {
+            rt->BeginDraw();
+            UINT32 clear_color = ResolveContainerBackgroundColor(hwnd, 13);
+            rt->Clear(ColorFromUInt32(clear_color));
+            DrawSwitch(rt, g_dwrite_factory, state);
+            rt->EndDraw();
+            rt->Release();
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (!state->enabled) return 0;
+        if (!state->hovered) {
+            state->hovered = true;
+            TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0 };
+            TrackMouseEvent(&tme);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        state->hovered = false;
+        if (!state->pressed) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_LBUTTONDOWN:
+        if (!state->enabled) return 0;
+        state->pressed = true;
+        SetCapture(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONUP:
+        if (!state->enabled) return 0;
+        if (state->pressed) {
+            RECT rc = {};
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            GetClientRect(hwnd, &rc);
+            bool inside = PtInRect(&rc, pt) ? true : false;
+            state->pressed = false;
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+            if (inside) {
+                state->checked = !state->checked;
+                if (state->callback) state->callback(hwnd, state->checked ? TRUE : FALSE);
+                if (state->events.on_value_changed) state->events.on_value_changed(hwnd);
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (state->pressed) {
+            state->pressed = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, SwitchProc, uIdSubclass);
+        g_switches.erase(hwnd);
+        delete state;
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+__declspec(dllexport) HWND __stdcall CreateSwitch(
+    HWND hParent,
+    int x, int y, int width, int height,
+    BOOL checked,
+    UINT32 active_color,
+    UINT32 inactive_color,
+    const unsigned char* active_text_bytes,
+    int active_text_len,
+    const unsigned char* inactive_text_bytes,
+    int inactive_text_len
+) {
+    if (!hParent) return nullptr;
+    int tb_offset = GetTitleBarOffset(hParent);
+    HWND hwnd = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_NOTIFY,
+        x, y + tb_offset, width, height, hParent, (HMENU)(INT_PTR)g_next_control_id++, GetModuleHandle(nullptr), nullptr);
+    if (!hwnd) return nullptr;
+    SwitchState* state = new SwitchState();
+    state->hwnd = hwnd;
+    state->parent = hParent;
+    state->id = (int)(INT_PTR)GetMenu(hwnd);
+    state->x = 0; state->y = 0; state->width = width; state->height = height;
+    state->checked = checked ? true : false;
+    state->enabled = true;
+    state->hovered = false;
+    state->pressed = false;
+    state->active_color = active_color ? active_color : ThemeColor_Primary();
+    state->inactive_color = inactive_color ? inactive_color : 0xFFDCDFE6;
+    state->active_text_color = 0xFFFFFFFF;
+    state->inactive_text_color = ThemeColor_TextSecondary();
+    state->active_text = Utf8ToWide(active_text_bytes, active_text_len);
+    state->inactive_text = Utf8ToWide(inactive_text_bytes, inactive_text_len);
+    state->font.font_name = L"Microsoft YaHei UI";
+    state->font.font_size = 11;
+    state->font.bold = false;
+    state->font.italic = false;
+    state->font.underline = false;
+    state->callback = nullptr;
+    g_switches[hwnd] = state;
+    SetWindowSubclass(hwnd, SwitchProc, 0, (DWORD_PTR)state);
+    return hwnd;
+}
+
+__declspec(dllexport) BOOL __stdcall GetSwitchState(HWND hSwitch) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return FALSE;
+    return it->second->checked ? TRUE : FALSE;
+}
+
+__declspec(dllexport) void __stdcall SetSwitchState(HWND hSwitch, BOOL checked) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return;
+    it->second->checked = checked ? true : false;
+    InvalidateRect(hSwitch, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall SetSwitchText(
+    HWND hSwitch,
+    const unsigned char* active_text_bytes,
+    int active_text_len,
+    const unsigned char* inactive_text_bytes,
+    int inactive_text_len
+) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return;
+    it->second->active_text = Utf8ToWide(active_text_bytes, active_text_len);
+    it->second->inactive_text = Utf8ToWide(inactive_text_bytes, inactive_text_len);
+    InvalidateRect(hSwitch, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall SetSwitchColors(HWND hSwitch, UINT32 active_color, UINT32 inactive_color) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return;
+    it->second->active_color = active_color;
+    it->second->inactive_color = inactive_color;
+    InvalidateRect(hSwitch, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall SetSwitchTextColors(HWND hSwitch, UINT32 active_text_color, UINT32 inactive_text_color) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return;
+    it->second->active_text_color = active_text_color;
+    it->second->inactive_text_color = inactive_text_color;
+    InvalidateRect(hSwitch, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetSwitchColors(HWND hSwitch, UINT32* active_color, UINT32* inactive_color, UINT32* active_text_color, UINT32* inactive_text_color) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return -1;
+    if (active_color) *active_color = it->second->active_color;
+    if (inactive_color) *inactive_color = it->second->inactive_color;
+    if (active_text_color) *active_text_color = it->second->active_text_color;
+    if (inactive_text_color) *inactive_text_color = it->second->inactive_text_color;
+    return 0;
+}
+
+__declspec(dllexport) void __stdcall SetSwitchCallback(HWND hSwitch, SwitchCallback callback) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return;
+    it->second->callback = callback;
+}
+
+__declspec(dllexport) void __stdcall EnableSwitch(HWND hSwitch, BOOL enable) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return;
+
+    SwitchState* state = it->second;
+    state->enabled = enable ? true : false;
+    state->hovered = false;
+    if (!state->enabled && state->pressed) {
+        state->pressed = false;
+        if (GetCapture() == hSwitch) {
+            ReleaseCapture();
+        }
+    }
+
+    EnableWindow(hSwitch, enable);
+    InvalidateRect(hSwitch, nullptr, FALSE);
+}
+
+__declspec(dllexport) void __stdcall ShowSwitch(HWND hSwitch, BOOL show) {
+    if (!hSwitch) return;
+    ShowWindow(hSwitch, show ? SW_SHOW : SW_HIDE);
+}
+
+__declspec(dllexport) void __stdcall SetSwitchBounds(HWND hSwitch, int x, int y, int width, int height) {
+    auto it = g_switches.find(hSwitch);
+    if (it == g_switches.end()) return;
+    it->second->width = width;
+    it->second->height = height;
+    SetWindowPos(hSwitch, nullptr, x, y, width, height, SWP_NOZORDER);
+    InvalidateRect(hSwitch, nullptr, FALSE);
+}
+
+static RECT ComputePlacedRect(HWND hTarget, int width, int height, int placement) {
+    RECT rc = {};
+    if (!hTarget || !IsWindow(hTarget)) {
+        SystemParametersInfo(SPI_GETWORKAREA, 0, &rc, 0);
+        rc.left += 40;
+        rc.top += 40;
+        rc.right = rc.left + width;
+        rc.bottom = rc.top + height;
+        return rc;
+    }
+
+    RECT target = {};
+    GetWindowRect(hTarget, &target);
+    int gap = 10;
+    int x = target.left;
+    int y = target.top - height - gap;
+
+    switch (placement) {
+    case POPUP_TOP:
+        x = target.left + ((target.right - target.left) - width) / 2;
+        y = target.top - height - gap;
+        break;
+    case POPUP_TOP_START:
+        x = target.left;
+        y = target.top - height - gap;
+        break;
+    case POPUP_TOP_END:
+        x = target.right - width;
+        y = target.top - height - gap;
+        break;
+    case POPUP_BOTTOM:
+        x = target.left + ((target.right - target.left) - width) / 2;
+        y = target.bottom + gap;
+        break;
+    case POPUP_BOTTOM_START:
+        x = target.left;
+        y = target.bottom + gap;
+        break;
+    case POPUP_BOTTOM_END:
+        x = target.right - width;
+        y = target.bottom + gap;
+        break;
+    case POPUP_LEFT:
+        x = target.left - width - gap;
+        y = target.top + ((target.bottom - target.top) - height) / 2;
+        break;
+    case POPUP_LEFT_START:
+        x = target.left - width - gap;
+        y = target.top;
+        break;
+    case POPUP_LEFT_END:
+        x = target.left - width - gap;
+        y = target.bottom - height;
+        break;
+    case POPUP_RIGHT:
+        x = target.right + gap;
+        y = target.top + ((target.bottom - target.top) - height) / 2;
+        break;
+    case POPUP_RIGHT_START:
+        x = target.right + gap;
+        y = target.top;
+        break;
+    case POPUP_RIGHT_END:
+        x = target.right + gap;
+        y = target.bottom - height;
+        break;
+    }
+
+    RECT work = {};
+    SystemParametersInfo(SPI_GETWORKAREA, 0, &work, 0);
+    if (x + width > work.right) x = work.right - width - 8;
+    if (x < work.left) x = work.left + 8;
+    if (y + height > work.bottom) y = work.bottom - height - 8;
+    if (y < work.top) y = work.top + 8;
+
+    rc.left = x;
+    rc.top = y;
+    rc.right = x + width;
+    rc.bottom = y + height;
+    return rc;
+}
+
+static void DrawPopupCardBase(ID2D1HwndRenderTarget* rt, UINT32 bg_color, UINT32 border_color) {
+    ID2D1SolidColorBrush* bg_brush = nullptr;
+    ID2D1SolidColorBrush* border_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(bg_color), &bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(border_color), &border_brush);
+    if (!bg_brush || !border_brush) {
+        if (bg_brush) bg_brush->Release();
+        if (border_brush) border_brush->Release();
+        return;
+    }
+    D2D1_SIZE_F sz = rt->GetSize();
+    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
+        D2D1::RectF(0.5f, 0.5f, sz.width - 0.5f, sz.height - 0.5f),
+        8.0f,
+        8.0f
+    );
+    rt->FillRoundedRectangle(rr, bg_brush);
+    rt->DrawRoundedRectangle(rr, border_brush, 1.0f);
+    bg_brush->Release();
+    border_brush->Release();
+}
+
+static void ApplyRoundedPopupRegion(HWND hwnd, int radius) {
+    if (!hwnd) return;
+    RECT rc = {};
+    GetClientRect(hwnd, &rc);
+    int width = rc.right - rc.left;
+    int height = rc.bottom - rc.top;
+    if (width <= 0 || height <= 0) return;
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius);
+    if (region) {
+        SetWindowRgn(hwnd, region, TRUE);
+    }
+}
+
+static void DrawSimpleText(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const std::wstring& text,
+    const D2D1_RECT_F& rect, UINT32 color, float size, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
+    DWRITE_TEXT_ALIGNMENT align = DWRITE_TEXT_ALIGNMENT_LEADING) {
+    IDWriteTextFormat* format = nullptr;
+    ID2D1SolidColorBrush* brush = nullptr;
+    factory->CreateTextFormat(L"Microsoft YaHei UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, size, L"zh-CN", &format);
+    rt->CreateSolidColorBrush(ColorFromUInt32(color), &brush);
+    if (!format || !brush) {
+        if (format) format->Release();
+        if (brush) brush->Release();
+        return;
+    }
+    format->SetTextAlignment(align);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    rt->DrawText(text.c_str(), (UINT32)text.length(), format, rect, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+    format->Release();
+    brush->Release();
+}
+
+static bool GetListBoxScrollbarMetrics(ListBoxState* state, RECT* track_rc, RECT* thumb_rc, int* max_scroll_out) {
+    if (!state) return false;
+
+    int total_content_height = (int)state->items.size() * state->item_height;
+    int visible_height = state->height;
+    int max_scroll = max(0, total_content_height - visible_height);
+    if (max_scroll_out) *max_scroll_out = max_scroll;
+    if (max_scroll <= 0) return false;
+
+    const int scrollbar_width = 8;
+    const int scrollbar_margin = 2;
+    int track_left = state->width - scrollbar_width - scrollbar_margin;
+    int track_top = scrollbar_margin;
+    int track_height = max(1, visible_height - scrollbar_margin * 2);
+    float thumb_ratio = (float)visible_height / (float)total_content_height;
+    int thumb_height = max(20, (int)(track_height * thumb_ratio));
+    int travel = max(1, track_height - thumb_height);
+    float scroll_ratio = max_scroll > 0 ? (float)state->scroll_offset / (float)max_scroll : 0.0f;
+    int thumb_top = track_top + (int)(scroll_ratio * travel);
+
+    if (track_rc) {
+        track_rc->left = track_left;
+        track_rc->top = track_top;
+        track_rc->right = track_left + scrollbar_width;
+        track_rc->bottom = track_top + track_height;
+    }
+    if (thumb_rc) {
+        thumb_rc->left = track_left + 1;
+        thumb_rc->top = thumb_top;
+        thumb_rc->right = track_left + scrollbar_width - 1;
+        thumb_rc->bottom = thumb_top + thumb_height;
+    }
+    return true;
+}
+
+static void EnsurePopupDrawingFactories() {
+    if (!g_d2d_factory) {
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_d2d_factory);
+    }
+    if (!g_dwrite_factory) {
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(&g_dwrite_factory));
+    }
+}
+
+static LRESULT CALLBACK EmojiLightPopupHostProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    switch (msg) {
+    case WM_NCHITTEST:
+        return HTCLIENT;
+    case WM_NCCALCSIZE:
+        return 0;
+    case WM_NCACTIVATE:
+        return TRUE;
+    case WM_NCPAINT:
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+static void ConfigureLightweightPopupWindow(HWND hwnd) {
+    if (!hwnd) return;
+
+    DWMNCRENDERINGPOLICY nc_policy = DWMNCRP_DISABLED;
+    DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &nc_policy, sizeof(nc_policy));
+}
+
+static void EnsureLightweightPopupHostClass() {
+    static bool class_registered = false;
+    if (class_registered) return;
+
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(WNDCLASSEXW);
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = EmojiLightPopupHostProc;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    wc.lpszClassName = L"EmojiLightPopupHostClass";
+    RegisterClassExW(&wc);
+    class_registered = true;
+}
+
+static void ApplyTooltipThemeDefaults(TooltipState* state) {
+    if (!state) return;
+    switch (state->theme_mode) {
+    case TOOLTIP_THEME_LIGHT:
+        state->bg_color = 0xFFFFFFFF;
+        state->fg_color = ThemeColor_TextPrimary();
+        state->border_color = ThemeColor_BorderLight();
+        break;
+    case TOOLTIP_THEME_CUSTOM:
+        if (!state->bg_color) state->bg_color = ThemeColor_Background();
+        if (!state->fg_color) state->fg_color = ThemeColor_TextPrimary();
+        break;
+    default:
+        state->bg_color = 0xFF303133;
+        state->fg_color = 0xFFFFFFFF;
+        state->border_color = 0x00000000;
+        break;
+    }
+}
+
+static bool IsTooltipPlacementTop(int placement) {
+    return placement == POPUP_TOP || placement == POPUP_TOP_START || placement == POPUP_TOP_END;
+}
+
+static bool IsTooltipPlacementBottom(int placement) {
+    return placement == POPUP_BOTTOM || placement == POPUP_BOTTOM_START || placement == POPUP_BOTTOM_END;
+}
+
+static bool IsTooltipPlacementLeft(int placement) {
+    return placement == POPUP_LEFT || placement == POPUP_LEFT_START || placement == POPUP_LEFT_END;
+}
+
+static bool IsTooltipPlacementRight(int placement) {
+    return placement == POPUP_RIGHT || placement == POPUP_RIGHT_START || placement == POPUP_RIGHT_END;
+}
+
+static float TooltipArrowAnchorRatio(int placement) {
+    switch (placement) {
+    case POPUP_TOP_START:
+    case POPUP_BOTTOM_START:
+        return 0.22f;
+    case POPUP_TOP_END:
+    case POPUP_BOTTOM_END:
+        return 0.78f;
+    case POPUP_LEFT_START:
+    case POPUP_RIGHT_START:
+        return 0.25f;
+    case POPUP_LEFT_END:
+    case POPUP_RIGHT_END:
+        return 0.75f;
+    default:
+        return 0.5f;
+    }
+}
+
+static RECT GetTooltipBodyRect(int width, int height, int placement) {
+    const int arrow = 8;
+    RECT rc = { 0, 0, width, height };
+    if (IsTooltipPlacementTop(placement)) {
+        rc.bottom -= arrow;
+    } else if (IsTooltipPlacementBottom(placement)) {
+        rc.top += arrow;
+    } else if (IsTooltipPlacementLeft(placement)) {
+        rc.right -= arrow;
+    } else if (IsTooltipPlacementRight(placement)) {
+        rc.left += arrow;
+    }
+    return rc;
+}
+
+static void GetTooltipArrowPoints(int width, int height, int placement, POINT pts[3]) {
+    RECT body = GetTooltipBodyRect(width, height, placement);
+    const int arrow = 8;
+    const float ratio = TooltipArrowAnchorRatio(placement);
+    if (IsTooltipPlacementTop(placement) || IsTooltipPlacementBottom(placement)) {
+        int body_w = body.right - body.left;
+        int anchor_x = body.left + (int)std::lround(body_w * ratio);
+        anchor_x = (std::max)((int)body.left + 14, (std::min)((int)body.right - 14, anchor_x));
+        if (IsTooltipPlacementTop(placement)) {
+            pts[0] = { anchor_x - arrow, body.bottom };
+            pts[1] = { anchor_x + arrow, body.bottom };
+            pts[2] = { anchor_x, body.bottom + arrow };
+        } else {
+            pts[0] = { anchor_x - arrow, body.top };
+            pts[1] = { anchor_x + arrow, body.top };
+            pts[2] = { anchor_x, body.top - arrow };
+        }
+    } else {
+        int body_h = body.bottom - body.top;
+        int anchor_y = body.top + (int)std::lround(body_h * ratio);
+        anchor_y = (std::max)((int)body.top + 14, (std::min)((int)body.bottom - 14, anchor_y));
+        if (IsTooltipPlacementLeft(placement)) {
+            pts[0] = { body.right, anchor_y - arrow };
+            pts[1] = { body.right, anchor_y + arrow };
+            pts[2] = { body.right + arrow, anchor_y };
+        } else {
+            pts[0] = { body.left, anchor_y - arrow };
+            pts[1] = { body.left, anchor_y + arrow };
+            pts[2] = { body.left - arrow, anchor_y };
+        }
+    }
+}
+
+static void ApplyTooltipRegion(HWND hwnd, int width, int height, int placement) {
+    if (!hwnd || width <= 0 || height <= 0) return;
+    RECT body = GetTooltipBodyRect(width, height, placement);
+    HRGN body_rgn = CreateRoundRectRgn(body.left, body.top, body.right, body.bottom, 14, 14);
+    POINT pts[3] = {};
+    GetTooltipArrowPoints(width, height, placement, pts);
+    HRGN arrow_rgn = CreatePolygonRgn(pts, 3, WINDING);
+    HRGN final_rgn = CreateRectRgn(0, 0, 0, 0);
+    CombineRgn(final_rgn, body_rgn, arrow_rgn, RGN_OR);
+    SetWindowRgn(hwnd, final_rgn, TRUE);
+    DeleteObject(body_rgn);
+    DeleteObject(arrow_rgn);
+}
+
+static void MeasureTooltipWindow(TooltipState* state, int* out_width, int* out_height) {
+    if (!state) return;
+    EnsurePopupDrawingFactories();
+    int width = 180;
+    int height = 44;
+    const int arrow = 8;
+    const int padding_x = (std::max)(8, state->padding_x);
+    const int padding_y = (std::max)(6, state->padding_y);
+    const float font_size = state->font_size > 0.0f ? state->font_size : 13.0f;
+    const int max_width = (std::max)(120, state->max_width > 0 ? state->max_width : 280);
+
+    if (g_dwrite_factory && !state->text.empty()) {
+        IDWriteTextFormat* format = nullptr;
+        HRESULT hr = g_dwrite_factory->CreateTextFormat(
+            state->font_name.empty() ? L"Microsoft YaHei UI" : state->font_name.c_str(),
+            nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            font_size,
+            L"zh-CN",
+            &format
+        );
+        if (SUCCEEDED(hr) && format) {
+            format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            const float available_width = (float)(max_width - padding_x * 2);
+            IDWriteTextLayout* layout = nullptr;
+            hr = g_dwrite_factory->CreateTextLayout(
+                state->text.c_str(),
+                (UINT32)state->text.length(),
+                format,
+                available_width,
+                200.0f,
+                &layout
+            );
+            if (SUCCEEDED(hr) && layout) {
+                DWRITE_TEXT_METRICS metrics = {};
+                if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                    width = (int)std::ceil(metrics.widthIncludingTrailingWhitespace) + padding_x * 2 + 2;
+                    height = (int)std::ceil(metrics.height) + padding_y * 2 + 2;
+                }
+                layout->Release();
+            }
+            format->Release();
+        }
+    }
+
+    width = (std::max)(120, (std::min)(max_width, width));
+    height = (std::max)(34, height);
+    if (IsTooltipPlacementTop(state->placement) || IsTooltipPlacementBottom(state->placement)) {
+        height += arrow;
+    } else {
+        width += arrow;
+    }
+
+    if (out_width) *out_width = width;
+    if (out_height) *out_height = height;
+}
+
+static void DrawTooltipContent(ID2D1HwndRenderTarget* rt, TooltipState* state) {
+    if (!rt || !state || !g_dwrite_factory) return;
+
+    UINT32 bg = ResolveThemeColor(state->bg_color);
+    UINT32 fg = ResolveThemeColor(state->fg_color);
+    UINT32 border = state->border_color ? ResolveThemeColor(state->border_color) : 0;
+
+    RECT body_rc_px = GetTooltipBodyRect((int)rt->GetSize().width, (int)rt->GetSize().height, state->placement);
+    D2D1_RECT_F body_rc = D2D1::RectF((FLOAT)body_rc_px.left, (FLOAT)body_rc_px.top, (FLOAT)body_rc_px.right, (FLOAT)body_rc_px.bottom);
+
+    ID2D1SolidColorBrush* bg_brush = nullptr;
+    ID2D1SolidColorBrush* border_brush = nullptr;
+    ID2D1SolidColorBrush* text_brush = nullptr;
+    rt->CreateSolidColorBrush(ColorFromUInt32(bg), &bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(border ? border : bg), &border_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(fg), &text_brush);
+
+    if (bg_brush) {
+        D2D1_ROUNDED_RECT panel = D2D1::RoundedRect(body_rc, 8.0f, 8.0f);
+        rt->FillRoundedRectangle(panel, bg_brush);
+        if (border && border_brush) {
+            rt->DrawRoundedRectangle(panel, border_brush, 1.0f);
+        }
+    }
+
+    POINT pts[3] = {};
+    GetTooltipArrowPoints((int)rt->GetSize().width, (int)rt->GetSize().height, state->placement, pts);
+    ID2D1PathGeometry* arrow_geo = nullptr;
+    ID2D1GeometrySink* sink = nullptr;
+    if (g_d2d_factory && SUCCEEDED(g_d2d_factory->CreatePathGeometry(&arrow_geo)) && arrow_geo) {
+        if (SUCCEEDED(arrow_geo->Open(&sink)) && sink) {
+            sink->BeginFigure(D2D1::Point2F((FLOAT)pts[0].x, (FLOAT)pts[0].y), D2D1_FIGURE_BEGIN_FILLED);
+            sink->AddLine(D2D1::Point2F((FLOAT)pts[1].x, (FLOAT)pts[1].y));
+            sink->AddLine(D2D1::Point2F((FLOAT)pts[2].x, (FLOAT)pts[2].y));
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            sink->Close();
+            if (bg_brush) rt->FillGeometry(arrow_geo, bg_brush);
+            if (border && border_brush) rt->DrawGeometry(arrow_geo, border_brush, 1.0f);
+            sink->Release();
+        }
+        arrow_geo->Release();
+    }
+
+    IDWriteTextFormat* format = nullptr;
+    HRESULT hr = g_dwrite_factory->CreateTextFormat(
+        state->font_name.empty() ? L"Microsoft YaHei UI" : state->font_name.c_str(),
+        nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        state->font_size > 0.0f ? state->font_size : 13.0f,
+        L"zh-CN",
+        &format
+    );
+    if (SUCCEEDED(hr) && format && text_brush) {
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        D2D1_RECT_F text_rect = D2D1::RectF(
+            body_rc.left + (FLOAT)state->padding_x,
+            body_rc.top + (FLOAT)state->padding_y,
+            body_rc.right - (FLOAT)state->padding_x,
+            body_rc.bottom - (FLOAT)state->padding_y
+        );
+        rt->DrawText(
+            state->text.c_str(),
+            (UINT32)state->text.length(),
+            format,
+            text_rect,
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
+        );
+        format->Release();
+    }
+
+    if (bg_brush) bg_brush->Release();
+    if (border_brush) border_brush->Release();
+    if (text_brush) text_brush->Release();
+}
+
+static void RefreshTooltipWindow(HWND hTooltip, TooltipState* state) {
+    if (!hTooltip || !state) return;
+    int width = 0;
+    int height = 0;
+    MeasureTooltipWindow(state, &width, &height);
+    ApplyTooltipRegion(hTooltip, width, height, state->placement);
+    if (state->target && IsWindow(state->target)) {
+        RECT rect = ComputePlacedRect(state->target, width, height, state->placement);
+        SetWindowPos(
+            hTooltip,
+            HWND_TOPMOST,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            SWP_NOACTIVATE | (state->visible ? SWP_SHOWWINDOW : SWP_NOZORDER)
+        );
+    } else {
+        SetWindowPos(hTooltip, nullptr, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    InvalidateRect(hTooltip, nullptr, TRUE);
+}
+
+static void UnbindTooltipTarget(TooltipState* state) {
+    if (!state || !state->bound_target || !IsWindow(state->bound_target)) {
+        if (state) state->bound_target = nullptr;
+        return;
+    }
+    RemoveWindowSubclass(state->bound_target, TooltipTargetProc, (UINT_PTR)state);
+    state->bound_target = nullptr;
+}
+
+LRESULT CALLBACK TooltipTargetProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    TooltipState* state = reinterpret_cast<TooltipState*>(dwRefData);
+    if (!state || !state->hwnd || !IsWindow(state->hwnd)) {
+        return DefSubclassProc(hwnd, msg, wparam, lparam);
+    }
+
+    switch (msg) {
+    case WM_MOUSEMOVE:
+        if (state->trigger_mode == TOOLTIP_TRIGGER_HOVER) {
+            TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0 };
+            TrackMouseEvent(&tme);
+            if (!state->visible) {
+                ShowTooltipForControl(state->hwnd, hwnd);
+            }
+        }
+        break;
+    case WM_MOUSELEAVE:
+        if (state->trigger_mode == TOOLTIP_TRIGGER_HOVER) {
+            HideTooltip(state->hwnd);
+        }
+        break;
+    case WM_LBUTTONUP:
+        if (state->trigger_mode == TOOLTIP_TRIGGER_CLICK) {
+            if (state->visible) HideTooltip(state->hwnd);
+            else ShowTooltipForControl(state->hwnd, hwnd);
+            return 0;
+        }
+        break;
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, TooltipTargetProc, uIdSubclass);
+        if (state->bound_target == hwnd) {
+            state->bound_target = nullptr;
+            state->target = nullptr;
+            state->visible = false;
+        }
+        break;
+    }
+
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+LRESULT CALLBACK TooltipProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    TooltipState* state = (TooltipState*)dwRefData;
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        ID2D1HwndRenderTarget* rt = nullptr;
+        EnsurePopupDrawingFactories();
+        if (g_d2d_factory) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            g_d2d_factory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),
+                D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top)), &rt);
+        }
+        if (rt && g_dwrite_factory) {
+            rt->BeginDraw();
+            rt->Clear(D2D1::ColorF(0, 0.0f));
+            DrawTooltipContent(rt, state);
+            rt->EndDraw();
+            rt->Release();
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_NCDESTROY:
+        UnbindTooltipTarget(state);
+        RemoveWindowSubclass(hwnd, TooltipProc, uIdSubclass);
+        g_tooltips.erase(hwnd);
+        delete state;
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+__declspec(dllexport) HWND __stdcall CreateTooltip(
+    HWND hOwner,
+    const unsigned char* text_bytes,
+    int text_len,
+    int placement,
+    UINT32 bg_color,
+    UINT32 fg_color
+) {
+    EnsurePopupDrawingFactories();
+    HWND owner = GetAncestor(hOwner, GA_ROOT);
+    if (!owner) owner = hOwner;
+    EnsureLightweightPopupHostClass();
+    std::wstring text = Utf8ToWide(text_bytes, text_len);
+    int width = (std::max)(120, (std::min)(360, (int)text.length() * 8 + 32));
+    int height = 48;
+    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"EmojiLightPopupHostClass", L"",
+        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, width, height, owner, nullptr, GetModuleHandle(nullptr), nullptr);
+    if (!hwnd) return nullptr;
+    TooltipState* state = new TooltipState();
+    state->hwnd = hwnd;
+    state->owner = owner;
+    state->target = nullptr;
+    state->bound_target = nullptr;
+    state->text = text;
+    state->placement = placement;
+    state->bg_color = bg_color;
+    state->fg_color = fg_color;
+    state->border_color = 0;
+    state->font_name = L"Microsoft YaHei UI";
+    state->font_size = 13.0f;
+    state->theme_mode = (bg_color || fg_color) ? TOOLTIP_THEME_CUSTOM : TOOLTIP_THEME_DARK;
+    state->trigger_mode = TOOLTIP_TRIGGER_HOVER;
+    state->max_width = 280;
+    state->padding_x = 12;
+    state->padding_y = 8;
+    state->visible = false;
+    ApplyTooltipThemeDefaults(state);
+    g_tooltips[hwnd] = state;
+    SetWindowSubclass(hwnd, TooltipProc, 0, (DWORD_PTR)state);
+    RefreshTooltipWindow(hwnd, state);
+    return hwnd;
+}
+
+__declspec(dllexport) void __stdcall SetTooltipText(HWND hTooltip, const unsigned char* text_bytes, int text_len) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    it->second->text = Utf8ToWide(text_bytes, text_len);
+    RefreshTooltipWindow(hTooltip, it->second);
+}
+
+__declspec(dllexport) void __stdcall SetTooltipPlacement(HWND hTooltip, int placement) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    it->second->placement = placement;
+    RefreshTooltipWindow(hTooltip, it->second);
+}
+
+__declspec(dllexport) void __stdcall SetTooltipTheme(HWND hTooltip, int theme_mode) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    it->second->theme_mode = theme_mode;
+    ApplyTooltipThemeDefaults(it->second);
+    RefreshTooltipWindow(hTooltip, it->second);
+}
+
+__declspec(dllexport) void __stdcall SetTooltipColors(HWND hTooltip, UINT32 bg_color, UINT32 fg_color, UINT32 border_color) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    it->second->theme_mode = TOOLTIP_THEME_CUSTOM;
+    it->second->bg_color = bg_color;
+    it->second->fg_color = fg_color;
+    it->second->border_color = border_color;
+    ApplyTooltipThemeDefaults(it->second);
+    RefreshTooltipWindow(hTooltip, it->second);
+}
+
+__declspec(dllexport) void __stdcall SetTooltipFont(HWND hTooltip, const unsigned char* font_bytes, int font_len, float font_size) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    if (font_bytes && font_len > 0) {
+        it->second->font_name = Utf8ToWide(font_bytes, font_len);
+    }
+    if (font_size > 0.0f) {
+        it->second->font_size = font_size;
+    }
+    RefreshTooltipWindow(hTooltip, it->second);
+}
+
+__declspec(dllexport) void __stdcall SetTooltipTrigger(HWND hTooltip, int trigger_mode) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    it->second->trigger_mode = trigger_mode;
+}
+
+__declspec(dllexport) void __stdcall BindTooltipToControl(HWND hTooltip, HWND hTarget) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    TooltipState* state = it->second;
+    UnbindTooltipTarget(state);
+    if (!hTarget || !IsWindow(hTarget)) return;
+    state->bound_target = hTarget;
+    SetWindowSubclass(hTarget, TooltipTargetProc, (UINT_PTR)state, (DWORD_PTR)state);
+}
+
+__declspec(dllexport) void __stdcall ShowTooltipForControl(HWND hTooltip, HWND hTarget) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    TooltipState* state = it->second;
+    state->target = hTarget;
+    state->visible = true;
+    RefreshTooltipWindow(hTooltip, state);
+    ShowWindow(hTooltip, SW_SHOWNOACTIVATE);
+}
+
+__declspec(dllexport) void __stdcall HideTooltip(HWND hTooltip) {
+    auto it = g_tooltips.find(hTooltip);
+    if (it == g_tooltips.end()) return;
+    it->second->visible = false;
+    ShowWindow(hTooltip, SW_HIDE);
+}
+
+__declspec(dllexport) void __stdcall DestroyTooltip(HWND hTooltip) {
+    if (!hTooltip) return;
+    DestroyWindow(hTooltip);
+}
+
+static RECT NotificationCloseRect(HWND hwnd) {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    RECT close_rc = { rc.right - 28, 12, rc.right - 12, 28 };
+    return close_rc;
+}
+
+static POINT NotificationBasePosition(HWND hOwner, int position, int width, int height, int offset_index) {
+    RECT work = {};
+    SystemParametersInfo(SPI_GETWORKAREA, 0, &work, 0);
+    RECT anchor = work;
+    if (hOwner && IsWindow(hOwner)) {
+        RECT owner_rect = {};
+        if (GetWindowRect(hOwner, &owner_rect) &&
+            owner_rect.right > owner_rect.left &&
+            owner_rect.bottom > owner_rect.top) {
+            anchor = owner_rect;
+        }
+    }
+    POINT pt = {};
+    int gap = 16;
+    int stack = offset_index * (height + 12);
+    switch (position) {
+    case NOTIFY_TOP_LEFT:
+        pt.x = anchor.left + gap;
+        pt.y = anchor.top + gap + stack;
+        break;
+    case NOTIFY_BOTTOM_RIGHT:
+        pt.x = anchor.right - width - gap;
+        pt.y = anchor.bottom - height - gap - stack;
+        break;
+    case NOTIFY_BOTTOM_LEFT:
+        pt.x = anchor.left + gap;
+        pt.y = anchor.bottom - height - gap - stack;
+        break;
+    default:
+        pt.x = anchor.right - width - gap;
+        pt.y = anchor.top + gap + stack;
+        break;
+    }
+    if (pt.x + width > work.right) pt.x = work.right - width - 8;
+    if (pt.x < work.left) pt.x = work.left + 8;
+    if (pt.y + height > work.bottom) pt.y = work.bottom - height - 8;
+    if (pt.y < work.top) pt.y = work.top + 8;
+    return pt;
+}
+
+LRESULT CALLBACK NotificationProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    NotificationState* state = (NotificationState*)dwRefData;
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case WM_TIMER:
+        if (state && wparam == state->timer_id) {
+            CloseNotification(hwnd);
+            return 0;
+        }
+        break;
+    case WM_MOUSEMOVE: {
+        POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+        RECT close_rc = NotificationCloseRect(hwnd);
+        state->hover_close = PtInRect(&close_rc, pt) ? true : false;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+        RECT close_rc = NotificationCloseRect(hwnd);
+        if (PtInRect(&close_rc, pt)) {
+            if (state->callback) state->callback(hwnd, 0);
+            CloseNotification(hwnd);
+        } else if (state->callback) {
+            state->callback(hwnd, 1);
+        }
+        return 0;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        ID2D1HwndRenderTarget* rt = nullptr;
+        EnsurePopupDrawingFactories();
+        if (g_d2d_factory) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            g_d2d_factory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),
+                D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top)), &rt);
+        }
+        if (rt && g_dwrite_factory) {
+            rt->BeginDraw();
+            rt->Clear(ColorFromUInt32(0xFFFFFFFF));
+            DrawPopupCardBase(rt, 0xFFFFFFFF, ThemeColor_BorderLight());
+            UINT32 accent = ThemeColor_Primary();
+            if (state->type == NOTIFY_SUCCESS) accent = ThemeColor_Success();
+            else if (state->type == NOTIFY_WARNING) accent = ThemeColor_Warning();
+            else if (state->type == NOTIFY_ERROR) accent = ThemeColor_Danger();
+            ID2D1SolidColorBrush* accent_brush = nullptr;
+            rt->CreateSolidColorBrush(ColorFromUInt32(accent), &accent_brush);
+            if (accent_brush) {
+                rt->FillRectangle(D2D1::RectF(0, 0, 4, rt->GetSize().height), accent_brush);
+                accent_brush->Release();
+            }
+            DrawSimpleText(rt, g_dwrite_factory, state->title, D2D1::RectF(20, 14, rt->GetSize().width - 36, 36), 0xFF303133, 14.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            DrawSimpleText(rt, g_dwrite_factory, state->message, D2D1::RectF(20, 40, rt->GetSize().width - 20, rt->GetSize().height - 14), 0xFF606266, 12.0f);
+            DrawSimpleText(rt, g_dwrite_factory, state->hover_close ? L"×" : L"✕", D2D1::RectF(rt->GetSize().width - 28, 8, rt->GetSize().width - 8, 28), 0xFF909399, 12.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+            rt->EndDraw();
+            rt->Release();
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_NCDESTROY:
+        if (state && state->timer_id) KillTimer(hwnd, state->timer_id);
+        RemoveWindowSubclass(hwnd, NotificationProc, uIdSubclass);
+        g_notifications.erase(hwnd);
+        delete state;
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+__declspec(dllexport) HWND __stdcall ShowNotification(
+    HWND hOwner,
+    const unsigned char* title_bytes,
+    int title_len,
+    const unsigned char* message_bytes,
+    int message_len,
+    int type,
+    int position,
+    int duration_ms
+) {
+    EnsurePopupDrawingFactories();
+    int visible_count = 0;
+    for (auto& pair : g_notifications) {
+        if (pair.second && pair.second->visible && pair.second->position == position) visible_count++;
+    }
+    int width = 320;
+    int height = 96;
+    HWND owner = GetAncestor(hOwner, GA_ROOT);
+    if (!owner) owner = hOwner;
+    POINT pt = NotificationBasePosition(owner, position, width, height, visible_count);
+    EnsureLightweightPopupHostClass();
+    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"EmojiLightPopupHostClass", L"",
+        WS_POPUP, pt.x, pt.y, width, height, owner, nullptr, GetModuleHandle(nullptr), nullptr);
+    if (!hwnd) return nullptr;
+    ApplyRoundedPopupRegion(hwnd, 16);
+    NotificationState* state = new NotificationState();
+    state->hwnd = hwnd;
+    state->owner = owner;
+    state->title = Utf8ToWide(title_bytes, title_len);
+    state->message = Utf8ToWide(message_bytes, message_len);
+    state->type = type;
+    state->position = position;
+    state->duration_ms = duration_ms;
+    state->timer_id = 0;
+    state->visible = true;
+    state->hover_close = false;
+    state->callback = nullptr;
+    g_notifications[hwnd] = state;
+    SetWindowSubclass(hwnd, NotificationProc, 0, (DWORD_PTR)state);
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    if (duration_ms > 0) {
+        state->timer_id = SetTimer(hwnd, 1, duration_ms, nullptr);
+    }
+    InvalidateRect(hwnd, nullptr, TRUE);
+    return hwnd;
+}
+
+__declspec(dllexport) void __stdcall SetNotificationCallback(HWND hNotification, NotificationCallback callback) {
+    auto it = g_notifications.find(hNotification);
+    if (it == g_notifications.end()) return;
+    it->second->callback = callback;
+}
+
+__declspec(dllexport) void __stdcall CloseNotification(HWND hNotification) {
+    auto it = g_notifications.find(hNotification);
+    if (it == g_notifications.end()) return;
+    if (it->second->timer_id) {
+        KillTimer(hNotification, it->second->timer_id);
+        it->second->timer_id = 0;
+    }
+    it->second->visible = false;
+    DestroyWindow(hNotification);
 }
 
 // ========== 列表框功能实现 ==========
@@ -7788,6 +11637,28 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
             
             int x = LOWORD(lparam);
             int y = HIWORD(lparam);
+            RECT track_rc = {};
+            RECT thumb_rc = {};
+            int max_scroll = 0;
+            if (GetListBoxScrollbarMetrics(state, &track_rc, &thumb_rc, &max_scroll) && PtInRect(&track_rc, POINT{ x, y })) {
+                if (PtInRect(&thumb_rc, POINT{ x, y })) {
+                    state->scrollbar_dragging = true;
+                    state->scrollbar_drag_offset = y - thumb_rc.top;
+                } else {
+                    int thumb_height = thumb_rc.bottom - thumb_rc.top;
+                    int track_height = track_rc.bottom - track_rc.top;
+                    int travel = max(1, track_height - thumb_height);
+                    int new_thumb_top = y - track_rc.top - thumb_height / 2;
+                    new_thumb_top = max(0, min(travel, new_thumb_top));
+                    float ratio = (float)new_thumb_top / (float)travel;
+                    state->scroll_offset = (int)(ratio * max_scroll);
+                    state->scrollbar_dragging = true;
+                    state->scrollbar_drag_offset = thumb_height / 2;
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+                SetCapture(hwnd);
+                return 0;
+            }
             
             // 计算点击的项目索引
             int clicked_index = (y + state->scroll_offset) / state->item_height;
@@ -7819,11 +11690,52 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
             }
             return 0;
         }
+
+        case WM_LBUTTONUP: {
+            if (state->scrollbar_dragging) {
+                state->scrollbar_dragging = false;
+                state->scrollbar_drag_offset = 0;
+                if (GetCapture() == hwnd) {
+                    ReleaseCapture();
+                }
+                return 0;
+            }
+            break;
+        }
         
         case WM_MOUSEMOVE: {
             if (!state->enabled) break;
             
+            if (state->scrollbar_dragging) {
+                RECT track_rc = {};
+                RECT thumb_rc = {};
+                int max_scroll = 0;
+                if (GetListBoxScrollbarMetrics(state, &track_rc, &thumb_rc, &max_scroll)) {
+                    int y = HIWORD(lparam);
+                    int thumb_height = thumb_rc.bottom - thumb_rc.top;
+                    int track_height = track_rc.bottom - track_rc.top;
+                    int travel = max(1, track_height - thumb_height);
+                    int new_thumb_top = y - state->scrollbar_drag_offset - track_rc.top;
+                    new_thumb_top = max(0, min(travel, new_thumb_top));
+                    float ratio = (float)new_thumb_top / (float)travel;
+                    state->scroll_offset = (int)(ratio * max_scroll);
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+                return 0;
+            }
+
+            int x = LOWORD(lparam);
             int y = HIWORD(lparam);
+            RECT track_rc = {};
+            RECT thumb_rc = {};
+            int max_scroll = 0;
+            if (GetListBoxScrollbarMetrics(state, &track_rc, &thumb_rc, &max_scroll) && PtInRect(&track_rc, POINT{ x, y })) {
+                if (state->hovered_index != -1) {
+                    state->hovered_index = -1;
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+                return 0;
+            }
             int hovered_index = (y + state->scroll_offset) / state->item_height;
             
             if (hovered_index >= 0 && hovered_index < (int)state->items.size()) {
@@ -7842,7 +11754,7 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
         }
         
         case WM_MOUSELEAVE: {
-            if (state->hovered_index != -1) {
+            if (!state->scrollbar_dragging && state->hovered_index != -1) {
                 state->hovered_index = -1;
                 InvalidateRect(hwnd, nullptr, TRUE);
             }
@@ -7869,6 +11781,14 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
             InvalidateRect(hwnd, nullptr, TRUE);
             return 0;
         }
+
+        case WM_CAPTURECHANGED:
+            if (state->scrollbar_dragging) {
+                state->scrollbar_dragging = false;
+                state->scrollbar_drag_offset = 0;
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
         
         case WM_NCDESTROY: {
             // 清理资源
@@ -7922,6 +11842,8 @@ HWND __stdcall CreateListBox(
     state->scroll_offset = 0;
     state->item_height = 32;  // Element UI标准行高
     state->multi_select = (multi_select != 0);
+    state->scrollbar_dragging = false;
+    state->scrollbar_drag_offset = 0;
     state->enabled = true;
     state->fg_color = fg_color;
     state->bg_color = bg_color;
@@ -8145,6 +12067,40 @@ void __stdcall SetListBoxBounds(
     InvalidateRect(hListBox, nullptr, TRUE);
 }
 
+void __stdcall SetListBoxColors(
+    HWND hListBox,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    UINT32 select_color,
+    UINT32 hover_color
+) {
+    auto it = g_listboxes.find(hListBox);
+    if (it == g_listboxes.end()) return;
+    ListBoxState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->select_color = select_color;
+    state->hover_color = hover_color;
+    InvalidateRect(hListBox, nullptr, TRUE);
+}
+
+int __stdcall GetListBoxColors(
+    HWND hListBox,
+    UINT32* fg_color,
+    UINT32* bg_color,
+    UINT32* select_color,
+    UINT32* hover_color
+) {
+    auto it = g_listboxes.find(hListBox);
+    if (it == g_listboxes.end()) return -1;
+    ListBoxState* state = it->second;
+    if (fg_color) *fg_color = state->fg_color;
+    if (bg_color) *bg_color = state->bg_color;
+    if (select_color) *select_color = state->select_color;
+    if (hover_color) *hover_color = state->hover_color;
+    return 0;
+}
+
 // 设置列表项文本
 BOOL __stdcall SetListItemText(
     HWND hListBox,
@@ -8177,8 +12133,9 @@ BOOL __stdcall SetListItemText(
 void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxState* state) {
     if (!rt || !factory || !state) return;
     
+    UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
     rt->BeginDraw();
-    rt->Clear(ColorFromUInt32(state->bg_color));
+    rt->Clear(ColorFromUInt32(resolved_bg));
     
     // 绘制下拉按钮区域（右侧）
     int button_width = 30;
@@ -8190,7 +12147,7 @@ void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxSt
     );
     
     // 按钮背景�?
-    UINT32 button_color = state->bg_color;
+    UINT32 button_color = resolved_bg;
     if (!state->enabled) {
         button_color = ThemeColor_BackgroundLight();  // 禁用状态
     } else if (state->button_pressed) {
@@ -8208,7 +12165,7 @@ void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxSt
     }
     
     // 绘制下拉箭头
-    rt->CreateSolidColorBrush(ColorFromUInt32(0xFF909399), &brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_TextSecondary()), &brush);
     if (brush) {
         float arrow_x = state->width - button_width / 2.0f;
         float arrow_y = state->height / 2.0f;
@@ -8246,6 +12203,76 @@ void DrawComboBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxSt
     rt->EndDraw();
 }
 
+static bool IsD2DEditBoxWindow(HWND hwnd) {
+    return hwnd && g_d2d_editboxes.find(hwnd) != g_d2d_editboxes.end();
+}
+
+extern "C" __declspec(dllexport) HWND __stdcall CreateD2DColorEmojiEditBox(
+    HWND hParent,
+    int x, int y, int width, int height,
+    const unsigned char* text_bytes, int text_len,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    const unsigned char* font_name_bytes, int font_name_len,
+    int font_size,
+    bool bold, bool italic, bool underline,
+    int alignment,
+    bool multiline,
+    bool readonly,
+    bool password,
+    bool has_border,
+    bool vertical_center
+);
+
+extern "C" __declspec(dllexport) int __stdcall GetD2DEditBoxText(
+    HWND hEdit,
+    unsigned char* buffer,
+    int buffer_size
+);
+
+extern "C" __declspec(dllexport) void __stdcall SetD2DEditBoxText(
+    HWND hEdit,
+    const unsigned char* text_bytes,
+    int text_len
+);
+
+static void SetComboDisplayText(HWND hEdit, const std::wstring& text) {
+    if (!hEdit) return;
+    if (IsD2DEditBoxWindow(hEdit)) {
+        int len = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        if (len <= 0) {
+            SetD2DEditBoxText(hEdit, (const unsigned char*)"", 0);
+            return;
+        }
+        std::string utf8_text;
+        utf8_text.resize(len - 1);
+        WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, &utf8_text[0], len, nullptr, nullptr);
+        SetD2DEditBoxText(hEdit, (const unsigned char*)utf8_text.c_str(), (int)utf8_text.length());
+        return;
+    }
+    SetWindowTextW(hEdit, text.c_str());
+}
+
+static int GetComboDisplayText(HWND hEdit, unsigned char* buffer, int buffer_size) {
+    if (!hEdit) return 0;
+    if (IsD2DEditBoxWindow(hEdit)) {
+        return GetD2DEditBoxText(hEdit, buffer, buffer_size);
+    }
+
+    int text_len = GetWindowTextLengthW(hEdit);
+    if (text_len == 0) return 0;
+
+    std::wstring text(text_len + 1, 0);
+    GetWindowTextW(hEdit, &text[0], text_len + 1);
+
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (buffer && buffer_size > 0) {
+        int copied = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, (LPSTR)buffer, buffer_size, nullptr, nullptr);
+        return copied > 0 ? copied - 1 : 0;
+    }
+    return utf8_len > 0 ? utf8_len - 1 : 0;
+}
+
 // 绘制组合框下拉列�?
 void DrawComboDropDown(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, ComboBoxState* state) {
     if (!rt || !factory || !state) {
@@ -8255,8 +12282,14 @@ void DrawComboDropDown(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Combo
     
     OutputDebugStringW((L"DrawComboDropDown: 开始绘制，项目总数: " + std::to_wstring(state->items.size()) + L", 滚动偏移: " + std::to_wstring(state->scroll_offset)).c_str());
     
+    const UINT32 resolved_bg = ResolveOptionalColor(state->bg_color, ThemeColor_Background());
+    const UINT32 resolved_fg = ResolveOptionalColor(state->fg_color, ThemeColor_TextPrimary());
+    const UINT32 resolved_select = ResolveOptionalColor(state->select_color, ThemeColor_LightBg(ThemeColor_Primary()));
+    const UINT32 resolved_hover = ResolveOptionalColor(state->hover_color, ThemeColor_BackgroundLight());
+    const UINT32 resolved_border = ThemeColor_BorderBase();
+
     rt->BeginDraw();
-    rt->Clear(ColorFromUInt32(0xFFFFFFFF));
+    rt->Clear(ColorFromUInt32(resolved_bg));
     
     int item_height = state->item_height;  // 使用状态中的表项高度
     
@@ -8285,11 +12318,11 @@ void DrawComboDropDown(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Combo
         );
         
         // 背景�?
-        UINT32 bg_color = 0xFFFFFFFF;
+        UINT32 bg_color = resolved_bg;
         if ((int)i == state->selected_index) {
-            bg_color = state->select_color;
+            bg_color = resolved_select;
         } else if ((int)i == state->hovered_index) {
-            bg_color = state->hover_color;
+            bg_color = resolved_hover;
         }
         
         ID2D1SolidColorBrush* brush = nullptr;
@@ -8300,7 +12333,7 @@ void DrawComboDropDown(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Combo
         }
         
         // 绘制文本 - 使用TextLayout支持彩色Emoji
-        rt->CreateSolidColorBrush(ColorFromUInt32(state->fg_color), &brush);
+        rt->CreateSolidColorBrush(ColorFromUInt32(resolved_fg), &brush);
         if (brush) {
             IDWriteTextFormat* text_format = nullptr;
             factory->CreateTextFormat(
@@ -8351,7 +12384,7 @@ void DrawComboDropDown(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, Combo
     
     // 绘制边框
     ID2D1SolidColorBrush* brush = nullptr;
-    rt->CreateSolidColorBrush(ColorFromUInt32(0xFFDCDFE6), &brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(resolved_border), &brush);
     if (brush) {
         RECT client_rect;
         GetClientRect(state->dropdown_hwnd, &client_rect);
@@ -8429,9 +12462,7 @@ LRESULT CALLBACK ComboDropDownProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
                 state->selected_index = index;
                 
                 // 更新编辑框文�?
-                if (state->edit_hwnd) {
-                    SetWindowTextW(state->edit_hwnd, state->items[index].c_str());
-                }
+                SetComboDisplayText(state->edit_hwnd, state->items[index]);
                 
                 // 触发回调
                 if (state->callback) {
@@ -8781,70 +12812,39 @@ HWND __stdcall CreateComboBox(
     state->item_height = (item_height > 0) ? item_height : 35;
     
     // 设置字体属性
-    if (font_name_bytes && font_name_len > 0) {
-        state->font.font_name = Utf8ToWide((const unsigned char*)font_name_bytes, font_name_len);
-    } else {
-        state->font.font_name = L"Microsoft YaHei UI";
-    }
+    state->font.font_name = L"Segoe UI Emoji";
     state->font.font_size = (font_size > 0) ? font_size : 14;
     state->font.bold = (bold != 0);
     state->font.italic = (italic != 0);
     state->font.underline = (underline != 0);
     state->callback = nullptr;
     
-    // 创建编辑框（WS_BORDER：编辑区显示边框，与设计器一致）
+    // 组合框显示层统一使用 D2D 彩色 emoji 编辑框：
+    // 1. 文本可稳定垂直居中
+    // 2. emoji 走 Segoe UI Emoji，中文交给 DirectWrite fallback
     int button_width = 30;
-    state->edit_hwnd = CreateWindowExW(
-        0,
-        L"EDIT",
-        L"",
-        WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | (readonly ? ES_READONLY : 0),
+    static const unsigned char combo_display_font[] = "Segoe UI Emoji";
+    state->edit_hwnd = CreateD2DColorEmojiEditBox(
+        hwnd,
         0, 0,
         width - button_width,
         height,
-        hwnd,
-        nullptr,
-        GetModuleHandle(nullptr),
-        nullptr
+        (const unsigned char*)"", 0,
+        state->fg_color,
+        state->bg_color,
+        combo_display_font,
+        (int)(sizeof(combo_display_font) - 1),
+        state->font.font_size,
+        state->font.bold,
+        state->font.italic,
+        state->font.underline,
+        0,
+        FALSE,
+        readonly != 0,
+        FALSE,
+        TRUE,
+        TRUE
     );
-    
-    if (state->edit_hwnd) {
-        // 设置编辑框字体
-        // 将点大小转换为逻辑单位（负值表示字符高度）
-        // 公式：-MulDiv(point_size, GetDeviceCaps(hdc, LOGPIXELSY), 72)
-        HDC hdc = GetDC(state->edit_hwnd);
-        int font_height = -MulDiv(state->font.font_size, GetDeviceCaps(hdc, LOGPIXELSY), 72);
-        ReleaseDC(state->edit_hwnd, hdc);
-        
-        HFONT hFont = CreateFontW(
-            font_height,  // 使用转换后的字体高度
-            0, 0, 0,
-            state->font.bold ? FW_BOLD : FW_NORMAL,
-            state->font.italic,
-            state->font.underline,
-            FALSE,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            DEFAULT_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE,
-            state->font.font_name.c_str()
-        );
-        SendMessageW(state->edit_hwnd, WM_SETFONT, (WPARAM)hFont, TRUE);
-        
-        // 设置编辑框边距，使文本垂直居中
-        // 计算垂直边距：(控件高度 - 字体高度) / 2
-        int vertical_margin = (height - abs(font_height)) / 2;
-        if (vertical_margin < 0) vertical_margin = 0;
-        
-        // 设置编辑框的矩形区域（左、上、右、下边距）
-        RECT rc;
-        rc.left = 5;  // 左边距
-        rc.top = vertical_margin;  // 上边距（垂直居中）
-        rc.right = width - button_width - 5;  // 右边距
-        rc.bottom = height - vertical_margin;  // 下边距（垂直居中）
-        SendMessageW(state->edit_hwnd, EM_SETRECT, 0, (LPARAM)&rc);
-    }
     
     // 注册下拉列表窗口�?
     static bool dropdown_class_registered = false;
@@ -8968,9 +12968,7 @@ void __stdcall RemoveComboItem(HWND hComboBox, int index) {
         // 调整选中索引
         if (state->selected_index == index) {
             state->selected_index = -1;
-            if (state->edit_hwnd) {
-                SetWindowTextW(state->edit_hwnd, L"");
-            }
+            SetComboDisplayText(state->edit_hwnd, L"");
         } else if (state->selected_index > index) {
             state->selected_index--;
         }
@@ -8987,9 +12985,7 @@ void __stdcall ClearComboBox(HWND hComboBox) {
     state->selected_index = -1;
     state->hovered_index = -1;
     
-    if (state->edit_hwnd) {
-        SetWindowTextW(state->edit_hwnd, L"");
-    }
+    SetComboDisplayText(state->edit_hwnd, L"");
 }
 
 // 获取组合框选中项索�?
@@ -9008,12 +13004,10 @@ void __stdcall SetComboSelectedIndex(HWND hComboBox, int index) {
     if (index >= -1 && index < (int)state->items.size()) {
         state->selected_index = index;
         
-        if (state->edit_hwnd) {
-            if (index >= 0) {
-                SetWindowTextW(state->edit_hwnd, state->items[index].c_str());
-            } else {
-                SetWindowTextW(state->edit_hwnd, L"");
-            }
+        if (index >= 0) {
+            SetComboDisplayText(state->edit_hwnd, state->items[index]);
+        } else {
+            SetComboDisplayText(state->edit_hwnd, L"");
         }
         
         // 触发回调
@@ -9116,22 +13110,7 @@ int __stdcall GetComboBoxText(
     if (it == g_comboboxes.end()) return 0;
     
     ComboBoxState* state = it->second;
-    if (!state->edit_hwnd) return 0;
-    
-    int text_len = GetWindowTextLengthW(state->edit_hwnd);
-    if (text_len == 0) return 0;
-    
-    std::wstring text(text_len + 1, 0);
-    GetWindowTextW(state->edit_hwnd, &text[0], text_len + 1);
-    
-    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    
-    if (buffer && buffer_size > 0) {
-        int copied = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, (LPSTR)buffer, buffer_size, nullptr, nullptr);
-        return copied - 1;
-    }
-    
-    return utf8_len - 1;
+    return GetComboDisplayText(state->edit_hwnd, buffer, buffer_size);
 }
 
 // 设置组合框文�?
@@ -9147,7 +13126,49 @@ void __stdcall SetComboBoxText(
     if (!state->edit_hwnd) return;
     
     std::wstring text = Utf8ToWide(text_bytes, text_len);
-    SetWindowTextW(state->edit_hwnd, text.c_str());
+    SetComboDisplayText(state->edit_hwnd, text);
+}
+
+void __stdcall SetComboBoxColors(
+    HWND hComboBox,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    UINT32 select_color,
+    UINT32 hover_color
+) {
+    auto it = g_comboboxes.find(hComboBox);
+    if (it == g_comboboxes.end()) return;
+
+    ComboBoxState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->select_color = select_color;
+    state->hover_color = hover_color;
+    if (state->edit_hwnd) {
+        SetD2DEditBoxColor(state->edit_hwnd, fg_color, bg_color);
+    }
+    InvalidateRect(hComboBox, nullptr, FALSE);
+    if (state->dropdown_hwnd && state->dropdown_visible) {
+        InvalidateRect(state->dropdown_hwnd, nullptr, TRUE);
+    }
+}
+
+int __stdcall GetComboBoxColors(
+    HWND hComboBox,
+    UINT32* fg_color,
+    UINT32* bg_color,
+    UINT32* select_color,
+    UINT32* hover_color
+) {
+    auto it = g_comboboxes.find(hComboBox);
+    if (it == g_comboboxes.end()) return -1;
+
+    ComboBoxState* state = it->second;
+    if (fg_color) *fg_color = state->fg_color;
+    if (bg_color) *bg_color = state->bg_color;
+    if (select_color) *select_color = state->select_color;
+    if (hover_color) *hover_color = state->hover_color;
+    return 0;
 }
 
 // ========== 热键控件实现 ==========
@@ -9234,7 +13255,7 @@ std::wstring GetKeyName(int vk_code) {
 // 格式化热键显示文本
 std::wstring FormatHotKeyText(int vk_code, int modifiers) {
     if (vk_code == 0) {
-        return L"无";
+        return L"请按组合键";
     }
     
     std::wstring text;
@@ -9261,6 +13282,37 @@ std::wstring FormatHotKeyText(int vk_code, int modifiers) {
     return text;
 }
 
+static bool ProcessHotKeyVirtualKey(HotKeyState* state, int vk) {
+    if (!state || !state->enabled) return false;
+
+    if (vk == VK_ESCAPE) {
+        state->vk_code = 0;
+        state->modifiers = 0;
+        state->display_text = FormatHotKeyText(0, 0);
+        if (state->callback) state->callback(state->hwnd, 0, 0);
+        if (state->events.on_value_changed) state->events.on_value_changed(state->hwnd);
+        return true;
+    }
+
+    if (vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU || vk == VK_LCONTROL || vk == VK_RCONTROL ||
+        vk == VK_LSHIFT || vk == VK_RSHIFT || vk == VK_LMENU || vk == VK_RMENU) {
+        return true;
+    }
+
+    int modifiers = 0;
+    if (GetKeyState(VK_CONTROL) & 0x8000) modifiers |= 1;
+    if (GetKeyState(VK_SHIFT) & 0x8000) modifiers |= 2;
+    if (GetKeyState(VK_MENU) & 0x8000) modifiers |= 4;
+
+    state->vk_code = vk;
+    state->modifiers = modifiers;
+    state->display_text = FormatHotKeyText(vk, modifiers);
+
+    if (state->callback) state->callback(state->hwnd, vk, modifiers);
+    if (state->events.on_value_changed) state->events.on_value_changed(state->hwnd);
+    return true;
+}
+
 // 绘制热键控件
 void DrawHotKey(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, HotKeyState* state) {
     if (!rt || !factory || !state) return;
@@ -9271,9 +13323,15 @@ void DrawHotKey(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, HotKeyState*
     rt->Clear(D2D1::ColorF(D2D1::ColorF::White, 0.0f));
     
     // Element UI 配色
-    UINT32 border_color = state->has_focus ? ThemeColor_Primary() : ThemeColor_BorderBase();  // 焦点时主题主色边框
-    UINT32 bg_color = state->enabled ? state->bg_color : ThemeColor_BackgroundLight();
-    UINT32 text_color = state->enabled ? state->fg_color : ThemeColor_TextPlaceholder();
+    UINT32 border_color = state->has_focus ? ThemeColor_Primary() : ThemeColor_BorderBase();
+    UINT32 bg_color = state->enabled ? ResolveThemeColor(state->bg_color) : ThemeColor_BackgroundLight();
+    UINT32 text_color = state->enabled ? ResolveThemeColor(state->fg_color) : ThemeColor_TextPrimary();
+    if (state->capturing) {
+        bg_color = 0xFFF5FAFF;
+    }
+    if (state->vk_code == 0) {
+        text_color = state->capturing ? ThemeColor_Primary() : ThemeColor_TextPlaceholder();
+    }
     
     if (!state->enabled) {
         border_color = 0xFFE4E7ED;
@@ -9308,6 +13366,17 @@ void DrawHotKey(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, HotKeyState*
         }
         border_brush->Release();
     }
+
+    if (state->has_focus) {
+        ID2D1SolidColorBrush* focus_brush = nullptr;
+        rt->CreateSolidColorBrush(D2D1::ColorF(0.25f, 0.59f, 0.96f, 0.12f), &focus_brush);
+        if (focus_brush) {
+            rt->DrawRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(1.5f, 1.5f, (float)state->width - 1.5f, (float)state->height - 1.5f), 4.0f, 4.0f),
+                focus_brush, 3.0f);
+            focus_brush->Release();
+        }
+    }
     
     // 绘制文本
     if (!state->display_text.empty()) {
@@ -9327,16 +13396,15 @@ void DrawHotKey(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, HotKeyState*
             );
             
             if (text_format) {
-                text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                 text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 
                 D2D1_RECT_F text_rect = D2D1::RectF(
-                    5, 0,
-                    (float)state->width - 5,
+                    12.0f, 0.0f,
+                    (float)state->width - 12.0f,
                     (float)state->height
                 );
                 
-                // 使用DrawText而不是DrawTextW
                 rt->DrawText(
                     state->display_text.c_str(),
                     (UINT32)state->display_text.length(),
@@ -9356,10 +13424,53 @@ void DrawHotKey(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, HotKeyState*
 }
 
 // 热键控件窗口过程
-LRESULT CALLBACK HotKeyProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+static LRESULT CALLBACK HotKeyInputProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    HotKeyState* state = reinterpret_cast<HotKeyState*>(dwRefData);
+    if (!state) return DefSubclassProc(hwnd, msg, wparam, lparam);
+
+    switch (msg) {
+        case WM_SETFOCUS:
+            state->has_focus = true;
+            state->capturing = true;
+            HideCaret(hwnd);
+            InvalidateRect(state->hwnd, nullptr, FALSE);
+            return 0;
+
+        case WM_KILLFOCUS:
+            state->has_focus = false;
+            state->capturing = false;
+            InvalidateRect(state->hwnd, nullptr, FALSE);
+            return 0;
+
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN: {
+            if (ProcessHotKeyVirtualKey(state, (int)wparam)) {
+                InvalidateRect(state->hwnd, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_CHAR:
+        case WM_SYSCHAR:
+            return 0;
+
+        case WM_GETDLGCODE:
+            return DLGC_WANTALLKEYS | DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTTAB;
+
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, HotKeyInputProc, uIdSubclass);
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+    }
+
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+// 热键控件窗口过程
+static LRESULT CALLBACK HotKeyWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     auto it = g_hotkeys.find(hwnd);
     if (it == g_hotkeys.end()) {
-        return DefSubclassProc(hwnd, msg, wparam, lparam);
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
     
     HotKeyState* state = it->second;
@@ -9370,7 +13481,7 @@ LRESULT CALLBACK HotKeyProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, U
     switch (msg) {
         case WM_PAINT: {
             PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
+            BeginPaint(hwnd, &ps);
             
             // 创建渲染目标
             ID2D1HwndRenderTarget* rt = nullptr;
@@ -9389,6 +13500,9 @@ LRESULT CALLBACK HotKeyProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, U
             EndPaint(hwnd, &ps);
             return 0;
         }
+
+        case WM_ERASEBKGND:
+            return 1;
         
         case WM_SETFOCUS: {
             state->has_focus = true;
@@ -9404,74 +13518,52 @@ LRESULT CALLBACK HotKeyProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, U
             return 0;
         }
         
-        case WM_KEYDOWN:
-        case WM_SYSKEYDOWN: {
-            if (!state->enabled || !state->capturing) break;
-            
-            int vk = (int)wparam;
-            
-            // 忽略单独的修饰键
-            if (vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU) {
-                return 0;
-            }
-            
-            // 获取修饰键状态
-            int modifiers = 0;
-            if (GetKeyState(VK_CONTROL) & 0x8000) modifiers |= 1;
-            if (GetKeyState(VK_SHIFT) & 0x8000) modifiers |= 2;
-            if (GetKeyState(VK_MENU) & 0x8000) modifiers |= 4;
-            
-            // 更新热键
-            state->vk_code = vk;
-            state->modifiers = modifiers;
-            state->display_text = FormatHotKeyText(vk, modifiers);
-            
-            InvalidateRect(hwnd, nullptr, FALSE);
-            
-            // 触发回调
-            if (state->callback) {
-                state->callback(hwnd, vk, modifiers);
-            }
-            if (state->events.on_value_changed) {
-                state->events.on_value_changed(hwnd);
-            }
-            
-            return 0;
-        }
-        
-        case WM_CHAR:
-        case WM_SYSCHAR: {
-            // 阻止字符输入
-            return 0;
-        }
-        
         case WM_LBUTTONDOWN: {
             if (state->enabled) {
                 SetFocus(hwnd);
+                state->has_focus = true;
+                state->capturing = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         }
+
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN: {
+            if (ProcessHotKeyVirtualKey(state, (int)wparam)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_CHAR:
+        case WM_SYSCHAR:
+            return 0;
+
+        case WM_GETDLGCODE:
+            return DLGC_WANTALLKEYS | DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTTAB;
         
         case WM_ENABLE: {
             state->enabled = (BOOL)wparam;
+            if (state->input_hwnd && IsWindow(state->input_hwnd)) {
+                EnableWindow(state->input_hwnd, state->enabled);
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         
         case WM_NCDESTROY: {
-            // 清理资源
-            RemoveWindowSubclass(hwnd, HotKeyProc, uIdSubclass);
-            
             auto it = g_hotkeys.find(hwnd);
             if (it != g_hotkeys.end()) {
                 delete it->second;
                 g_hotkeys.erase(it);
             }
-            break;
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
         }
     }
     
-    return DefSubclassProc(hwnd, msg, wparam, lparam);
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 // 创建热键控件
@@ -9482,14 +13574,26 @@ HWND __stdcall CreateHotKeyControl(
     UINT32 bg_color
 ) {
     if (!hParent || !IsWindow(hParent)) return nullptr;
+
+    static const wchar_t kHotKeyControlClass[] = L"EmojiWindowHotKeyControl";
+    static bool hotkey_class_registered = false;
+    if (!hotkey_class_registered) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = HotKeyWindowProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = kHotKeyControlClass;
+        wc.hCursor = LoadCursor(nullptr, IDC_IBEAM);
+        wc.hbrBackground = nullptr;
+        RegisterClassW(&wc);
+        hotkey_class_registered = true;
+    }
     
-    // 创建静态控件作为基础
     int tb_offset = GetTitleBarOffset(hParent);
     HWND hwnd = CreateWindowExW(
         0,
-        L"STATIC",
+        kHotKeyControlClass,
         L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
         x, y + tb_offset, width, height,
         hParent,
         nullptr,
@@ -9503,6 +13607,7 @@ HWND __stdcall CreateHotKeyControl(
     HotKeyState* state = new HotKeyState();
     state->hwnd = hwnd;
     state->parent = hParent;
+    state->input_hwnd = nullptr;
     state->id = (int)(INT_PTR)hwnd;
     state->x = x;
     state->y = y;
@@ -9510,7 +13615,7 @@ HWND __stdcall CreateHotKeyControl(
     state->height = height;
     state->vk_code = 0;
     state->modifiers = 0;
-    state->display_text = L"无";
+    state->display_text = FormatHotKeyText(0, 0);
     state->capturing = false;
     state->has_focus = false;
     state->enabled = true;
@@ -9525,9 +13630,23 @@ HWND __stdcall CreateHotKeyControl(
     state->callback = nullptr;
     
     g_hotkeys[hwnd] = state;
-    
-    // 子类化窗口
-    SetWindowSubclass(hwnd, HotKeyProc, 0, 0);
+
+    state->input_hwnd = CreateWindowExW(
+        0,
+        L"EDIT",
+        L"",
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        -100, -100, 1, 1,
+        hwnd,
+        nullptr,
+        GetModuleHandle(nullptr),
+        nullptr
+    );
+    if (state->input_hwnd) {
+        SetWindowSubclass(state->input_hwnd, HotKeyInputProc, 0, reinterpret_cast<DWORD_PTR>(state));
+    }
+
+    InvalidateRect(hwnd, nullptr, FALSE);
     
     return hwnd;
 }
@@ -9617,6 +13736,38 @@ void __stdcall SetHotKeyControlBounds(
     InvalidateRect(hHotKey, nullptr, FALSE);
 }
 
+void __stdcall SetHotKeyColors(
+    HWND hHotKey,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    UINT32 border_color
+) {
+    auto it = g_hotkeys.find(hHotKey);
+    if (it == g_hotkeys.end()) return;
+
+    HotKeyState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->border_color = border_color;
+    InvalidateRect(hHotKey, nullptr, FALSE);
+}
+
+int __stdcall GetHotKeyColors(
+    HWND hHotKey,
+    UINT32* fg_color,
+    UINT32* bg_color,
+    UINT32* border_color
+) {
+    auto it = g_hotkeys.find(hHotKey);
+    if (it == g_hotkeys.end()) return -1;
+
+    HotKeyState* state = it->second;
+    if (fg_color) *fg_color = state->fg_color;
+    if (bg_color) *bg_color = state->bg_color;
+    if (border_color) *border_color = state->border_color;
+    return 0;
+}
+
 // ========== 分组框功能实现 ==========
 
 // 创建分组框
@@ -9642,7 +13793,7 @@ HWND __stdcall CreateGroupBox(
         0,
         L"STATIC",
         L"",
-        WS_CHILD | WS_VISIBLE | SS_NOTIFY,
+        WS_CHILD | WS_VISIBLE | SS_NOTIFY | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
         x, y + tb_offset, width, height,
         hParent,
         nullptr,
@@ -9679,6 +13830,7 @@ HWND __stdcall CreateGroupBox(
     state->callback = nullptr;
     
     g_groupboxes[hwnd] = state;
+    g_groupbox_styles[hwnd] = GROUPBOX_STYLE_OUTLINE;
     
     // 子类化窗口
     SetWindowSubclass(hwnd, GroupBoxProc, 0, 0);
@@ -9706,6 +13858,100 @@ HWND __stdcall CreateGroupBox(
     UpdateWindow(hwnd);
     
     return hwnd;
+}
+
+HWND __stdcall CreatePanel(
+    HWND hParent,
+    int x, int y, int width, int height,
+    UINT32 bg_color
+) {
+    if (!hParent || !IsWindow(hParent)) return nullptr;
+
+    int tb_offset = GetTitleBarOffset(hParent);
+    HWND hwnd = CreateWindowExW(
+        0,
+        L"STATIC",
+        L"",
+        WS_CHILD | WS_VISIBLE | SS_NOTIFY | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+        x, y + tb_offset, width, height,
+        hParent,
+        nullptr,
+        GetModuleHandle(nullptr),
+        nullptr
+    );
+
+    if (!hwnd) return nullptr;
+
+    PanelState* state = new PanelState();
+    state->hwnd = hwnd;
+    state->parent = hParent;
+    state->x = x;
+    state->y = y;
+    state->width = width;
+    state->height = height;
+    state->bg_color = bg_color;
+
+    g_panels[hwnd] = state;
+    SetWindowSubclass(hwnd, PanelProc, 0, 0);
+    InvalidateRect(hwnd, nullptr, TRUE);
+    return hwnd;
+}
+
+static bool IsSelfOrDescendantWindow(HWND hwnd, HWND ancestor) {
+    if (!hwnd || !ancestor) return false;
+    HWND current = hwnd;
+    while (current) {
+        if (current == ancestor) return true;
+        current = GetParent(current);
+    }
+    return false;
+}
+
+static POINT GetWindowOriginInParent(HWND hwnd) {
+    POINT pt = {};
+    if (!hwnd || !IsWindow(hwnd)) return pt;
+    RECT rc = {};
+    if (!GetWindowRect(hwnd, &rc)) return pt;
+    pt.x = rc.left;
+    pt.y = rc.top;
+    HWND parent = GetParent(hwnd);
+    if (parent && IsWindow(parent)) {
+        ScreenToClient(parent, &pt);
+    }
+    return pt;
+}
+
+static void OffsetHostedButtonStateForMovedPanel(HWND moved_hwnd, int dx, int dy) {
+    if (!moved_hwnd || (dx == 0 && dy == 0)) return;
+    for (auto& pair : g_button_window_bindings) {
+        const ButtonWindowBindingInfo& binding = pair.second;
+        if (!binding.state_host || !binding.callback_parent) continue;
+        if (!IsSelfOrDescendantWindow(binding.callback_parent, moved_hwnd)) continue;
+        EmojiButton* button = FindEmojiButton(binding.state_host, binding.button_id);
+        if (!button) continue;
+        button->x += dx;
+        button->y += dy;
+    }
+}
+
+__declspec(dllexport) void __stdcall SetPanelBackgroundColor(
+    HWND hPanel,
+    UINT32 bg_color
+) {
+    auto it = g_panels.find(hPanel);
+    if (it == g_panels.end()) return;
+    it->second->bg_color = bg_color;
+    InvalidateRect(hPanel, nullptr, TRUE);
+}
+
+__declspec(dllexport) int __stdcall GetPanelBackgroundColor(
+    HWND hPanel,
+    UINT32* bg_color
+) {
+    auto it = g_panels.find(hPanel);
+    if (it == g_panels.end()) return -1;
+    if (bg_color) *bg_color = it->second->bg_color;
+    return 0;
 }
 
 // 添加子控件到分组框
@@ -9823,6 +14069,10 @@ void __stdcall EnableGroupBox(
             for (auto& button : win_state->buttons) {
                 if (button.id == button_id) {
                     button.enabled = (enable != 0);
+                    if (button.hwnd && IsWindow(button.hwnd)) {
+                        EnableWindow(button.hwnd, enable);
+                        InvalidateRect(button.hwnd, nullptr, FALSE);
+                    }
                     break;
                 }
             }
@@ -9851,6 +14101,17 @@ static void ApplyShowGroupBox(HWND hGroupBox, BOOL show) {
         WriteLog("ApplyShowGroupBox: child ShowWindow hGroupBox=%p, hChild=%p, cmd=%d, child_is_window=%d",
             hGroupBox, hChild, show ? SW_SHOW : SW_HIDE, (hChild && IsWindow(hChild)) ? 1 : 0);
         ShowWindow(hChild, show ? SW_SHOW : SW_HIDE);
+    }
+
+    auto win_it = g_windows.find(state->parent);
+    if (win_it != g_windows.end()) {
+        for (auto& button : win_it->second->buttons) {
+            if (std::find(state->button_ids.begin(), state->button_ids.end(), button.id) == state->button_ids.end()) continue;
+            button.visible = show ? true : false;
+            if (button.hwnd && IsWindow(button.hwnd)) {
+                ShowWindow(button.hwnd, show ? SW_SHOW : SW_HIDE);
+            }
+        }
     }
 
     WriteLog("ApplyShowGroupBox: groupbox ShowWindow hGroupBox=%p, cmd=%d", hGroupBox, show ? SW_SHOW : SW_HIDE);
@@ -9915,6 +14176,16 @@ void __stdcall SetGroupBoxBounds(
         SetWindowPos(hChild, nullptr, pt.x + dx, pt.y + dy, 
                     rect.right - rect.left, rect.bottom - rect.top, 
                     SWP_NOZORDER);
+    }
+
+    auto win_it = g_windows.find(state->parent);
+    if (win_it != g_windows.end()) {
+        for (auto& button : win_it->second->buttons) {
+            if (std::find(state->button_ids.begin(), state->button_ids.end(), button.id) == state->button_ids.end()) continue;
+            button.x += dx;
+            button.y += dy;
+            SyncEmojiButtonWindow(&button);
+        }
     }
     
     InvalidateRect(hGroupBox, nullptr, FALSE);
@@ -10006,6 +14277,43 @@ __declspec(dllexport) int __stdcall GetGroupBoxColor(
     return 0;
 }
 
+__declspec(dllexport) void __stdcall SetGroupBoxTitleColor(
+    HWND hGroupBox,
+    UINT32 title_color
+) {
+    auto it = g_groupboxes.find(hGroupBox);
+    if (it == g_groupboxes.end()) return;
+    it->second->title_color = title_color;
+    InvalidateRect(hGroupBox, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetGroupBoxTitleColor(
+    HWND hGroupBox,
+    UINT32* title_color
+) {
+    auto it = g_groupboxes.find(hGroupBox);
+    if (it == g_groupboxes.end()) return -1;
+    if (title_color) *title_color = it->second->title_color;
+    return 0;
+}
+
+__declspec(dllexport) void __stdcall SetGroupBoxStyle(
+    HWND hGroupBox,
+    int style
+) {
+    auto it = g_groupboxes.find(hGroupBox);
+    if (it == g_groupboxes.end()) return;
+    g_groupbox_styles[hGroupBox] = style;
+    InvalidateRect(hGroupBox, nullptr, FALSE);
+}
+
+__declspec(dllexport) int __stdcall GetGroupBoxStyle(
+    HWND hGroupBox
+) {
+    auto it = g_groupbox_styles.find(hGroupBox);
+    return it != g_groupbox_styles.end() ? it->second : GROUPBOX_STYLE_OUTLINE;
+}
+
 // ========================================
 // TabControl 属性命令
 // ========================================
@@ -10049,12 +14357,6 @@ __declspec(dllexport) int __stdcall SetTabTitle(
 
     std::wstring newTitle = Utf8ToWide(title_bytes, title_len);
     state->pages[index].title = newTitle;
-
-    // 更新 TabControl 控件中的标题
-    TCITEMW tci = {};
-    tci.mask = TCIF_TEXT;
-    tci.pszText = (LPWSTR)newTitle.c_str();
-    TabCtrl_SetItem(hTabControl, index, &tci);
 
     // 触发重绘
     InvalidateRect(hTabControl, nullptr, TRUE);
@@ -10172,8 +14474,7 @@ __declspec(dllexport) int __stdcall SetTabItemSize(HWND hTab, int width, int hei
     state->tabWidth = width;
     state->tabHeight = height;
 
-    // TCM_SETITEMSIZE: LOWORD=宽度, HIWORD=高度（无论水平还是垂直模式都一样传）
-    SendMessage(hTab, TCM_SETITEMSIZE, 0, MAKELPARAM(width, height));
+    UpdateTabLayout(state);
     InvalidateRect(hTab, NULL, TRUE);
     return 0;
 }
@@ -10234,38 +14535,21 @@ __declspec(dllexport) int __stdcall SetTabPadding(HWND hTab, int horizontal, int
     return 0;
 }
 
+__declspec(dllexport) int __stdcall SetTabHeaderStyle(HWND hTab, int style) {
+    auto it = g_tab_controls.find(hTab);
+    if (it == g_tab_controls.end()) return -1;
+    g_tab_header_styles[hTab] = style;
+    InvalidateRect(hTab, NULL, TRUE);
+    return 0;
+}
+
 // ========== TabControl 单个标签页控制函数 ==========
 
 // 辅助函数：根据 pages 数组中的 visible 状态重建 Win32 Tab Control 的标签项
 // pages 数组保存所有页面（包括隐藏的），Win32 Tab Control 只显示可见的
 static void RebuildTabItems(TabControlState* state) {
     if (!state || !state->hTabControl) return;
-
-    // 删除 Win32 Tab Control 中的所有标签项
-    TabCtrl_DeleteAllItems(state->hTabControl);
-
-    // 重新插入可见的标签项
-    int visibleIdx = 0;
-    for (size_t i = 0; i < state->pages.size(); i++) {
-        if (state->pages[i].visible) {
-            TCITEMW tci = {};
-            tci.mask = TCIF_TEXT;
-            tci.pszText = (LPWSTR)state->pages[i].title.c_str();
-            TabCtrl_InsertItem(state->hTabControl, visibleIdx, &tci);
-            visibleIdx++;
-        }
-    }
-
-    // 恢复选中状态：将 currentIndex（pages 数组索引）映射到 Win32 可见索引
-    if (state->currentIndex >= 0 && state->currentIndex < (int)state->pages.size()
-        && state->pages[state->currentIndex].visible) {
-        int visIdx = 0;
-        for (int i = 0; i < state->currentIndex; i++) {
-            if (state->pages[i].visible) visIdx++;
-        }
-        TabCtrl_SetCurSel(state->hTabControl, visIdx);
-    }
-
+    UpdateTabLayout(state);
     InvalidateRect(state->hTabControl, NULL, TRUE);
 }
 
@@ -10782,34 +15066,6 @@ __declspec(dllexport) int __stdcall SetTabPosition(HWND hTab, int position) {
     TabControlState* state = it->second;
     state->tabPosition = position;
 
-    // 获取当前窗口样式
-    LONG style = GetWindowLong(hTab, GWL_STYLE);
-
-    // 清除所有位置相关样式
-    style &= ~(TCS_BOTTOM | TCS_VERTICAL | TCS_RIGHT);
-
-    // 根据位置设置样式
-    switch (position) {
-    case 0: // 上（默认，无需额外样式）
-        break;
-    case 1: // 下
-        style |= TCS_BOTTOM;
-        break;
-    case 2: // 左
-        // TCS_VERTICAL 必须配合 TCS_MULTILINE 才能正常显示垂直标签
-        style |= TCS_VERTICAL | TCS_MULTILINE;
-        break;
-    case 3: // 右
-        style |= TCS_VERTICAL | TCS_RIGHT | TCS_MULTILINE;
-        break;
-    }
-
-    SetWindowLong(hTab, GWL_STYLE, style);
-
-    // 重新设置标签尺寸（确保垂直/水平模式下尺寸正确）
-    SendMessage(hTab, TCM_SETITEMSIZE, 0, MAKELPARAM(state->tabWidth, state->tabHeight));
-
-    // 重新计算内容区域布局
     UpdateTabLayout(state);
     InvalidateRect(hTab, NULL, TRUE);
     return 0;
@@ -10839,20 +15095,6 @@ __declspec(dllexport) int __stdcall SetTabScrollable(HWND hTab, int scrollable) 
     state->scrollable = (scrollable != 0);
     state->scrollOffset = 0;
 
-    // 获取当前窗口样式
-    LONG style = GetWindowLong(hTab, GWL_STYLE);
-
-    if (state->scrollable) {
-        // 可滚动模式：移除 TCS_MULTILINE，Win32 Tab Control 自带单行滚动箭头
-        style &= ~TCS_MULTILINE;
-    } else {
-        // 不可滚动模式：添加 TCS_MULTILINE，使用多行标签行为
-        style |= TCS_MULTILINE;
-    }
-
-    SetWindowLong(hTab, GWL_STYLE, style);
-
-    // 重新计算布局
     UpdateTabLayout(state);
     InvalidateRect(hTab, NULL, TRUE);
     return 0;
@@ -10888,8 +15130,7 @@ __declspec(dllexport) int __stdcall RemoveAllTabs(HWND hTab) {
     state->pages.clear();
     state->currentIndex = -1;
 
-    // 删除 Win32 Tab Control 中的所有标签项并重绘
-    TabCtrl_DeleteAllItems(hTab);
+    UpdateTabLayout(state);
     InvalidateRect(hTab, NULL, TRUE);
     return 0;
 }
@@ -10939,7 +15180,7 @@ __declspec(dllexport) int __stdcall InsertTabItem(HWND hTab, int index, const un
             0,
             TAB_CONTENT_D2D_CLASS,
             L"",
-            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
             0, 0, 0, 0,
             state->hTabControl,
             nullptr,
@@ -10947,6 +15188,14 @@ __declspec(dllexport) int __stdcall InsertTabItem(HWND hTab, int index, const un
             nullptr
         );
         if (!hContent) return -1;
+    }
+
+    LONG_PTR content_style = GetWindowLongPtrW(hContent, GWL_STYLE);
+    LONG_PTR desired_style = content_style | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+    if (desired_style != content_style) {
+        SetWindowLongPtrW(hContent, GWL_STYLE, desired_style);
+        SetWindowPos(hContent, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
     // 创建新的 TabPageInfo
@@ -10977,7 +15226,6 @@ __declspec(dllexport) int __stdcall InsertTabItem(HWND hTab, int index, const un
     // 如果是第一个标签页，自动选中
     if (count == 0) {
         state->currentIndex = 0;
-        TabCtrl_SetCurSel(hTab, 0);
         UpdateTabLayout(state);
         if (state->callback) {
             state->callback(hTab, 0);
@@ -11079,6 +15327,196 @@ __declspec(dllexport) int __stdcall IsTabItemSelected(HWND hTab, int index) {
     return (state->currentIndex == index) ? 1 : 0;
 }
 
+LRESULT CALLBACK PanelProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    auto it = g_panels.find(hwnd);
+    PanelState* state = (it != g_panels.end()) ? it->second : nullptr;
+
+    if (state && HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events)) {
+        return 0;
+    }
+
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_WINDOWPOSCHANGING: {
+        WINDOWPOS* wp = reinterpret_cast<WINDOWPOS*>(lparam);
+        if (state && wp && !(wp->flags & SWP_NOMOVE)) {
+            POINT old_pt = GetWindowOriginInParent(hwnd);
+            int dx = wp->x - old_pt.x;
+            int dy = wp->y - old_pt.y;
+            if (dx != 0 || dy != 0) {
+                OffsetHostedButtonStateForMovedPanel(hwnd, dx, dy);
+            }
+        }
+        break;
+    }
+
+    case WM_WINDOWPOSCHANGED: {
+        WINDOWPOS* wp = reinterpret_cast<WINDOWPOS*>(lparam);
+        if (state && wp) {
+            if (!(wp->flags & SWP_NOMOVE)) {
+                state->x = wp->x;
+                state->y = wp->y;
+            }
+            if (!(wp->flags & SWP_NOSIZE)) {
+                state->width = wp->cx;
+                state->height = wp->cy;
+            }
+        }
+        break;
+    }
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        if (hdc && state) {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
+            HBRUSH brush = CreateSolidBrush(RGB(
+                (resolved_bg >> 16) & 0xFF,
+                (resolved_bg >> 8) & 0xFF,
+                resolved_bg & 0xFF));
+            FillRect(hdc, &rc, brush);
+            DeleteObject(brush);
+
+            auto menu_it = g_menubars.find(hwnd);
+            if (menu_it != g_menubars.end() && menu_it->second && menu_it->second->visible && !menu_it->second->items.empty()) {
+                ID2D1HwndRenderTarget* rt = nullptr;
+                if (g_d2d_factory) {
+                    HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(
+                        D2D1::RenderTargetProperties(),
+                        D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU((UINT)(rc.right - rc.left), (UINT)(rc.bottom - rc.top))),
+                        &rt);
+                    if (SUCCEEDED(hr) && rt) {
+                        rt->BeginDraw();
+                        rt->Clear(D2D1::ColorF(
+                            ((resolved_bg >> 16) & 0xFF) / 255.0f,
+                            ((resolved_bg >> 8) & 0xFF) / 255.0f,
+                            (resolved_bg & 0xFF) / 255.0f,
+                            1.0f));
+                        DrawMenuBar(rt, g_dwrite_factory, menu_it->second);
+                        rt->EndDraw();
+                        rt->Release();
+                    }
+                }
+            }
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORSTATIC: {
+        LRESULT color_result = HandleManagedControlColorMessage(wparam, lparam);
+        if (color_result != 0) {
+            return color_result;
+        }
+        break;
+    }
+
+    case WM_LBUTTONDOWN: {
+        int x = LOWORD(lparam);
+        int y = HIWORD(lparam);
+        POINT screen_pt = { x, y };
+        ClientToScreen(hwnd, &screen_pt);
+        if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, false)) {
+            return 0;
+        }
+
+        auto menu_it = g_menubars.find(hwnd);
+        if (menu_it != g_menubars.end() && menu_it->second) {
+            MenuBarState* menubar = menu_it->second;
+            UINT dpi = GetDpiForWindow(hwnd);
+            if (dpi == 0) dpi = 96;
+            float scale = 96.0f / (float)dpi;
+            float fx = (float)x * scale;
+            float fy = (float)y * scale;
+            for (size_t i = 0; i < menubar->items.size(); i++) {
+                const D2D1_RECT_F& bounds = menubar->items[i].bounds;
+                if (fx >= bounds.left && fx <= bounds.right &&
+                    fy >= bounds.top && fy <= bounds.bottom) {
+                    MenuItem& item = menubar->items[i];
+                    if (!item.enabled) {
+                        return 0;
+                    }
+                    if (!item.sub_items.empty()) {
+                        POINT pt = {
+                            (LONG)std::lround(bounds.left * ((float)dpi / 96.0f)),
+                            (LONG)std::lround(bounds.bottom * ((float)dpi / 96.0f))
+                        };
+                        ClientToScreen(hwnd, &pt);
+                        menubar->opened_index = (int)i;
+                        ShowMenuBarPopup(menubar, item, pt.x, pt.y);
+                    } else {
+                        DestroyMenuBarPopup(menubar);
+                        menubar->opened_index = -1;
+                        menubar->opened_menu_id = 0;
+                        if (menubar->callback) {
+                            menubar->callback(item.id, item.id);
+                        }
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+            }
+        }
+        break;
+    }
+
+    case WM_LBUTTONUP: {
+        int x = LOWORD(lparam);
+        int y = HIWORD(lparam);
+        POINT screen_pt = { x, y };
+        ClientToScreen(hwnd, &screen_pt);
+        if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, true)) {
+            return 0;
+        }
+        break;
+    }
+
+    case WM_MOUSEMOVE: {
+        auto menu_it = g_menubars.find(hwnd);
+        if (menu_it != g_menubars.end() && menu_it->second) {
+            MenuBarState* menubar = menu_it->second;
+            int x = LOWORD(lparam);
+            int y = HIWORD(lparam);
+            UINT dpi = GetDpiForWindow(hwnd);
+            if (dpi == 0) dpi = 96;
+            float scale = 96.0f / (float)dpi;
+            float fx = (float)x * scale;
+            float fy = (float)y * scale;
+            int old_hovered = menubar->hovered_index;
+            menubar->hovered_index = -1;
+            for (size_t i = 0; i < menubar->items.size(); i++) {
+                const D2D1_RECT_F& bounds = menubar->items[i].bounds;
+                if (fx >= bounds.left && fx <= bounds.right &&
+                    fy >= bounds.top && fy <= bounds.bottom) {
+                    menubar->hovered_index = (int)i;
+                    break;
+                }
+            }
+            if (old_hovered != menubar->hovered_index) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        break;
+    }
+
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, PanelProc, uIdSubclass);
+        DestroyMenuBar(hwnd);
+        if (state) {
+            g_panels.erase(hwnd);
+            delete state;
+        }
+        break;
+    }
+
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
 LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
     auto it = g_groupboxes.find(hwnd);
     if (it == g_groupboxes.end()) {
@@ -11088,35 +15526,30 @@ LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
     GroupBoxState* state = it->second;
 
     // 通用事件处理
-    HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events);
+    if (HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events)) {
+        return 0;
+    }
 
     switch (msg) {
         case WM_NCHITTEST: {
             // 将屏幕坐标转换为客户区坐标
             POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
             ScreenToClient(hwnd, &pt);
-            
-            // 计算边框和标题区域
-            // 标题高度约 25px，边框宽度约 10px
-            int title_height = 25;
-            int border_width = 10;
-            
-            RECT client_rect;
-            GetClientRect(hwnd, &client_rect);
-            
-            // 如果点击在边框或标题区域，返回 HTCLIENT（可以接收消息）
-            bool in_border_or_title = 
-                pt.y < title_height ||  // 标题区域
-                pt.x < border_width ||  // 左边框
-                pt.x > client_rect.right - border_width ||  // 右边框
-                pt.y > client_rect.bottom - border_width;  // 下边框
-            
-            if (in_border_or_title) {
+            if (FindGroupBoxButtonAtPoint(state, pt.x, pt.y)) {
                 return HTCLIENT;
             }
-            
-            // 内容区域：对所有点击返回 HTTRANSPARENT，让主窗口上的按钮能被点击
-            return HTTRANSPARENT;
+
+            HWND parent = state->parent;
+            if (parent && IsWindow(parent)) {
+                POINT parent_pt = pt;
+                MapWindowPoints(hwnd, parent, &parent_pt, 1);
+                HWND hit = ChildWindowFromPointEx(parent, parent_pt, CWP_SKIPDISABLED | CWP_SKIPINVISIBLE);
+                if (hit && hit != hwnd) {
+                    return HTTRANSPARENT;
+                }
+            }
+
+            return HTCLIENT;
         }
 
         case WM_SHOWWINDOW:
@@ -11153,9 +15586,10 @@ LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
             
             if (SUCCEEDED(hr) && render_target) {
                 render_target->BeginDraw();
-                render_target->Clear(D2D1::ColorF(D2D1::ColorF::White, 0.0f));  // 透明背景
+                render_target->Clear(ColorFromUInt32(ResolveContainerBackgroundColor(state->parent, state->bg_color ? state->bg_color : 13)));
                 
                 DrawGroupBox(render_target, g_dwrite_factory, state);
+                DrawGroupBoxOwnedButtons(render_target, g_dwrite_factory, state);
                 
                 HRESULT end_hr = render_target->EndDraw();
                 WriteLog("GroupBoxProc: EndDraw hwnd=%p, hr=0x%08X", hwnd, (unsigned int)end_hr);
@@ -11171,6 +15605,91 @@ LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
         
         case WM_ERASEBKGND:
             return 1;  // 防止闪烁
+
+        case WM_LBUTTONDOWN: {
+            int x = GET_X_LPARAM(lparam);
+            int y = GET_Y_LPARAM(lparam);
+            if (EmojiButton* button = FindGroupBoxButtonAtPoint(state, x, y)) {
+                button->is_pressed = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_LBUTTONUP: {
+            int x = GET_X_LPARAM(lparam);
+            int y = GET_Y_LPARAM(lparam);
+            bool needs_redraw = false;
+            EmojiButton* hit_button = FindGroupBoxButtonAtPoint(state, x, y);
+            auto win_it = g_windows.find(state->parent);
+            if (win_it != g_windows.end()) {
+                for (auto& button : win_it->second->buttons) {
+                    if (std::find(state->button_ids.begin(), state->button_ids.end(), button.id) == state->button_ids.end()) continue;
+                    if (button.is_pressed && hit_button == &button) {
+                        button.is_pressed = false;
+                        if (g_button_callback) g_button_callback(button.id, state->parent);
+                        needs_redraw = true;
+                        break;
+                    }
+                    if (button.is_pressed) {
+                        button.is_pressed = false;
+                        needs_redraw = true;
+                    }
+                }
+            }
+            if (needs_redraw) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_MOUSEMOVE: {
+            int x = GET_X_LPARAM(lparam);
+            int y = GET_Y_LPARAM(lparam);
+            bool needs_redraw = false;
+            EmojiButton* hit_button = FindGroupBoxButtonAtPoint(state, x, y);
+            auto win_it = g_windows.find(state->parent);
+            if (win_it != g_windows.end()) {
+                for (auto& button : win_it->second->buttons) {
+                    if (std::find(state->button_ids.begin(), state->button_ids.end(), button.id) == state->button_ids.end()) continue;
+                    bool hovered = (hit_button == &button);
+                    if (hovered != button.is_hovered) {
+                        button.is_hovered = hovered;
+                        needs_redraw = true;
+                    }
+                }
+            }
+            TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT) };
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            TrackMouseEvent(&tme);
+            if (needs_redraw) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_MOUSELEAVE: {
+            bool needs_redraw = false;
+            auto win_it = g_windows.find(state->parent);
+            if (win_it != g_windows.end()) {
+                for (auto& button : win_it->second->buttons) {
+                    if (std::find(state->button_ids.begin(), state->button_ids.end(), button.id) == state->button_ids.end()) continue;
+                    if (button.is_hovered) {
+                        button.is_hovered = false;
+                        needs_redraw = true;
+                    }
+                }
+            }
+            if (needs_redraw) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        }
         
         case WM_NCDESTROY: {
             // 清理资源
@@ -11183,6 +15702,7 @@ LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                 delete it->second;
                 g_groupboxes.erase(it);
             }
+            g_groupbox_styles.erase(hwnd);
             break;
         }
     }
@@ -11199,8 +15719,10 @@ void DrawGroupBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxSt
     ID2D1SolidColorBrush* title_brush = nullptr;
     // 不再需要背景画刷，分组框应该完全透明
     
-    rt->CreateSolidColorBrush(ColorFromUInt32(state->border_color), &border_brush);
-    rt->CreateSolidColorBrush(ColorFromUInt32(state->title_color), &title_brush);
+    UINT32 resolved_border = ResolveThemeColor(state->border_color);
+    UINT32 resolved_title = ResolveThemeColor(state->title_color);
+    rt->CreateSolidColorBrush(ColorFromUInt32(resolved_border), &border_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(resolved_title), &title_brush);
     
     if (!border_brush || !title_brush) {
         if (border_brush) border_brush->Release();
@@ -11249,6 +15771,67 @@ void DrawGroupBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxSt
         title_width = text_metrics.width;
         title_height = text_metrics.height;
         text_layout->Release();
+    }
+
+    int style = GROUPBOX_STYLE_OUTLINE;
+    auto style_it = g_groupbox_styles.find(state->hwnd);
+    if (style_it != g_groupbox_styles.end()) {
+        style = style_it->second;
+    }
+
+    if (style != GROUPBOX_STYLE_OUTLINE) {
+        UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
+        ID2D1SolidColorBrush* bg_brush = nullptr;
+        rt->CreateSolidColorBrush(ColorFromUInt32(resolved_bg), &bg_brush);
+        D2D1_ROUNDED_RECT frame = D2D1::RoundedRect(
+            D2D1::RectF(1.0f, style == GROUPBOX_STYLE_PLAIN ? title_height + 4.0f : 1.0f, (FLOAT)state->width - 1.0f, (FLOAT)state->height - 1.0f),
+            style == GROUPBOX_STYLE_PLAIN ? 2.0f : 8.0f,
+            style == GROUPBOX_STYLE_PLAIN ? 2.0f : 8.0f
+        );
+
+        if (style == GROUPBOX_STYLE_CARD || style == GROUPBOX_STYLE_HEADER_BAR) {
+            if (bg_brush) {
+                rt->FillRoundedRectangle(frame, bg_brush);
+            }
+        }
+        rt->DrawRoundedRectangle(frame, border_brush, 1.0f);
+
+        if (style == GROUPBOX_STYLE_HEADER_BAR) {
+            ID2D1SolidColorBrush* header_brush = nullptr;
+            rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_LightBg(resolved_border)), &header_brush);
+            if (header_brush) {
+                D2D1_ROUNDED_RECT header_rect = D2D1::RoundedRect(
+                    D2D1::RectF(1.0f, 1.0f, (FLOAT)state->width - 1.0f, max(30.0f, title_height + 12.0f)),
+                    8.0f, 8.0f
+                );
+                rt->FillRoundedRectangle(header_rect, header_brush);
+                header_brush->Release();
+            }
+        } else if (style == GROUPBOX_STYLE_PLAIN) {
+            rt->DrawLine(
+                D2D1::Point2F(0.0f, title_height + 8.0f),
+                D2D1::Point2F((FLOAT)state->width, title_height + 8.0f),
+                border_brush,
+                1.0f
+            );
+        }
+
+        if (bg_brush) {
+            bg_brush->Release();
+        }
+
+        D2D1_RECT_F title_rect = D2D1::RectF(
+            14.0f,
+            style == GROUPBOX_STYLE_PLAIN ? 0.0f : 8.0f,
+            min((FLOAT)state->width - 14.0f, 14.0f + title_width + 24.0f),
+            style == GROUPBOX_STYLE_PLAIN ? title_height : title_height + 16.0f
+        );
+        rt->DrawText(state->title.c_str(), (UINT32)state->title.length(), text_format, title_rect, title_brush);
+
+        text_format->Release();
+        border_brush->Release();
+        title_brush->Release();
+        return;
     }
     
     // 不绘制背景，保持完全透明，这样主窗口上的按钮就能显示出来
@@ -11317,7 +15900,7 @@ void DrawGroupBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, GroupBoxSt
     
     // 绘制标题背景（与设计器一致：标题处“切断”边框，背景与窗口一致）
     ID2D1SolidColorBrush* bg_brush = nullptr;
-    rt->CreateSolidColorBrush(ColorFromUInt32(ResolveThemeColor(state->bg_color)), &bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(ResolveContainerBackgroundColor(state->parent, state->bg_color ? state->bg_color : 13)), &bg_brush);
     if (bg_brush) {
         D2D1_RECT_F title_bg = D2D1::RectF(gap_start, 0, gap_end, title_height + 2.0f);
         rt->FillRectangle(title_bg, bg_brush);
@@ -11358,6 +15941,81 @@ const wchar_t* D2D_EDITBOX_CLASS = L"D2DEditBoxClass";
 #define CURSOR_TIMER_ID 1001
 #define CURSOR_BLINK_INTERVAL 500  // 500ms闪烁间隔
 
+static std::wstring NormalizeD2DEditText(const std::wstring& text, bool multiline) {
+    std::wstring normalized;
+    normalized.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        wchar_t ch = text[i];
+        if (ch == L'\r') {
+            if (multiline) {
+                normalized.push_back(L'\n');
+            }
+            if (i + 1 < text.size() && text[i + 1] == L'\n') {
+                ++i;
+            }
+            continue;
+        }
+        if (ch == L'\n') {
+            if (multiline) {
+                normalized.push_back(L'\n');
+            }
+            continue;
+        }
+        normalized.push_back(ch);
+    }
+    return normalized;
+}
+
+static bool GetD2DTextPositionMetrics(
+    IDWriteTextLayout* layout,
+    int text_length,
+    int char_index,
+    float* out_x,
+    float* out_y,
+    DWRITE_HIT_TEST_METRICS* out_metrics
+) {
+    if (!layout || !out_x || !out_y || !out_metrics) return false;
+
+    *out_x = 0.0f;
+    *out_y = 0.0f;
+    ZeroMemory(out_metrics, sizeof(*out_metrics));
+
+    if (text_length <= 0) {
+        return false;
+    }
+
+    int clamped = max(0, min(char_index, text_length));
+    UINT32 query_pos = (UINT32)clamped;
+    BOOL trailing = FALSE;
+    if (clamped == text_length && text_length > 0) {
+        query_pos = (UINT32)(text_length - 1);
+        trailing = TRUE;
+    }
+
+    return SUCCEEDED(layout->HitTestTextPosition(query_pos, trailing, out_x, out_y, out_metrics));
+}
+
+static void ConfigureD2DEditTextFormat(const D2DEditBoxState* state, IDWriteTextFormat* text_format) {
+    if (!state || !text_format) return;
+
+    switch (state->alignment) {
+    case ALIGN_CENTER:
+        text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        break;
+    case ALIGN_RIGHT:
+        text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        break;
+    default:
+        text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        break;
+    }
+
+    text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    text_format->SetWordWrapping(
+        state->multiline ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP
+    );
+}
+
 // 辅助函数：获取字符在文本中的像素位置
 float GetCharPositionX(IDWriteTextLayout* layout, int char_index) {
     if (!layout || char_index < 0) return 0.0f;
@@ -11376,8 +16034,8 @@ float GetCharPositionX(IDWriteTextLayout* layout, int char_index) {
 }
 
 // 辅助函数：从点击位置获取字符索引
-int GetCharIndexFromPoint(IDWriteTextLayout* layout, float click_x, float click_y) {
-    if (!layout) return 0;
+int GetCharIndexFromPoint(IDWriteTextLayout* layout, int text_length, float click_x, float click_y) {
+    if (!layout || text_length <= 0) return 0;
     
     BOOL isTrailingHit, isInside;
     DWRITE_HIT_TEST_METRICS metrics;
@@ -11392,11 +16050,281 @@ int GetCharIndexFromPoint(IDWriteTextLayout* layout, float click_x, float click_
     if (FAILED(hr)) return 0;
     
     int index = metrics.textPosition;
-    if (isTrailingHit && index < (int)metrics.length) {
-        index++;
+    int cluster_length = max(1, (int)metrics.length);
+
+    if (isTrailingHit || (!isInside && click_x >= metrics.left + metrics.width)) {
+        index += cluster_length;
     }
     
-    return index;
+    return max(0, min(text_length, index));
+}
+
+static float GetD2DEditTextHeight(IDWriteTextLayout* layout, const D2DEditBoxState* state) {
+    if (!state) return 0.0f;
+
+    UINT32 line_count = 0;
+    if (layout && SUCCEEDED(layout->GetLineMetrics(nullptr, 0, &line_count)) && line_count > 0) {
+        std::vector<DWRITE_LINE_METRICS> lines(line_count);
+        if (SUCCEEDED(layout->GetLineMetrics(lines.data(), line_count, &line_count)) && !lines.empty()) {
+            float line_height = lines[0].height;
+            if (line_height > 0.0f) {
+                return line_height;
+            }
+        }
+    }
+
+    DWRITE_TEXT_METRICS metrics = {};
+    if (layout && SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.height > 0.0f) {
+        return metrics.height;
+    }
+
+    return (float)state->font.font_size + 4.0f;
+}
+
+static float GetD2DEditTextOriginY(const D2DEditBoxState* state, IDWriteTextLayout* layout) {
+    if (!state || !state->vertical_center || state->multiline) {
+        return 2.0f;
+    }
+
+    float text_height = GetD2DEditTextHeight(layout, state);
+    return max(0.0f, ((float)state->height - text_height) / 2.0f);
+}
+
+static constexpr float D2D_EDIT_TEXT_PADDING_LEFT = 4.0f;
+static constexpr float D2D_EDIT_TEXT_PADDING_TOP = 2.0f;
+static constexpr float D2D_EDIT_TEXT_PADDING_RIGHT = 4.0f;
+static constexpr float D2D_EDIT_TEXT_PADDING_BOTTOM = 2.0f;
+static constexpr float D2D_EDIT_SCROLLBAR_WIDTH = 8.0f;
+static constexpr float D2D_EDIT_SCROLLBAR_MARGIN = 2.0f;
+static constexpr float D2D_EDIT_SCROLLBAR_MIN_THUMB = 24.0f;
+
+struct D2DEditLayoutContext {
+    std::wstring display_text;
+    IDWriteTextFormat* text_format = nullptr;
+    IDWriteTextLayout* layout = nullptr;
+    float visible_height = 0.0f;
+    float content_height = 0.0f;
+    float text_origin_y = D2D_EDIT_TEXT_PADDING_TOP;
+    float layout_width = 0.0f;
+    int max_scroll_y = 0;
+    bool has_vscroll = false;
+    RECT scrollbar_track = {};
+    RECT scrollbar_thumb = {};
+    D2D1_RECT_F text_clip = D2D1::RectF(0, 0, 0, 0);
+};
+
+static std::wstring GetD2DEditDisplayText(const D2DEditBoxState* state) {
+    if (!state) {
+        return std::wstring();
+    }
+
+    std::wstring display_text = state->text;
+    if (state->password && !display_text.empty()) {
+        display_text = std::wstring(display_text.length(), L'*');
+    }
+
+    if (state->is_composing && !state->composition_text.empty()) {
+        int insert_pos = max(0, min(state->cursor_pos, (int)display_text.length()));
+        display_text.insert(insert_pos, state->composition_text);
+    }
+    return display_text;
+}
+
+static void ReleaseD2DEditLayoutContext(D2DEditLayoutContext* ctx) {
+    if (!ctx) return;
+    if (ctx->layout) {
+        ctx->layout->Release();
+        ctx->layout = nullptr;
+    }
+    if (ctx->text_format) {
+        ctx->text_format->Release();
+        ctx->text_format = nullptr;
+    }
+}
+
+static float GetD2DEditContentHeight(IDWriteTextLayout* layout, const D2DEditBoxState* state) {
+    DWRITE_TEXT_METRICS metrics = {};
+    if (layout && SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.height > 0.0f) {
+        return metrics.height;
+    }
+    return GetD2DEditTextHeight(layout, state);
+}
+
+static bool BuildD2DEditLayoutContext(const D2DEditBoxState* state, D2DEditLayoutContext* ctx) {
+    if (!state || !ctx || !state->dwrite_factory) return false;
+
+    ReleaseD2DEditLayoutContext(ctx);
+    *ctx = D2DEditLayoutContext();
+    ctx->display_text = GetD2DEditDisplayText(state);
+    ctx->visible_height = max(1.0f, (float)state->height - D2D_EDIT_TEXT_PADDING_TOP - D2D_EDIT_TEXT_PADDING_BOTTOM);
+
+    HRESULT hr = state->dwrite_factory->CreateTextFormat(
+        state->font.font_name.c_str(),
+        nullptr,
+        state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        (float)state->font.font_size,
+        L"zh-CN",
+        &ctx->text_format
+    );
+    if (FAILED(hr) || !ctx->text_format) {
+        ReleaseD2DEditLayoutContext(ctx);
+        return false;
+    }
+
+    ConfigureD2DEditTextFormat(state, ctx->text_format);
+
+    float full_width = max(1.0f, (float)state->width - D2D_EDIT_TEXT_PADDING_LEFT - D2D_EDIT_TEXT_PADDING_RIGHT);
+    float max_height = state->multiline ? 65535.0f : ctx->visible_height;
+    auto create_layout = [&](float layout_width) -> bool {
+        if (ctx->layout) {
+            ctx->layout->Release();
+            ctx->layout = nullptr;
+        }
+        HRESULT layout_hr = state->dwrite_factory->CreateTextLayout(
+            ctx->display_text.c_str(),
+            (UINT32)ctx->display_text.length(),
+            ctx->text_format,
+            max(1.0f, layout_width),
+            max(1.0f, max_height),
+            &ctx->layout
+        );
+        if (FAILED(layout_hr) || !ctx->layout) {
+            return false;
+        }
+        if (state->font.underline && !ctx->display_text.empty()) {
+            DWRITE_TEXT_RANGE range = { 0, (UINT32)ctx->display_text.length() };
+            ctx->layout->SetUnderline(TRUE, range);
+        }
+        ctx->layout_width = max(1.0f, layout_width);
+        ctx->content_height = GetD2DEditContentHeight(ctx->layout, state);
+        return true;
+    };
+
+    if (!create_layout(full_width)) {
+        ReleaseD2DEditLayoutContext(ctx);
+        return false;
+    }
+
+    ctx->has_vscroll = state->multiline && ctx->content_height > ctx->visible_height + 0.5f;
+    if (ctx->has_vscroll) {
+        float reserved_width = D2D_EDIT_SCROLLBAR_WIDTH + D2D_EDIT_SCROLLBAR_MARGIN * 2.0f;
+        if (!create_layout(full_width - reserved_width)) {
+            ReleaseD2DEditLayoutContext(ctx);
+            return false;
+        }
+    }
+
+    ctx->text_origin_y = GetD2DEditTextOriginY(state, ctx->layout);
+
+    float content_extent = max(
+        (float)state->height,
+        ctx->text_origin_y + ctx->content_height + D2D_EDIT_TEXT_PADDING_BOTTOM
+    );
+    ctx->max_scroll_y = max(0, (int)std::ceil(content_extent - (float)state->height));
+
+    float clip_right = (float)state->width - 1.0f;
+    if (ctx->has_vscroll) {
+        clip_right -= (D2D_EDIT_SCROLLBAR_WIDTH + D2D_EDIT_SCROLLBAR_MARGIN * 2.0f);
+
+        int track_left = (int)std::floor((float)state->width - D2D_EDIT_SCROLLBAR_WIDTH - D2D_EDIT_SCROLLBAR_MARGIN);
+        int track_top = (int)std::floor(D2D_EDIT_SCROLLBAR_MARGIN);
+        int track_height = max(1, (int)std::floor((float)state->height - D2D_EDIT_SCROLLBAR_MARGIN * 2.0f));
+        float thumb_ratio = content_extent > 0.0f ? (float)state->height / content_extent : 1.0f;
+        int thumb_height = max((int)D2D_EDIT_SCROLLBAR_MIN_THUMB, (int)std::floor(track_height * thumb_ratio));
+        int travel = max(1, track_height - thumb_height);
+        float scroll_ratio = ctx->max_scroll_y > 0 ? (float)state->scroll_offset_y / (float)ctx->max_scroll_y : 0.0f;
+        scroll_ratio = max(0.0f, min(1.0f, scroll_ratio));
+        int thumb_top = track_top + (int)std::floor(scroll_ratio * travel);
+
+        ctx->scrollbar_track.left = track_left;
+        ctx->scrollbar_track.top = track_top;
+        ctx->scrollbar_track.right = track_left + (int)D2D_EDIT_SCROLLBAR_WIDTH;
+        ctx->scrollbar_track.bottom = track_top + track_height;
+
+        ctx->scrollbar_thumb.left = track_left + 1;
+        ctx->scrollbar_thumb.top = thumb_top;
+        ctx->scrollbar_thumb.right = track_left + (int)D2D_EDIT_SCROLLBAR_WIDTH - 1;
+        ctx->scrollbar_thumb.bottom = thumb_top + thumb_height;
+    }
+
+    ctx->text_clip = D2D1::RectF(1.0f, 1.0f, max(1.0f, clip_right), (float)state->height - 1.0f);
+    return true;
+}
+
+static void ClampD2DEditScrollOffset(D2DEditBoxState* state, const D2DEditLayoutContext* ctx) {
+    if (!state || !ctx) return;
+    state->scroll_offset_y = max(0, min(ctx->max_scroll_y, state->scroll_offset_y));
+    if (!ctx->has_vscroll) {
+        state->scroll_offset_y = 0;
+    }
+}
+
+static bool GetD2DEditScrollbarMetrics(
+    D2DEditBoxState* state,
+    RECT* track_rc,
+    RECT* thumb_rc,
+    int* max_scroll_out
+) {
+    if (!state || !state->multiline) return false;
+
+    D2DEditLayoutContext ctx;
+    if (!BuildD2DEditLayoutContext(state, &ctx)) {
+        return false;
+    }
+
+    ClampD2DEditScrollOffset(state, &ctx);
+    bool has_vscroll = ctx.has_vscroll && ctx.max_scroll_y > 0;
+    if (max_scroll_out) *max_scroll_out = ctx.max_scroll_y;
+    if (track_rc) *track_rc = ctx.scrollbar_track;
+    if (thumb_rc) *thumb_rc = ctx.scrollbar_thumb;
+    ReleaseD2DEditLayoutContext(&ctx);
+    return has_vscroll;
+}
+
+static void EnsureD2DEditCaretVisible(D2DEditBoxState* state) {
+    if (!state || !state->multiline) return;
+
+    D2DEditLayoutContext ctx;
+    if (!BuildD2DEditLayoutContext(state, &ctx)) {
+        return;
+    }
+
+    ClampD2DEditScrollOffset(state, &ctx);
+    if (!ctx.has_vscroll || !ctx.layout) {
+        ReleaseD2DEditLayoutContext(&ctx);
+        return;
+    }
+
+    float cursor_x = 0.0f;
+    float cursor_y = 0.0f;
+    DWRITE_HIT_TEST_METRICS metrics = {};
+    if (GetD2DTextPositionMetrics(
+        ctx.layout,
+        (int)ctx.display_text.length(),
+        state->cursor_pos,
+        &cursor_x,
+        &cursor_y,
+        &metrics
+    )) {
+        float caret_top = ctx.text_origin_y + cursor_y;
+        float caret_height = metrics.height > 0.0f ? metrics.height : GetD2DEditTextHeight(ctx.layout, state);
+        float caret_bottom = caret_top + caret_height;
+        float visible_top = D2D_EDIT_TEXT_PADDING_TOP;
+        float visible_bottom = (float)state->height - D2D_EDIT_TEXT_PADDING_BOTTOM;
+        float onscreen_top = caret_top - (float)state->scroll_offset_y;
+        float onscreen_bottom = caret_bottom - (float)state->scroll_offset_y;
+
+        if (onscreen_top < visible_top) {
+            state->scroll_offset_y = max(0, (int)std::floor(caret_top - visible_top));
+        } else if (onscreen_bottom > visible_bottom) {
+            state->scroll_offset_y = (int)std::ceil(caret_bottom - visible_bottom);
+        }
+        ClampD2DEditScrollOffset(state, &ctx);
+    }
+
+    ReleaseD2DEditLayoutContext(&ctx);
 }
 
 // 绘制D2D编辑框
@@ -11404,12 +16332,14 @@ void DrawD2DEditBox(D2DEditBoxState* state) {
     if (!state || !state->render_target || !state->dwrite_factory) return;
     
     ID2D1HwndRenderTarget* rt = state->render_target;
+    UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
+    UINT32 resolved_fg = ResolveThemeColor(state->fg_color);
     
     rt->BeginDraw();
     
     // 1. 绘制背景
     ID2D1SolidColorBrush* bg_brush = nullptr;
-    rt->CreateSolidColorBrush(ColorFromUInt32(state->bg_color), &bg_brush);
+    rt->CreateSolidColorBrush(ColorFromUInt32(resolved_bg), &bg_brush);
     rt->FillRectangle(
         D2D1::RectF(0, 0, (float)state->width, (float)state->height),
         bg_brush
@@ -11428,131 +16358,148 @@ void DrawD2DEditBox(D2DEditBoxState* state) {
         );
         border_brush->Release();
     }
-    
-    // 3. 准备文本
-    std::wstring display_text = state->text;
-    if (state->password && !display_text.empty()) {
-        display_text = std::wstring(display_text.length(), L'*');
-    }
-    
-    // 添加输入法组合文本
-    if (state->is_composing && !state->composition_text.empty()) {
-        display_text.insert(state->cursor_pos, state->composition_text);
-    }
-    
-    // 4. 创建文本布局
-    IDWriteTextFormat* text_format = nullptr;
-    state->dwrite_factory->CreateTextFormat(
-        state->font.font_name.c_str(),
-        nullptr,
-        state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-        state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        (float)state->font.font_size,
-        L"zh-CN",
-        &text_format
-    );
-    
-    // 设置对齐方式
-    switch (state->alignment) {
-        case ALIGN_LEFT:
-            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            break;
-        case ALIGN_CENTER:
-            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            break;
-        case ALIGN_RIGHT:
-            text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-            break;
-    }
-    
-    if (state->vertical_center && !state->multiline) {
-        text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    } else {
-        text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    }
-    
-    IDWriteTextLayout* layout = nullptr;
-    state->dwrite_factory->CreateTextLayout(
-        display_text.c_str(),
-        (UINT32)display_text.length(),
-        text_format,
-        (float)state->width - 8.0f,  // 左右各留4px边距
-        (float)state->height - 4.0f,
-        &layout
-    );
-    
-    // 设置下划线
-    if (state->font.underline && !display_text.empty()) {
-        DWRITE_TEXT_RANGE range = { 0, (UINT32)display_text.length() };
-        layout->SetUnderline(TRUE, range);
-    }
-    
-    // 5. 绘制选择背景
-    if (state->selection_start >= 0 && state->selection_end > state->selection_start) {
-        int sel_start = min(state->selection_start, state->selection_end);
-        int sel_end = max(state->selection_start, state->selection_end);
-        
-        if (sel_start < (int)display_text.length()) {
-            sel_end = min(sel_end, (int)display_text.length());
-            
-            float start_x = GetCharPositionX(layout, sel_start);
-            float end_x = GetCharPositionX(layout, sel_end);
-            
-            ID2D1SolidColorBrush* sel_brush = nullptr;
-            rt->CreateSolidColorBrush(ColorFromUInt32(state->selection_color), &sel_brush);
-            
-            float text_y = state->vertical_center && !state->multiline ? 
-                (state->height - state->font.font_size) / 2.0f : 2.0f;
-            
-            rt->FillRectangle(
-                D2D1::RectF(
-                    4.0f + start_x - state->scroll_offset_x,
-                    text_y,
-                    4.0f + end_x - state->scroll_offset_x,
-                    text_y + state->font.font_size + 4.0f
-                ),
-                sel_brush
-            );
-            sel_brush->Release();
+
+    D2DEditLayoutContext ctx;
+    if (BuildD2DEditLayoutContext(state, &ctx)) {
+        ClampD2DEditScrollOffset(state, &ctx);
+        float text_height = GetD2DEditTextHeight(ctx.layout, state);
+
+        rt->PushAxisAlignedClip(ctx.text_clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+        // 3. 绘制选择背景
+        if (state->selection_start >= 0 && state->selection_end != state->selection_start) {
+            int sel_start = min(state->selection_start, state->selection_end);
+            int sel_end = max(state->selection_start, state->selection_end);
+
+            if (sel_start < (int)ctx.display_text.length()) {
+                sel_end = min(sel_end, (int)ctx.display_text.length());
+                ID2D1SolidColorBrush* sel_brush = nullptr;
+                rt->CreateSolidColorBrush(ColorFromUInt32(state->selection_color), &sel_brush);
+                UINT32 hit_count = 0;
+                UINT32 hit_capacity = (UINT32)max(1, sel_end - sel_start + 4);
+                std::vector<DWRITE_HIT_TEST_METRICS> hits(hit_capacity);
+                if (SUCCEEDED(ctx.layout->HitTestTextRange(
+                    (UINT32)sel_start,
+                    (UINT32)(sel_end - sel_start),
+                    D2D_EDIT_TEXT_PADDING_LEFT - state->scroll_offset_x,
+                    ctx.text_origin_y - state->scroll_offset_y,
+                    hits.data(),
+                    hit_capacity,
+                    &hit_count
+                ))) {
+                    for (UINT32 i = 0; i < hit_count && i < hit_capacity; ++i) {
+                        const DWRITE_HIT_TEST_METRICS& hit = hits[i];
+                        if (hit.width <= 0.0f && hit.height <= 0.0f) continue;
+                        rt->FillRectangle(
+                            D2D1::RectF(
+                                hit.left,
+                                hit.top,
+                                hit.left + (hit.width > 0.0f ? hit.width : 1.0f),
+                                hit.top + (hit.height > 0.0f ? hit.height : text_height)
+                            ),
+                            sel_brush
+                        );
+                    }
+                }
+                if (sel_brush) {
+                    sel_brush->Release();
+                }
+            }
         }
-    }
-    
-    // 6. 绘制文本（支持彩色emoji）
-    ID2D1SolidColorBrush* text_brush = nullptr;
-    rt->CreateSolidColorBrush(ColorFromUInt32(state->fg_color), &text_brush);
-    
-    rt->DrawTextLayout(
-        D2D1::Point2F(4.0f - state->scroll_offset_x, 2.0f - state->scroll_offset_y),
-        layout,
-        text_brush,
-        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT  // ← 关键：启用彩色emoji！
-    );
-    
-    text_brush->Release();
-    
-    // 7. 绘制光标
-    if (state->has_focus && state->cursor_visible && state->selection_start < 0) {
-        float cursor_x = GetCharPositionX(layout, state->cursor_pos);
-        
-        ID2D1SolidColorBrush* cursor_brush = nullptr;
-        rt->CreateSolidColorBrush(ColorFromUInt32(state->fg_color), &cursor_brush);
-        
-        float text_y = state->vertical_center && !state->multiline ? 
-            (state->height - state->font.font_size) / 2.0f : 2.0f;
-        
-        rt->DrawLine(
-            D2D1::Point2F(4.0f + cursor_x - state->scroll_offset_x, text_y),
-            D2D1::Point2F(4.0f + cursor_x - state->scroll_offset_x, text_y + state->font.font_size + 4.0f),
-            cursor_brush,
-            1.5f
+
+        // 4. 绘制文本（支持彩色emoji）
+        ID2D1SolidColorBrush* text_brush = nullptr;
+        rt->CreateSolidColorBrush(ColorFromUInt32(resolved_fg), &text_brush);
+        rt->DrawTextLayout(
+            D2D1::Point2F(
+                D2D_EDIT_TEXT_PADDING_LEFT - state->scroll_offset_x,
+                ctx.text_origin_y - state->scroll_offset_y
+            ),
+            ctx.layout,
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
         );
-        
-        cursor_brush->Release();
+        if (text_brush) {
+            text_brush->Release();
+        }
+
+        // 5. 绘制光标
+        if (state->has_focus && state->cursor_visible && state->selection_start < 0) {
+            float cursor_x = 0.0f;
+            float cursor_y = 0.0f;
+            DWRITE_HIT_TEST_METRICS cursor_metrics = {};
+            bool has_cursor_metrics = GetD2DTextPositionMetrics(
+                ctx.layout,
+                (int)ctx.display_text.length(),
+                state->cursor_pos,
+                &cursor_x,
+                &cursor_y,
+                &cursor_metrics
+            );
+            float caret_height = has_cursor_metrics && cursor_metrics.height > 0.0f ? cursor_metrics.height : text_height;
+            float caret_top = ctx.text_origin_y + cursor_y - state->scroll_offset_y;
+
+            ID2D1SolidColorBrush* cursor_brush = nullptr;
+            rt->CreateSolidColorBrush(ColorFromUInt32(resolved_fg), &cursor_brush);
+            rt->DrawLine(
+                D2D1::Point2F(D2D_EDIT_TEXT_PADDING_LEFT + cursor_x - state->scroll_offset_x, caret_top),
+                D2D1::Point2F(D2D_EDIT_TEXT_PADDING_LEFT + cursor_x - state->scroll_offset_x, caret_top + caret_height),
+                cursor_brush,
+                1.5f
+            );
+            if (cursor_brush) {
+                cursor_brush->Release();
+            }
+        }
+
+        rt->PopAxisAlignedClip();
+
+        if (ctx.has_vscroll && ctx.max_scroll_y > 0) {
+            bool dark_mode = g_current_theme && g_current_theme->dark_mode;
+            D2D1_COLOR_F track_color = dark_mode
+                ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f)
+                : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f);
+            D2D1_COLOR_F thumb_color = dark_mode
+                ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f)
+                : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f);
+
+            ID2D1SolidColorBrush* scrollbar_brush = nullptr;
+            rt->CreateSolidColorBrush(track_color, &scrollbar_brush);
+            if (scrollbar_brush) {
+                rt->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(
+                            (float)ctx.scrollbar_track.left,
+                            (float)ctx.scrollbar_track.top,
+                            (float)ctx.scrollbar_track.right,
+                            (float)ctx.scrollbar_track.bottom
+                        ),
+                        D2D_EDIT_SCROLLBAR_WIDTH / 2.0f,
+                        D2D_EDIT_SCROLLBAR_WIDTH / 2.0f
+                    ),
+                    scrollbar_brush
+                );
+
+                scrollbar_brush->SetColor(thumb_color);
+                rt->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(
+                            (float)ctx.scrollbar_thumb.left,
+                            (float)ctx.scrollbar_thumb.top,
+                            (float)ctx.scrollbar_thumb.right,
+                            (float)ctx.scrollbar_thumb.bottom
+                        ),
+                        (D2D_EDIT_SCROLLBAR_WIDTH - 2.0f) / 2.0f,
+                        (D2D_EDIT_SCROLLBAR_WIDTH - 2.0f) / 2.0f
+                    ),
+                    scrollbar_brush
+                );
+                scrollbar_brush->Release();
+            }
+        }
+
+        ReleaseD2DEditLayoutContext(&ctx);
     }
-    
-    layout->Release();
-    text_format->Release();
     
     rt->EndDraw();
 }
@@ -11560,6 +16507,7 @@ void DrawD2DEditBox(D2DEditBoxState* state) {
 // 插入文本
 void InsertTextAtCursor(D2DEditBoxState* state, const std::wstring& text) {
     if (!state || state->readonly) return;
+    std::wstring normalized = NormalizeD2DEditText(text, state->multiline);
     
     // 如果有选择，先删除选择的文本
     if (state->selection_start >= 0) {
@@ -11572,9 +16520,10 @@ void InsertTextAtCursor(D2DEditBoxState* state, const std::wstring& text) {
     }
     
     // 插入新文本
-    state->text.insert(state->cursor_pos, text);
-    state->cursor_pos += (int)text.length();
-    
+    state->text.insert(state->cursor_pos, normalized);
+    state->cursor_pos += (int)normalized.length();
+
+    EnsureD2DEditCaretVisible(state);
     InvalidateRect(state->hwnd, NULL, FALSE);
 }
 
@@ -11590,6 +16539,7 @@ void DeleteCharAtCursor(D2DEditBoxState* state, bool forward) {
         state->cursor_pos = sel_start;
         state->selection_start = -1;
         state->selection_end = -1;
+        EnsureD2DEditCaretVisible(state);
         InvalidateRect(state->hwnd, NULL, FALSE);
         return;
     }
@@ -11607,7 +16557,8 @@ void DeleteCharAtCursor(D2DEditBoxState* state, bool forward) {
             state->cursor_pos--;
         }
     }
-    
+
+    EnsureD2DEditCaretVisible(state);
     InvalidateRect(state->hwnd, NULL, FALSE);
 }
 
@@ -11631,7 +16582,8 @@ void MoveCursor(D2DEditBoxState* state, int delta, bool select) {
         state->selection_start = -1;
         state->selection_end = -1;
     }
-    
+
+    EnsureD2DEditCaretVisible(state);
     InvalidateRect(state->hwnd, NULL, FALSE);
 }
 
@@ -11723,6 +16675,23 @@ LRESULT CALLBACK D2DEditBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     HandleCommonEvents(hwnd, msg, wparam, lparam, &state->events);
 
     switch (msg) {
+    case WM_SETCURSOR:
+        if (LOWORD(lparam) == HTCLIENT) {
+            POINT pt = {};
+            if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+                RECT track_rc = {};
+                RECT thumb_rc = {};
+                int max_scroll = 0;
+                if (GetD2DEditScrollbarMetrics(state, &track_rc, &thumb_rc, &max_scroll) && PtInRect(&track_rc, pt)) {
+                    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+                    return TRUE;
+                }
+            }
+            SetCursor(LoadCursor(nullptr, IDC_IBEAM));
+            return TRUE;
+        }
+        break;
+
     case WM_PAINT: {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
@@ -11853,102 +16822,113 @@ LRESULT CALLBACK D2DEditBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     
     case WM_LBUTTONDOWN: {
         SetFocus(hwnd);
-        
-        // 创建临时布局计算点击位置
-        IDWriteTextFormat* text_format = nullptr;
-        state->dwrite_factory->CreateTextFormat(
-            state->font.font_name.c_str(),
-            nullptr,
-            state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-            state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            (float)state->font.font_size,
-            L"zh-CN",
-            &text_format
-        );
-        
-        std::wstring display_text = state->password && !state->text.empty() ? 
-            std::wstring(state->text.length(), L'*') : state->text;
-        
-        IDWriteTextLayout* layout = nullptr;
-        state->dwrite_factory->CreateTextLayout(
-            display_text.c_str(),
-            (UINT32)display_text.length(),
-            text_format,
-            (float)state->width - 8.0f,
-            (float)state->height - 4.0f,
-            &layout
-        );
-        
         int x = GET_X_LPARAM(lparam);
         int y = GET_Y_LPARAM(lparam);
-        
-        int char_index = GetCharIndexFromPoint(layout, (float)(x - 4 + state->scroll_offset_x), (float)(y - 2 + state->scroll_offset_y));
+
+        RECT track_rc = {};
+        RECT thumb_rc = {};
+        int max_scroll = 0;
+        if (GetD2DEditScrollbarMetrics(state, &track_rc, &thumb_rc, &max_scroll) && PtInRect(&track_rc, POINT{ x, y })) {
+            if (PtInRect(&thumb_rc, POINT{ x, y })) {
+                state->scrollbar_dragging = true;
+                state->scrollbar_drag_offset = y - thumb_rc.top;
+            } else {
+                int thumb_height = thumb_rc.bottom - thumb_rc.top;
+                int track_height = track_rc.bottom - track_rc.top;
+                int travel = max(1, track_height - thumb_height);
+                int new_thumb_top = y - track_rc.top - thumb_height / 2;
+                new_thumb_top = max(0, min(travel, new_thumb_top));
+                float ratio = (float)new_thumb_top / (float)travel;
+                state->scroll_offset_y = (int)(ratio * max_scroll);
+                state->scrollbar_dragging = true;
+                state->scrollbar_drag_offset = thumb_height / 2;
+            }
+            state->selecting_with_mouse = false;
+            SetCapture(hwnd);
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+
+        D2DEditLayoutContext ctx;
+        if (!BuildD2DEditLayoutContext(state, &ctx)) {
+            return 0;
+        }
+
+        ClampD2DEditScrollOffset(state, &ctx);
+        int char_index = GetCharIndexFromPoint(
+            ctx.layout,
+            (int)ctx.display_text.length(),
+            (float)(x - D2D_EDIT_TEXT_PADDING_LEFT + state->scroll_offset_x),
+            (float)(y - ctx.text_origin_y + state->scroll_offset_y)
+        );
         state->cursor_pos = char_index;
         state->selection_start = char_index;
         state->selection_end = char_index;
-        
-        layout->Release();
-        text_format->Release();
-        
+        state->selecting_with_mouse = true;
+        EnsureD2DEditCaretVisible(state);
+        ReleaseD2DEditLayoutContext(&ctx);
+
         SetCapture(hwnd);
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     }
     
     case WM_MOUSEMOVE: {
-        if (GetCapture() == hwnd) {
-            // 拖拽选择文本
-            IDWriteTextFormat* text_format = nullptr;
-            state->dwrite_factory->CreateTextFormat(
-                state->font.font_name.c_str(),
-                nullptr,
-                state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-                state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-                DWRITE_FONT_STRETCH_NORMAL,
-                (float)state->font.font_size,
-                L"zh-CN",
-                &text_format
-            );
-            
-            std::wstring display_text = state->password && !state->text.empty() ? 
-                std::wstring(state->text.length(), L'*') : state->text;
-            
-            IDWriteTextLayout* layout = nullptr;
-            state->dwrite_factory->CreateTextLayout(
-                display_text.c_str(),
-                (UINT32)display_text.length(),
-                text_format,
-                (float)state->width - 8.0f,
-                (float)state->height - 4.0f,
-                &layout
-            );
-            
+        if (state->scrollbar_dragging) {
+            int y = GET_Y_LPARAM(lparam);
+            RECT track_rc = {};
+            RECT thumb_rc = {};
+            int max_scroll = 0;
+            if (GetD2DEditScrollbarMetrics(state, &track_rc, &thumb_rc, &max_scroll)) {
+                int thumb_height = thumb_rc.bottom - thumb_rc.top;
+                int track_height = track_rc.bottom - track_rc.top;
+                int travel = max(1, track_height - thumb_height);
+                int new_thumb_top = y - state->scrollbar_drag_offset - track_rc.top;
+                new_thumb_top = max(0, min(travel, new_thumb_top));
+                float ratio = (float)new_thumb_top / (float)travel;
+                state->scroll_offset_y = (int)(ratio * max_scroll);
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            return 0;
+        }
+
+        if (state->selecting_with_mouse && GetCapture() == hwnd) {
+            D2DEditLayoutContext ctx;
+            if (!BuildD2DEditLayoutContext(state, &ctx)) {
+                return 0;
+            }
+
+            ClampD2DEditScrollOffset(state, &ctx);
             int x = GET_X_LPARAM(lparam);
             int y = GET_Y_LPARAM(lparam);
-            
-            int char_index = GetCharIndexFromPoint(layout, (float)(x - 4 + state->scroll_offset_x), (float)(y - 2 + state->scroll_offset_y));
+            int char_index = GetCharIndexFromPoint(
+                ctx.layout,
+                (int)ctx.display_text.length(),
+                (float)(x - D2D_EDIT_TEXT_PADDING_LEFT + state->scroll_offset_x),
+                (float)(y - ctx.text_origin_y + state->scroll_offset_y)
+            );
             state->cursor_pos = char_index;
             state->selection_end = char_index;
-            
-            layout->Release();
-            text_format->Release();
-            
+            EnsureD2DEditCaretVisible(state);
+            ReleaseD2DEditLayoutContext(&ctx);
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
     }
     
     case WM_LBUTTONUP:
+        if (state->scrollbar_dragging || state->selecting_with_mouse) {
+            state->scrollbar_dragging = false;
+            state->scrollbar_drag_offset = 0;
+            state->selecting_with_mouse = false;
+        }
         if (GetCapture() == hwnd) {
             ReleaseCapture();
-            
-            // 如果起始和结束位置相同，清除选择
+
             if (state->selection_start == state->selection_end) {
                 state->selection_start = -1;
                 state->selection_end = -1;
             }
-            
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
@@ -11959,6 +16939,26 @@ LRESULT CALLBACK D2DEditBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         state->selection_end = (int)state->text.length();
         state->cursor_pos = (int)state->text.length();
         InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    }
+
+    case WM_MOUSEWHEEL: {
+        if (!state->enabled || !state->multiline) break;
+
+        D2DEditLayoutContext ctx;
+        if (!BuildD2DEditLayoutContext(state, &ctx)) {
+            return 0;
+        }
+
+        ClampD2DEditScrollOffset(state, &ctx);
+        if (ctx.max_scroll_y > 0) {
+            int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            int line_height = max(12, (int)std::round(GetD2DEditTextHeight(ctx.layout, state)));
+            int scroll_amount = (delta / WHEEL_DELTA) * line_height * 3;
+            state->scroll_offset_y = max(0, min(ctx.max_scroll_y, state->scroll_offset_y - scroll_amount));
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        ReleaseD2DEditLayoutContext(&ctx);
         return 0;
     }
     
@@ -12010,8 +17010,17 @@ LRESULT CALLBACK D2DEditBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         if (state->render_target) {
             state->render_target->Resize(D2D1::SizeU(width, height));
         }
+        InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     }
+
+    case WM_CAPTURECHANGED:
+        state->scrollbar_dragging = false;
+        state->scrollbar_drag_offset = 0;
+        state->selecting_with_mouse = false;
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    
     
     case WM_DESTROY:
         if (state->cursor_timer) {
@@ -12107,13 +17116,17 @@ __declspec(dllexport) HWND __stdcall CreateD2DColorEmojiEditBox(
     state->has_border = has_border;
     state->vertical_center = vertical_center;
     state->enabled = true;
+    state->scrollbar_dragging = false;
+    state->scrollbar_drag_offset = 0;
+    state->selecting_with_mouse = false;
     state->render_target = nullptr;
     state->dwrite_factory = g_dwrite_factory;
     state->key_callback = nullptr;
 
     int tb_offset = GetTitleBarOffset(hParent);
+    DWORD ex_style = has_border ? WS_EX_CLIENTEDGE : 0;
     HWND hwnd = CreateWindowExW(
-        WS_EX_CLIENTEDGE,
+        ex_style,
         D2D_EDITBOX_CLASS,
         L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
@@ -12195,7 +17208,7 @@ __declspec(dllexport) void __stdcall SetD2DEditBoxText(
     if (it == g_d2d_editboxes.end()) return;
     
     D2DEditBoxState* state = it->second;
-    state->text = Utf8ToWide(text_bytes, text_len);
+    state->text = NormalizeD2DEditText(Utf8ToWide(text_bytes, text_len), state->multiline);
     state->cursor_pos = 0;
     state->selection_start = -1;
     state->selection_end = -1;
@@ -12434,8 +17447,7 @@ extern "C" __declspec(dllexport) HWND __stdcall CreateD2DComboBox(
     state->dropdown_hwnd = NULL;
 
     // 设置字体
-    std::string font_name_str((const char*)font_name_bytes, font_name_len);
-    state->font.font_name = std::wstring(font_name_str.begin(), font_name_str.end());
+    state->font.font_name = L"Segoe UI Emoji";
     state->font.font_size = font_size;
     state->font.bold = bold;
     state->font.italic = italic;
@@ -12443,11 +17455,12 @@ extern "C" __declspec(dllexport) HWND __stdcall CreateD2DComboBox(
 
     // 创建D2D编辑框（占据除按钮外的所有空间）
     int edit_width = width - state->button_width;
+    static const unsigned char combo_display_font[] = "Segoe UI Emoji";
     state->edit_hwnd = CreateD2DColorEmojiEditBox(
         hwnd, 0, 0, edit_width, height,
         (const unsigned char*)"", 0,
         fg_color, bg_color,
-        font_name_bytes, font_name_len,
+        combo_display_font, (int)(sizeof(combo_display_font) - 1),
         font_size, bold, italic, underline,
         0, FALSE, readonly, FALSE, TRUE, TRUE
     );
@@ -12554,6 +17567,13 @@ LRESULT CALLBACK D2DComboBoxWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         break;
     }
 
+    case WM_USER + 100:
+        if (state && state->dropdown_visible) {
+            HideDropDown(state);
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        return 0;
+
     case WM_DESTROY: {
         // 清理资源
         if (state->dropdown_hwnd) {
@@ -12603,13 +17623,13 @@ void DrawD2DComboBox(D2DComboBoxState* state) {
 
     if (!state->render_target) return;
 
+    const UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
+    const UINT32 resolved_button = ResolveThemeColor(state->button_color);
+    const UINT32 resolved_border = ResolveThemeColor(state->border_color);
+    const UINT32 resolved_text = ResolveThemeColor(state->fg_color);
+
     state->render_target->BeginDraw();
-    state->render_target->Clear(D2D1::ColorF(
-        ((state->bg_color >> 16) & 0xFF) / 255.0f,
-        ((state->bg_color >> 8) & 0xFF) / 255.0f,
-        (state->bg_color & 0xFF) / 255.0f,
-        ((state->bg_color >> 24) & 0xFF) / 255.0f
-    ));
+    state->render_target->Clear(ColorFromUInt32(resolved_bg));
 
     // 绘制下拉按钮
     int button_x = state->width - state->button_width;
@@ -12619,7 +17639,7 @@ void DrawD2DComboBox(D2DComboBoxState* state) {
     );
 
     // 按钮背景色（根据状态）
-    UINT32 btn_color = state->button_color;
+    UINT32 btn_color = resolved_button;
     if (state->button_pressed) {
         btn_color = COLOR_BUTTON_PRESS;
     } else if (state->button_hovered) {
@@ -12628,12 +17648,7 @@ void DrawD2DComboBox(D2DComboBoxState* state) {
 
     ID2D1SolidColorBrush* brush = NULL;
     state->render_target->CreateSolidColorBrush(
-        D2D1::ColorF(
-            ((btn_color >> 16) & 0xFF) / 255.0f,
-            ((btn_color >> 8) & 0xFF) / 255.0f,
-            (btn_color & 0xFF) / 255.0f,
-            1.0f
-        ),
+        ColorFromUInt32(btn_color),
         &brush
     );
 
@@ -12662,7 +17677,7 @@ void DrawD2DComboBox(D2DComboBoxState* state) {
 
             ID2D1SolidColorBrush* text_brush = NULL;
             state->render_target->CreateSolidColorBrush(
-                D2D1::ColorF(0.3f, 0.3f, 0.3f, 1.0f),
+                ColorFromUInt32(state->enabled ? ThemeColor_TextSecondary() : ThemeColor_TextPlaceholder()),
                 &text_brush
             );
 
@@ -12684,12 +17699,7 @@ void DrawD2DComboBox(D2DComboBoxState* state) {
     // 绘制边框
     ID2D1SolidColorBrush* border_brush = NULL;
     state->render_target->CreateSolidColorBrush(
-        D2D1::ColorF(
-            ((state->border_color >> 16) & 0xFF) / 255.0f,
-            ((state->border_color >> 8) & 0xFF) / 255.0f,
-            (state->border_color & 0xFF) / 255.0f,
-            1.0f
-        ),
+        ColorFromUInt32(resolved_border),
         &border_brush
     );
 
@@ -12762,6 +17772,7 @@ void ShowDropDown(D2DComboBoxState* state) {
     state->dropdown_visible = true;
     ShowWindow(state->dropdown_hwnd, SW_SHOW);
     SetCapture(state->dropdown_hwnd);
+    SetFocus(state->dropdown_hwnd);
 }
 
 // 隐藏下拉列表
@@ -12770,7 +17781,9 @@ void HideDropDown(D2DComboBoxState* state) {
 
     if (state->dropdown_hwnd) {
         ShowWindow(state->dropdown_hwnd, SW_HIDE);
-        ReleaseCapture();
+        if (GetCapture() == state->dropdown_hwnd) {
+            ReleaseCapture();
+        }
     }
 
     state->dropdown_visible = false;
@@ -12824,12 +17837,22 @@ LRESULT CALLBACK D2DDropDownWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_LBUTTONDOWN: {
         if (!state) break;
-        
-        int y = HIWORD(lParam);
+
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        RECT rc = {};
+        GetClientRect(hwnd, &rc);
+        if (!PtInRect(&rc, pt)) {
+            HideDropDown(state);
+            return 0;
+        }
+
+        int y = pt.y;
         int index = (y + state->scroll_offset) / state->item_height;
         
         if (index >= 0 && index < (int)state->items.size()) {
             SelectItem(state, index);
+        } else {
+            HideDropDown(state);
         }
         return 0;
     }
@@ -12872,13 +17895,22 @@ LRESULT CALLBACK D2DDropDownWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     }
 
     case WM_KILLFOCUS:
-    case WM_ACTIVATE: {
-        if (state && LOWORD(wParam) == WA_INACTIVE) {
-            // 失去焦点时关闭下拉列表
+        if (state && (HWND)wParam != state->hwnd) {
             PostMessage(state->hwnd, WM_USER + 100, 0, 0); // 通知主窗口关闭
         }
-        break;
-    }
+        return 0;
+
+    case WM_ACTIVATE:
+        if (state && LOWORD(wParam) == WA_INACTIVE) {
+            PostMessage(state->hwnd, WM_USER + 100, 0, 0); // 通知主窗口关闭
+        }
+        return 0;
+
+    case WM_CAPTURECHANGED:
+        if (state && state->dropdown_visible && (HWND)lParam != state->dropdown_hwnd) {
+            PostMessage(state->hwnd, WM_USER + 100, 0, 0);
+        }
+        return 0;
 
     case WM_KEYDOWN: {
         if (!state) break;
@@ -12943,15 +17975,12 @@ void DrawD2DDropDown(D2DComboBoxState* state) {
 
     if (!rt) return;
 
+    const UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
+    const UINT32 resolved_fg = ResolveThemeColor(state->fg_color);
+    const UINT32 resolved_border = ResolveThemeColor(state->border_color);
+
     rt->BeginDraw();
-    
-    // 背景
-    rt->Clear(D2D1::ColorF(
-        ((state->bg_color >> 16) & 0xFF) / 255.0f,
-        ((state->bg_color >> 8) & 0xFF) / 255.0f,
-        (state->bg_color & 0xFF) / 255.0f,
-        1.0f
-    ));
+    rt->Clear(ColorFromUInt32(resolved_bg));
 
     // 创建文本格式
     IDWriteTextFormat* text_format = NULL;
@@ -12990,23 +18019,15 @@ void DrawD2DDropDown(D2DComboBoxState* state) {
         );
 
         // 绘制背景
-        UINT32 bg_color = state->bg_color;
+        UINT32 bg_color = resolved_bg;
         if (i == state->selected_index) {
-            bg_color = state->select_color;
+            bg_color = ResolveThemeColor(state->select_color);
         } else if (i == state->hovered_index) {
-            bg_color = state->hover_color;
+            bg_color = ResolveThemeColor(state->hover_color);
         }
 
         ID2D1SolidColorBrush* bg_brush = NULL;
-        rt->CreateSolidColorBrush(
-            D2D1::ColorF(
-                ((bg_color >> 16) & 0xFF) / 255.0f,
-                ((bg_color >> 8) & 0xFF) / 255.0f,
-                (bg_color & 0xFF) / 255.0f,
-                1.0f
-            ),
-            &bg_brush
-        );
+        rt->CreateSolidColorBrush(ColorFromUInt32(bg_color), &bg_brush);
 
         if (bg_brush) {
             rt->FillRectangle(item_rect, bg_brush);
@@ -13016,15 +18037,7 @@ void DrawD2DDropDown(D2DComboBoxState* state) {
         // 绘制文本（支持彩色emoji）
         if (text_format) {
             ID2D1SolidColorBrush* text_brush = NULL;
-            rt->CreateSolidColorBrush(
-                D2D1::ColorF(
-                    ((state->fg_color >> 16) & 0xFF) / 255.0f,
-                    ((state->fg_color >> 8) & 0xFF) / 255.0f,
-                    (state->fg_color & 0xFF) / 255.0f,
-                    1.0f
-                ),
-                &text_brush
-            );
+            rt->CreateSolidColorBrush(ColorFromUInt32(resolved_fg), &text_brush);
 
             if (text_brush) {
                 D2D1_RECT_F text_rect = D2D1::RectF(
@@ -13047,15 +18060,7 @@ void DrawD2DDropDown(D2DComboBoxState* state) {
 
     // 绘制边框
     ID2D1SolidColorBrush* border_brush = NULL;
-    rt->CreateSolidColorBrush(
-        D2D1::ColorF(
-            ((state->border_color >> 16) & 0xFF) / 255.0f,
-            ((state->border_color >> 8) & 0xFF) / 255.0f,
-            (state->border_color & 0xFF) / 255.0f,
-            1.0f
-        ),
-        &border_brush
-    );
+    rt->CreateSolidColorBrush(ColorFromUInt32(resolved_border), &border_brush);
 
     if (border_brush) {
         D2D1_RECT_F border_rect = D2D1::RectF(
@@ -13306,6 +18311,56 @@ extern "C" __declspec(dllexport) void __stdcall SetD2DComboBoxBounds(
     SetWindowPos(hComboBox, NULL, x, y, width, height, SWP_NOZORDER);
 }
 
+extern "C" __declspec(dllexport) void __stdcall SetD2DComboBoxColors(
+    HWND hComboBox,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    UINT32 select_color,
+    UINT32 hover_color,
+    UINT32 border_color,
+    UINT32 button_color
+) {
+    auto it = g_d2d_comboboxes.find(hComboBox);
+    if (it == g_d2d_comboboxes.end()) return;
+
+    D2DComboBoxState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->select_color = select_color;
+    state->hover_color = hover_color;
+    state->border_color = border_color;
+    state->button_color = button_color;
+    if (state->edit_hwnd) {
+        SetD2DEditBoxColor(state->edit_hwnd, fg_color, bg_color);
+    }
+    InvalidateRect(hComboBox, NULL, FALSE);
+    if (state->dropdown_hwnd && state->dropdown_visible) {
+        InvalidateRect(state->dropdown_hwnd, NULL, TRUE);
+    }
+}
+
+extern "C" __declspec(dllexport) int __stdcall GetD2DComboBoxColors(
+    HWND hComboBox,
+    UINT32* fg_color,
+    UINT32* bg_color,
+    UINT32* select_color,
+    UINT32* hover_color,
+    UINT32* border_color,
+    UINT32* button_color
+) {
+    auto it = g_d2d_comboboxes.find(hComboBox);
+    if (it == g_d2d_comboboxes.end()) return -1;
+
+    D2DComboBoxState* state = it->second;
+    if (fg_color) *fg_color = state->fg_color;
+    if (bg_color) *bg_color = state->bg_color;
+    if (select_color) *select_color = state->select_color;
+    if (hover_color) *hover_color = state->hover_color;
+    if (border_color) *border_color = state->border_color;
+    if (button_color) *button_color = state->button_color;
+    return 0;
+}
+
 // ========================================================================
 // DataGridView 实现
 // ========================================================================
@@ -13319,6 +18374,50 @@ static int DataGrid_GetTotalColumnsWidth(DataGridViewState* state) {
         total += col.width;
     }
     return total;
+}
+
+static void DataGrid_EndEdit(DataGridViewState* state, bool apply);
+static const UINT WM_DATAGRID_COMBO_COMMIT = WM_APP + 0x341;
+static const UINT WM_DATAGRID_TEXT_COMMIT = WM_APP + 0x342;
+static const UINT WM_DATAGRID_TEXT_CANCEL = WM_APP + 0x343;
+
+static bool DataGrid_IsCustomComboEditor(HWND hwnd) {
+    return hwnd && g_comboboxes.find(hwnd) != g_comboboxes.end();
+}
+
+static void __stdcall DataGrid_ComboEditCallback(HWND hComboBox, int index) {
+    UNREFERENCED_PARAMETER(index);
+    if (!hComboBox) return;
+
+    HWND hGrid = GetParent(hComboBox);
+    if (!hGrid) return;
+
+    PostMessageW(hGrid, WM_DATAGRID_COMBO_COMMIT, (WPARAM)hComboBox, 0);
+}
+
+static void __stdcall DataGrid_TextEditBlurCallback(HWND hEdit) {
+    if (!hEdit) return;
+
+    HWND hGrid = GetParent(hEdit);
+    if (!hGrid) return;
+
+    PostMessageW(hGrid, WM_DATAGRID_TEXT_COMMIT, (WPARAM)hEdit, 0);
+}
+
+static void __stdcall DataGrid_TextEditKeyCallback(HWND hEdit, int key_code, int key_down, int shift, int ctrl, int alt) {
+    UNREFERENCED_PARAMETER(shift);
+    UNREFERENCED_PARAMETER(ctrl);
+    UNREFERENCED_PARAMETER(alt);
+    if (!hEdit || !key_down) return;
+
+    HWND hGrid = GetParent(hEdit);
+    if (!hGrid) return;
+
+    if (key_code == VK_RETURN) {
+        PostMessageW(hGrid, WM_DATAGRID_TEXT_COMMIT, (WPARAM)hEdit, 0);
+    } else if (key_code == VK_ESCAPE) {
+        PostMessageW(hGrid, WM_DATAGRID_TEXT_CANCEL, (WPARAM)hEdit, 0);
+    }
 }
 
 // 计算所有行的总高度
@@ -13361,6 +18460,107 @@ static bool DataGrid_GetCellCheckedState(DataGridViewState* state, int row, int 
     return false;
 }
 
+static bool DataGrid_HasConcreteCell(DataGridViewState* state, int row, int col) {
+    return !state->virtual_mode &&
+        row >= 0 && row < (int)state->rows.size() &&
+        col >= 0 && col < (int)state->rows[row].cells.size();
+}
+
+static DataGridCell* DataGrid_GetConcreteCell(DataGridViewState* state, int row, int col) {
+    if (!DataGrid_HasConcreteCell(state, row, col)) return nullptr;
+    return &state->rows[row].cells[col];
+}
+
+static const std::vector<std::wstring>* DataGrid_GetComboItems(DataGridViewState* state, int col) {
+    auto grid_it = g_datagrid_combo_items.find(state->hwnd);
+    if (grid_it == g_datagrid_combo_items.end()) return nullptr;
+
+    auto col_it = grid_it->second.find(col);
+    if (col_it == grid_it->second.end()) return nullptr;
+
+    return &col_it->second;
+}
+
+static bool DataGrid_GetCellRect(DataGridViewState* state, int row, int col, RECT* rect) {
+    if (!state || !rect) return false;
+    if (row < 0 || col < 0 || col >= (int)state->columns.size()) return false;
+
+    rect->left = -state->scroll_x;
+    for (int c = 0; c < col; ++c) {
+        rect->left += state->columns[c].width;
+    }
+    rect->top = state->header_height + row * state->default_row_height - state->scroll_y;
+    rect->right = rect->left + state->columns[col].width;
+    rect->bottom = rect->top + state->default_row_height;
+    return true;
+}
+
+static void DataGrid_ApplyEditFont(DataGridViewState* state, HWND edit_hwnd) {
+    if (!state || !edit_hwnd) return;
+    HFONT hFont = CreateCustomFont(state->font);
+    if (hFont) {
+        SendMessageW(edit_hwnd, WM_SETFONT, (WPARAM)hFont, TRUE);
+    }
+}
+
+static std::wstring DataGrid_ReadEditText(DataGridViewState* state) {
+    if (!state || !state->edit_hwnd) return L"";
+
+    int row = state->edit_row;
+    int col = state->edit_col;
+    if (IsD2DEditBoxWindow(state->edit_hwnd)) {
+        int utf8_len = GetD2DEditBoxText(state->edit_hwnd, nullptr, 0);
+        if (utf8_len > 0) {
+            std::string utf8_text(utf8_len + 1, '\0');
+            int copied = GetD2DEditBoxText(
+                state->edit_hwnd,
+                reinterpret_cast<unsigned char*>(&utf8_text[0]),
+                utf8_len + 1
+            );
+            if (copied > 0) {
+                return Utf8ToWide(reinterpret_cast<const unsigned char*>(utf8_text.c_str()), copied);
+            }
+        }
+        return L"";
+    }
+
+    if (col >= 0 && col < (int)state->columns.size() &&
+        state->columns[col].type == DGCOL_COMBOBOX) {
+        if (DataGrid_IsCustomComboEditor(state->edit_hwnd)) {
+            int utf8_len = GetComboBoxText(state->edit_hwnd, nullptr, 0);
+            if (utf8_len > 0) {
+                std::string utf8_text(utf8_len + 1, '\0');
+                int copied = GetComboBoxText(
+                    state->edit_hwnd,
+                    reinterpret_cast<unsigned char*>(&utf8_text[0]),
+                    utf8_len + 1
+                );
+                if (copied > 0) {
+                    return Utf8ToWide(reinterpret_cast<const unsigned char*>(utf8_text.c_str()), copied);
+                }
+            }
+            return L"";
+        }
+
+        LRESULT sel = SendMessageW(state->edit_hwnd, CB_GETCURSEL, 0, 0);
+        if (sel != CB_ERR) {
+            int len = (int)SendMessageW(state->edit_hwnd, CB_GETLBTEXTLEN, (WPARAM)sel, 0);
+            if (len > 0) {
+                std::wstring text(len, L'\0');
+                SendMessageW(state->edit_hwnd, CB_GETLBTEXT, (WPARAM)sel, (LPARAM)&text[0]);
+                return text;
+            }
+            return L"";
+        }
+    }
+
+    int len = GetWindowTextLengthW(state->edit_hwnd);
+    if (len <= 0) return L"";
+
+    std::wstring text(len, L'\0');
+    GetWindowTextW(state->edit_hwnd, &text[0], len + 1);
+    return text;
+}
 // 命中测试：根据像素坐标返回行列
 static void DataGrid_HitTest(DataGridViewState* state, int px, int py, int& out_row, int& out_col) {
     out_row = -1;
@@ -13437,10 +18637,7 @@ static void DataGrid_EnsureVisible(DataGridViewState* state, int row, int col) {
 static void DataGrid_EndEdit(DataGridViewState* state, bool apply) {
     if (!state->editing || !state->edit_hwnd) return;
     if (apply && !state->virtual_mode) {
-        // 获取编辑框文本
-        int len = GetWindowTextLengthW(state->edit_hwnd);
-        std::wstring text(len, L'\0');
-        GetWindowTextW(state->edit_hwnd, &text[0], len + 1);
+        std::wstring text = DataGrid_ReadEditText(state);
         // 写回单元格
         int r = state->edit_row, c = state->edit_col;
         if (r >= 0 && r < (int)state->rows.size() &&
@@ -13451,11 +18648,19 @@ static void DataGrid_EndEdit(DataGridViewState* state, bool apply) {
             }
         }
     }
-    DestroyWindow(state->edit_hwnd);
+    HWND edit_hwnd = state->edit_hwnd;
+    bool was_combo = false;
+    if (state->edit_col >= 0 && state->edit_col < (int)state->columns.size()) {
+        was_combo = (state->columns[state->edit_col].type == DGCOL_COMBOBOX);
+    }
     state->edit_hwnd = nullptr;
     state->editing = false;
     state->edit_row = -1;
     state->edit_col = -1;
+    DestroyWindow(edit_hwnd);
+    if (was_combo) {
+        InvalidateRect(state->hwnd, nullptr, TRUE);
+    }
     SetFocus(state->hwnd);
 }
 
@@ -13468,118 +18673,325 @@ static void DataGrid_BeginEdit(DataGridViewState* state, int row, int col) {
 
     DataGrid_EndEdit(state, false); // 结束之前的编辑
 
-    // 计算单元格位置
-    int cell_x = -state->scroll_x;
-    for (int c = 0; c < col; c++) cell_x += state->columns[c].width;
-    int cell_y = state->header_height + row * state->default_row_height - state->scroll_y;
-    int cell_w = state->columns[col].width;
-    int cell_h = state->default_row_height;
+    RECT cell_rect = {};
+    if (!DataGrid_GetCellRect(state, row, col, &cell_rect)) return;
 
-    // 创建编辑框
-    state->edit_hwnd = CreateWindowExW(
-        0, L"EDIT", state->rows[row].cells[col].text.c_str(),
-        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_BORDER,
-        cell_x, cell_y, cell_w, cell_h,
-        state->hwnd, nullptr, GetModuleHandle(nullptr), nullptr
+    int cell_w = max(1, cell_rect.right - cell_rect.left);
+    int cell_h = max(1, cell_rect.bottom - cell_rect.top);
+    std::string text_utf8 = WindowWideToUtf8(state->rows[row].cells[col].text);
+    static const unsigned char edit_display_font[] = "Segoe UI Emoji";
+
+    state->edit_hwnd = CreateD2DColorEmojiEditBox(
+        state->hwnd,
+        cell_rect.left,
+        cell_rect.top,
+        cell_w,
+        cell_h,
+        reinterpret_cast<const unsigned char*>(text_utf8.c_str()),
+        (int)text_utf8.length(),
+        state->fg_color,
+        0xFFFFFFFF,
+        edit_display_font,
+        (int)(sizeof(edit_display_font) - 1),
+        state->font.font_size,
+        state->font.bold,
+        state->font.italic,
+        state->font.underline,
+        0,
+        false,
+        false,
+        false,
+        true,
+        true
     );
     if (state->edit_hwnd) {
         state->editing = true;
         state->edit_row = row;
         state->edit_col = col;
-        // 设置字体
-        HFONT hFont = CreateFontW(
-            -(int)state->font.font_size, 0, 0, 0,
-            state->font.bold ? FW_BOLD : FW_NORMAL,
-            state->font.italic, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-            state->font.font_name.c_str()
-        );
-        SendMessageW(state->edit_hwnd, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetBlurCallback(state->edit_hwnd, DataGrid_TextEditBlurCallback);
+        SetD2DEditBoxKeyCallback(state->edit_hwnd, DataGrid_TextEditKeyCallback);
         SetFocus(state->edit_hwnd);
-        SendMessageW(state->edit_hwnd, EM_SETSEL, 0, -1); // 全选
     }
+}
+
+static void DataGrid_BeginComboEdit(DataGridViewState* state, int row, int col) {
+    if (state->virtual_mode) return;
+    if (!DataGrid_HasConcreteCell(state, row, col)) return;
+    if (col < 0 || col >= (int)state->columns.size()) return;
+    if (state->columns[col].type != DGCOL_COMBOBOX) return;
+
+    RECT cell_rect = {};
+    if (!DataGrid_GetCellRect(state, row, col, &cell_rect)) return;
+
+    const std::vector<std::wstring>* items = DataGrid_GetComboItems(state, col);
+
+    DataGrid_EndEdit(state, false);
+
+    int cell_w = max(1, cell_rect.right - cell_rect.left);
+    int cell_h = max(1, cell_rect.bottom - cell_rect.top);
+    std::string font_name_utf8 = WindowWideToUtf8(state->font.font_name);
+    const unsigned char* font_name_ptr = font_name_utf8.empty()
+        ? reinterpret_cast<const unsigned char*>("Microsoft YaHei UI")
+        : reinterpret_cast<const unsigned char*>(font_name_utf8.c_str());
+    int font_name_len = font_name_utf8.empty() ? 18 : (int)font_name_utf8.length();
+
+    state->edit_hwnd = CreateComboBox(
+        state->hwnd,
+        cell_rect.left,
+        cell_rect.top,
+        cell_w,
+        cell_h,
+        TRUE,
+        state->fg_color,
+        0xFFFFFFFF,
+        max(cell_h - 8, 28),
+        reinterpret_cast<const char*>(font_name_ptr),
+        font_name_len,
+        state->font.font_size,
+        state->font.bold,
+        state->font.italic,
+        state->font.underline
+    );
+    if (!state->edit_hwnd) return;
+
+    state->editing = true;
+    state->edit_row = row;
+    state->edit_col = col;
+
+    int selected_index = -1;
+    const std::wstring& current_text = state->rows[row].cells[col].text;
+    if (items) {
+        int item_index = 0;
+        for (const auto& item : *items) {
+            std::string item_utf8 = WindowWideToUtf8(item);
+            AddComboItem(
+                state->edit_hwnd,
+                reinterpret_cast<const unsigned char*>(item_utf8.c_str()),
+                (int)item_utf8.length()
+            );
+            if (selected_index < 0 && item == current_text) {
+                selected_index = item_index;
+            }
+            ++item_index;
+        }
+    }
+
+    if (selected_index < 0 && !current_text.empty()) {
+        std::string text_utf8 = WindowWideToUtf8(current_text);
+        AddComboItem(
+            state->edit_hwnd,
+            reinterpret_cast<const unsigned char*>(text_utf8.c_str()),
+            (int)text_utf8.length()
+        );
+        selected_index = 0;
+    }
+    if (selected_index >= 0) {
+        SetComboSelectedIndex(state->edit_hwnd, selected_index);
+    }
+
+    SetComboBoxCallback(state->edit_hwnd, DataGrid_ComboEditCallback);
+    SetFocus(state->edit_hwnd);
+    LPARAM button_click_pos = MAKELPARAM(cell_w - 6, max(4, cell_h / 2));
+    PostMessageW(state->edit_hwnd, WM_LBUTTONDOWN, MK_LBUTTON, button_click_pos);
+    PostMessageW(state->edit_hwnd, WM_LBUTTONUP, 0, button_click_pos);
 }
 
 
 // --- DrawDataGridView ---
 void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGridViewState* state) {
     if (!rt || !factory || !state) return;
+    EnsureThemesInitialized();
 
     D2D1_SIZE_F size = rt->GetSize();
     int row_count = DataGrid_GetEffectiveRowCount(state);
+    const bool dark_theme = (g_current_theme && g_current_theme->dark_mode);
+
+    bool header_multiline = false;
+    auto header_multiline_it = g_datagrid_header_multiline.find(state->hwnd);
+    if (header_multiline_it != g_datagrid_header_multiline.end()) {
+        header_multiline = header_multiline_it->second;
+    }
+
+    int header_style = DGHEADER_STYLE_PLAIN;
+    auto header_style_it = g_datagrid_header_styles.find(state->hwnd);
+    if (header_style_it != g_datagrid_header_styles.end()) {
+        header_style = header_style_it->second;
+    }
 
     ID2D1SolidColorBrush* brush = nullptr;
     rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
     if (!brush) return;
 
+    UINT32 grid_argb = ResolveOptionalColor(state->grid_line_color, ThemeColor_BorderLighter());
+    UINT32 body_bg_argb = ResolveOptionalColor(state->bg_color, ThemeColor_Background());
+    UINT32 body_fg_argb = ResolveOptionalColor(state->fg_color, ThemeColor_TextRegular());
+    UINT32 header_bg_argb = ResolveOptionalColor(state->header_bg_color, ThemeColor_BackgroundLight());
+    UINT32 header_fg_argb = ResolveOptionalColor(state->header_fg_color, ThemeColor_TextRegular());
+    UINT32 select_argb = ResolveOptionalColor(state->select_color, ThemeColor_LightBg(ThemeColor_Primary()));
+    UINT32 hover_argb = ResolveOptionalColor(state->hover_color, ThemeColor_BackgroundLight());
+    UINT32 zebra_argb = ResolveOptionalColor(state->zebra_color, dark_theme ? 14 : 0xFFFAFAFA);
+
+    if (dark_theme) {
+        if (state->select_color == 0 || IsThemeColorIndex(state->select_color)) {
+            select_argb = DarkenColor(select_argb, 0.90f);
+        }
+        if (state->hover_color == 0 || IsThemeColorIndex(state->hover_color)) {
+            hover_argb = BlendThemeSurface(body_bg_argb, hover_argb, 0.72f);
+        }
+    }
+
+    switch (header_style) {
+    case DGHEADER_STYLE_FILLED:
+        header_bg_argb = ThemeColor_LightBg(ThemeColor_Primary());
+        header_fg_argb = dark_theme ? ThemeColor_TextPrimary() : ThemeColor_Primary();
+        break;
+    case DGHEADER_STYLE_DARK:
+        if (dark_theme) {
+            header_bg_argb = ThemeColor_BackgroundLight();
+            header_fg_argb = ThemeColor_TextPrimary();
+        }
+        else {
+            header_bg_argb = ThemeColor_TextPrimary();
+            header_fg_argb = AutoContrastText(header_bg_argb);
+        }
+        break;
+    case DGHEADER_STYLE_BORDERED:
+        header_bg_argb = dark_theme ? ThemeColor_BackgroundLight() : ThemeColor_Background();
+        header_fg_argb = ResolveOptionalColor(state->header_fg_color, dark_theme ? ThemeColor_TextPrimary() : ThemeColor_TextRegular());
+        break;
+    case DGHEADER_STYLE_PLAIN:
+    default:
+        break;
+    }
+
     IDWriteTextFormat* text_format = nullptr;
-    factory->CreateTextFormat(L"Segoe UI Emoji", nullptr,
-        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        (float)state->font.font_size, L"zh-CN", &text_format);
-    if (!text_format) { brush->Release(); return; }
+    factory->CreateTextFormat(
+        state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+        nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        (float)state->font.font_size,
+        L"zh-CN",
+        &text_format);
+    if (!text_format) {
+        brush->Release();
+        return;
+    }
     text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     text_format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
     IDWriteTextFormat* header_format = nullptr;
-    factory->CreateTextFormat(L"Segoe UI Emoji", nullptr,
-        DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        (float)state->font.font_size, L"zh-CN", &header_format);
+    factory->CreateTextFormat(
+        state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+        nullptr,
+        DWRITE_FONT_WEIGHT_BOLD,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        (float)state->font.font_size,
+        L"zh-CN",
+        &header_format);
     if (header_format) {
         header_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        header_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        header_format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        header_format->SetParagraphAlignment(header_multiline ? DWRITE_PARAGRAPH_ALIGNMENT_CENTER : DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        header_format->SetWordWrapping(header_multiline ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
-    brush->SetColor(ColorFromUInt32(state->bg_color));
+    brush->SetColor(ColorFromUInt32(body_bg_argb));
     rt->FillRectangle(D2D1::RectF(0, 0, size.width, size.height), brush);
 
     float hdr_h = (float)state->header_height;
-    D2D1_COLOR_F grid_color = ColorFromUInt32(state->grid_line_color);
+    D2D1_COLOR_F grid_color = ColorFromUInt32(grid_argb);
+    D2D1_COLOR_F header_bg_color = ColorFromUInt32(header_bg_argb);
+    D2D1_COLOR_F header_text_color = ColorFromUInt32(header_fg_argb);
+    D2D1_COLOR_F select_color = ColorFromUInt32(select_argb);
+    D2D1_COLOR_F hover_color = ColorFromUInt32(hover_argb);
+    D2D1_COLOR_F zebra_color = ColorFromUInt32(zebra_argb);
 
-    // Column headers
-    brush->SetColor(ColorFromUInt32(state->header_bg_color));
+    brush->SetColor(header_bg_color);
     rt->FillRectangle(D2D1::RectF(0, 0, size.width, hdr_h), brush);
 
     float col_x = (float)(-state->scroll_x);
     for (int c = 0; c < (int)state->columns.size(); c++) {
         float col_w = (float)state->columns[c].width;
         if (col_x + col_w > 0 && col_x < size.width) {
-            D2D1_RECT_F hdr_rect = D2D1::RectF(col_x + 8, 0, col_x + col_w - 8, hdr_h);
-            brush->SetColor(ColorFromUInt32(state->header_fg_color));
-            std::wstring hdr_text = state->columns[c].header_text;
+            D2D1_RECT_F cell_rect = D2D1::RectF(col_x, 0, col_x + col_w, hdr_h);
+            UINT32 cell_bg_argb = header_bg_argb;
+            UINT32 cell_fg_argb = header_fg_argb;
+
             if (state->sort_col == c) {
-                if (state->sort_order == DGSORT_ASC) hdr_text += L" \u25B2";
-                else if (state->sort_order == DGSORT_DESC) hdr_text += L" \u25BC";
+                if (header_style == DGHEADER_STYLE_DARK) {
+                    cell_bg_argb = DarkenColor(header_bg_argb, 0.82f);
+                    cell_fg_argb = AutoContrastText(cell_bg_argb);
+                }
+                else {
+                    cell_bg_argb = ThemeColor_LightBg(ThemeColor_Primary());
+                    cell_fg_argb = ThemeColor_Primary();
+                }
             }
-            
-            // 创建临时格式以应用列头对齐方式
+
+            if (header_style == DGHEADER_STYLE_BORDERED || header_style == DGHEADER_STYLE_FILLED || header_style == DGHEADER_STYLE_DARK) {
+                brush->SetColor(ColorFromUInt32(cell_bg_argb));
+                rt->FillRectangle(cell_rect, brush);
+                brush->SetColor(grid_color);
+                rt->DrawRectangle(cell_rect, brush, 1.0f);
+            }
+
+            std::wstring hdr_text;
+            std::vector<std::wstring> header_lines = SplitLines(state->columns[c].header_text);
+            if (!header_lines.empty()) {
+                for (size_t i = 0; i < header_lines.size(); ++i) {
+                    if (i > 0) hdr_text += L"\n";
+                    hdr_text += header_lines[i];
+                }
+            }
+            else {
+                hdr_text = state->columns[c].header_text;
+            }
+
+            if (state->sort_col == c) {
+                if (state->sort_order == DGSORT_ASC) hdr_text += L" ▲";
+                else if (state->sort_order == DGSORT_DESC) hdr_text += L" ▼";
+            }
+
             IDWriteTextFormat* hdr_fmt = header_format ? header_format : text_format;
             IDWriteTextFormat* custom_hdr_fmt = nullptr;
-            if (state->columns[c].header_alignment != DWRITE_TEXT_ALIGNMENT_LEADING) {
-                factory->CreateTextFormat(L"Segoe UI Emoji", nullptr,
-                    DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                    (float)state->font.font_size, L"zh-CN", &custom_hdr_fmt);
+            if (state->columns[c].header_alignment != DWRITE_TEXT_ALIGNMENT_LEADING || header_multiline) {
+                factory->CreateTextFormat(
+                    state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+                    nullptr,
+                    DWRITE_FONT_WEIGHT_BOLD,
+                    DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    (float)state->font.font_size,
+                    L"zh-CN",
+                    &custom_hdr_fmt);
                 if (custom_hdr_fmt) {
                     custom_hdr_fmt->SetTextAlignment(state->columns[c].header_alignment);
                     custom_hdr_fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    custom_hdr_fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                    custom_hdr_fmt->SetWordWrapping(header_multiline ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
                     hdr_fmt = custom_hdr_fmt;
                 }
             }
-            
+
+            brush->SetColor(ColorFromUInt32(cell_fg_argb));
+            D2D1_RECT_F hdr_rect = D2D1::RectF(col_x + 8, 4, col_x + col_w - 8, hdr_h - 4);
             IDWriteTextLayout* layout = nullptr;
-            factory->CreateTextLayout(hdr_text.c_str(), (UINT32)hdr_text.length(),
+            factory->CreateTextLayout(
+                hdr_text.c_str(),
+                (UINT32)hdr_text.length(),
                 hdr_fmt,
-                hdr_rect.right - hdr_rect.left, hdr_rect.bottom - hdr_rect.top, &layout);
+                max(1.0f, hdr_rect.right - hdr_rect.left),
+                max(1.0f, hdr_rect.bottom - hdr_rect.top),
+                &layout);
             if (layout) {
-                rt->DrawTextLayout(D2D1::Point2F(hdr_rect.left, hdr_rect.top), layout, brush,
-                    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                rt->DrawTextLayout(D2D1::Point2F(hdr_rect.left, hdr_rect.top), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
                 layout->Release();
             }
             if (custom_hdr_fmt) custom_hdr_fmt->Release();
-            if (state->show_grid_lines) {
+
+            if (state->show_grid_lines && header_style == DGHEADER_STYLE_PLAIN) {
                 brush->SetColor(grid_color);
                 rt->DrawLine(D2D1::Point2F(col_x + col_w, 0), D2D1::Point2F(col_x + col_w, hdr_h), brush, 1.0f);
             }
@@ -13591,16 +19003,11 @@ void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGr
         rt->DrawLine(D2D1::Point2F(0, hdr_h), D2D1::Point2F(size.width, hdr_h), brush, 1.0f);
     }
 
-    // Data rows
     rt->PushAxisAlignedClip(D2D1::RectF(0, hdr_h, size.width, size.height), D2D1_ANTIALIAS_MODE_ALIASED);
 
     int visible_start = state->scroll_y / state->default_row_height;
     int visible_count = (int)((size.height - hdr_h) / state->default_row_height) + 2;
     int visible_end = min(visible_start + visible_count, row_count);
-
-    D2D1_COLOR_F select_color = ColorFromUInt32(state->select_color);
-    D2D1_COLOR_F hover_color = ColorFromUInt32(state->hover_color);
-    D2D1_COLOR_F zebra_color = ColorFromUInt32(state->zebra_color);
 
     for (int r = visible_start; r < visible_end; r++) {
         float row_y = hdr_h + (float)(r * state->default_row_height - state->scroll_y);
@@ -13613,10 +19020,12 @@ void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGr
         if (is_selected_row && state->selection_mode == DGSEL_ROW) {
             brush->SetColor(select_color);
             rt->FillRectangle(D2D1::RectF(0, row_y, size.width, row_y + row_h), brush);
-        } else if (is_hovered && state->enabled) {
+        }
+        else if (is_hovered && state->enabled) {
             brush->SetColor(hover_color);
             rt->FillRectangle(D2D1::RectF(0, row_y, size.width, row_y + row_h), brush);
-        } else if (state->zebra_stripe && (r % 2 == 1)) {
+        }
+        else if (state->zebra_stripe && (r % 2 == 1)) {
             brush->SetColor(zebra_color);
             rt->FillRectangle(D2D1::RectF(0, row_y, size.width, row_y + row_h), brush);
         }
@@ -13624,11 +19033,16 @@ void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGr
         col_x = (float)(-state->scroll_x);
         for (int c = 0; c < (int)state->columns.size(); c++) {
             float cw = (float)state->columns[c].width;
-            if (col_x + cw <= 0 || col_x >= size.width) { col_x += cw; continue; }
+            if (col_x + cw <= 0 || col_x >= size.width) {
+                col_x += cw;
+                continue;
+            }
 
-            if (state->selection_mode == DGSEL_CELL && r == state->selected_row && c == state->selected_col) {
+            D2D1_RECT_F cell_rect = D2D1::RectF(col_x, row_y, col_x + cw, row_y + row_h);
+            bool is_selected_cell = (state->selection_mode == DGSEL_CELL && r == state->selected_row && c == state->selected_col);
+            if (is_selected_cell) {
                 brush->SetColor(select_color);
-                rt->FillRectangle(D2D1::RectF(col_x, row_y, col_x + cw, row_y + row_h), brush);
+                rt->FillRectangle(cell_rect, brush);
             }
 
             DataGridCellStyle cell_style = {};
@@ -13636,114 +19050,210 @@ void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGr
                 cell_style = state->rows[r].cells[c].style;
             }
 
+            if (cell_style.bg_color && !is_selected_cell && !(is_selected_row && state->selection_mode == DGSEL_ROW)) {
+                brush->SetColor(ColorFromUInt32(ResolveThemeColor(cell_style.bg_color)));
+                rt->FillRectangle(cell_rect, brush);
+            }
+
+            UINT32 cell_fg_argb = cell_style.fg_color ? ResolveThemeColor(cell_style.fg_color) : body_fg_argb;
+            D2D1_RECT_F text_rect = D2D1::RectF(col_x + 8, row_y, col_x + cw - 8, row_y + row_h);
+            rt->PushAxisAlignedClip(cell_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+
             switch (state->columns[c].type) {
-                case DGCOL_TEXT: {
-                    std::wstring text = DataGrid_GetCellDisplayText(state, r, c);
-                    if (!text.empty()) {
-                        D2D1_RECT_F tr = D2D1::RectF(col_x + 8, row_y, col_x + cw - 8, row_y + row_h);
-                        
-                        // 设置裁剪区域，防止文本溢出到相邻单元格
-                        D2D1_RECT_F clip_rect = D2D1::RectF(col_x, row_y, col_x + cw, row_y + row_h);
-                        rt->PushAxisAlignedClip(clip_rect, D2D1_ANTIALIAS_MODE_ALIASED);
-                        
-                        UINT32 cell_fg = cell_style.fg_color ? cell_style.fg_color : state->fg_color;
-                        brush->SetColor(ColorFromUInt32(cell_fg));
-                        IDWriteTextFormat* cf = text_format;
-                        bool custom_f = false;
-                        if (cell_style.bold || cell_style.italic || state->columns[c].cell_alignment != DWRITE_TEXT_ALIGNMENT_LEADING) {
-                            IDWriteTextFormat* tmp = nullptr;
-                            factory->CreateTextFormat(L"Segoe UI Emoji", nullptr,
-                                cell_style.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-                                cell_style.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-                                DWRITE_FONT_STRETCH_NORMAL, (float)state->font.font_size, L"zh-CN", &tmp);
-                            if (tmp) { cf = tmp; custom_f = true;
-                                cf->SetTextAlignment(state->columns[c].cell_alignment);
-                                cf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                                cf->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-                            }
+            case DGCOL_TEXT: {
+                std::wstring value = DataGrid_GetCellDisplayText(state, r, c);
+                if (!value.empty()) {
+                    brush->SetColor(ColorFromUInt32(cell_fg_argb));
+                    IDWriteTextFormat* cf = text_format;
+                    IDWriteTextFormat* custom_f = nullptr;
+                    if (cell_style.bold || cell_style.italic || state->columns[c].cell_alignment != DWRITE_TEXT_ALIGNMENT_LEADING) {
+                        factory->CreateTextFormat(
+                            state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str(),
+                            nullptr,
+                            cell_style.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+                            cell_style.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+                            DWRITE_FONT_STRETCH_NORMAL,
+                            (float)state->font.font_size,
+                            L"zh-CN",
+                            &custom_f);
+                        if (custom_f) {
+                            custom_f->SetTextAlignment(state->columns[c].cell_alignment);
+                            custom_f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                            custom_f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                            cf = custom_f;
                         }
-                        IDWriteTextLayout* layout = nullptr;
-                        factory->CreateTextLayout(text.c_str(), (UINT32)text.length(), cf,
-                            tr.right - tr.left, tr.bottom - tr.top, &layout);
-                        if (layout) {
-                            rt->DrawTextLayout(D2D1::Point2F(tr.left, tr.top), layout, brush,
-                                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
-                            layout->Release();
-                        }
-                        if (custom_f) cf->Release();
-                        
-                        // 恢复裁剪区域
-                        rt->PopAxisAlignedClip();
                     }
-                    break;
-                }
-                case DGCOL_CHECKBOX: {
-                    bool checked = DataGrid_GetCellCheckedState(state, r, c);
-                    float bs = 16.0f;
-                    float bx = col_x + (cw - bs) / 2;
-                    float by = row_y + (row_h - bs) / 2;
-                    D2D1_RECT_F br = D2D1::RectF(bx, by, bx + bs, by + bs);
-                    brush->SetColor(D2D1::ColorF(0xDCDFE6, 1.0f));
-                    rt->DrawRectangle(br, brush, 1.0f);
-                    if (checked) {
-                        brush->SetColor(D2D1::ColorF(0x409EFF, 1.0f));
-                        rt->FillRectangle(br, brush);
-                        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-                        rt->DrawLine(D2D1::Point2F(bx + 3, by + bs / 2),
-                                     D2D1::Point2F(bx + bs / 2 - 1, by + bs - 4), brush, 2.0f);
-                        rt->DrawLine(D2D1::Point2F(bx + bs / 2 - 1, by + bs - 4),
-                                     D2D1::Point2F(bx + bs - 3, by + 3), brush, 2.0f);
-                    }
-                    break;
-                }
-                case DGCOL_BUTTON: {
-                    std::wstring text = DataGrid_GetCellDisplayText(state, r, c);
-                    if (text.empty()) text = L"...";
-                    float bw = min(cw - 16, 80.0f);
-                    float bh = row_h - 8;
-                    float bx = col_x + (cw - bw) / 2;
-                    float by = row_y + 4;
-                    brush->SetColor(D2D1::ColorF(0x409EFF, 1.0f));
-                    rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + bw, by + bh), 3.0f, 3.0f), brush);
-                    brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
                     IDWriteTextLayout* layout = nullptr;
-                    factory->CreateTextLayout(text.c_str(), (UINT32)text.length(), text_format, bw, bh, &layout);
+                    factory->CreateTextLayout(value.c_str(), (UINT32)value.length(), cf, max(1.0f, text_rect.right - text_rect.left), max(1.0f, text_rect.bottom - text_rect.top), &layout);
                     if (layout) {
-                        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                        rt->DrawTextLayout(D2D1::Point2F(bx, by), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                        rt->DrawTextLayout(D2D1::Point2F(text_rect.left, text_rect.top), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
                         layout->Release();
                     }
-                    break;
+                    if (custom_f) custom_f->Release();
                 }
-                case DGCOL_LINK: {
-                    std::wstring text = DataGrid_GetCellDisplayText(state, r, c);
-                    if (!text.empty()) {
-                        D2D1_RECT_F tr = D2D1::RectF(col_x + 8, row_y, col_x + cw - 8, row_y + row_h);
-                        
-                        // 设置裁剪区域，防止链接文本溢出
-                        D2D1_RECT_F clip_rect = D2D1::RectF(col_x, row_y, col_x + cw, row_y + row_h);
-                        rt->PushAxisAlignedClip(clip_rect, D2D1_ANTIALIAS_MODE_ALIASED);
-                        
-                        brush->SetColor(D2D1::ColorF(0x409EFF, 1.0f));
+                break;
+            }
+            case DGCOL_CHECKBOX: {
+                bool checked = DataGrid_GetCellCheckedState(state, r, c);
+                float bs = 16.0f;
+                float bx = col_x + (cw - bs) / 2.0f;
+                float by = row_y + (row_h - bs) / 2.0f;
+                D2D1_ROUNDED_RECT box = D2D1::RoundedRect(D2D1::RectF(bx, by, bx + bs, by + bs), 3.0f, 3.0f);
+                UINT32 accent = cell_style.bg_color ? ResolveThemeColor(cell_style.bg_color) : ThemeColor_Primary();
+                brush->SetColor(ColorFromUInt32(checked ? accent : ThemeColor_Background()));
+                rt->FillRoundedRectangle(box, brush);
+                brush->SetColor(ColorFromUInt32(checked ? accent : ThemeColor_BorderBase()));
+                rt->DrawRoundedRectangle(box, brush, 1.0f);
+                if (checked) {
+                    brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                    rt->DrawLine(D2D1::Point2F(bx + 3, by + bs / 2), D2D1::Point2F(bx + bs / 2 - 1, by + bs - 4), brush, 2.0f);
+                    rt->DrawLine(D2D1::Point2F(bx + bs / 2 - 1, by + bs - 4), D2D1::Point2F(bx + bs - 3, by + 4), brush, 2.0f);
+                }
+                break;
+            }
+            case DGCOL_BUTTON: {
+                std::wstring value = DataGrid_GetCellDisplayText(state, r, c);
+                if (value.empty()) value = L"按钮";
+                float bw = min(cw - 16.0f, 88.0f);
+                float bh = row_h - 8.0f;
+                float bx = col_x + (cw - bw) / 2.0f;
+                float by = row_y + 4.0f;
+                UINT32 button_bg = cell_style.bg_color ? ResolveThemeColor(cell_style.bg_color) : ThemeColor_Primary();
+                UINT32 button_fg = cell_style.fg_color ? ResolveThemeColor(cell_style.fg_color) : AutoContrastText(button_bg);
+                brush->SetColor(ColorFromUInt32(button_bg));
+                rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + bw, by + bh), 4.0f, 4.0f), brush);
+                brush->SetColor(ColorFromUInt32(button_fg));
+                IDWriteTextLayout* layout = nullptr;
+                factory->CreateTextLayout(value.c_str(), (UINT32)value.length(), text_format, max(1.0f, bw), max(1.0f, bh), &layout);
+                if (layout) {
+                    layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    rt->DrawTextLayout(D2D1::Point2F(bx, by), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                    layout->Release();
+                }
+                break;
+            }
+            case DGCOL_LINK: {
+                std::wstring value = DataGrid_GetCellDisplayText(state, r, c);
+                if (!value.empty()) {
+                    UINT32 link_fg = cell_style.fg_color ? ResolveThemeColor(cell_style.fg_color) : ThemeColor_Primary();
+                    brush->SetColor(ColorFromUInt32(link_fg));
+                    IDWriteTextLayout* layout = nullptr;
+                    factory->CreateTextLayout(value.c_str(), (UINT32)value.length(), text_format, max(1.0f, text_rect.right - text_rect.left), max(1.0f, text_rect.bottom - text_rect.top), &layout);
+                    if (layout) {
+                        DWRITE_TEXT_RANGE range = { 0, (UINT32)value.length() };
+                        layout->SetUnderline(TRUE, range);
+                        rt->DrawTextLayout(D2D1::Point2F(text_rect.left, text_rect.top), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                        layout->Release();
+                    }
+                }
+                break;
+            }
+            case DGCOL_COMBOBOX: {
+                std::wstring value = DataGrid_GetCellDisplayText(state, r, c);
+                UINT32 combo_bg = cell_style.bg_color ? ResolveThemeColor(cell_style.bg_color) : ThemeColor_Background();
+                UINT32 combo_border = is_selected_cell ? ThemeColor_Primary() : ThemeColor_BorderBase();
+                UINT32 combo_fg = cell_style.fg_color ? ResolveThemeColor(cell_style.fg_color) : body_fg_argb;
+                D2D1_ROUNDED_RECT combo_rect = D2D1::RoundedRect(D2D1::RectF(col_x + 6, row_y + 5, col_x + cw - 6, row_y + row_h - 5), 4.0f, 4.0f);
+                brush->SetColor(ColorFromUInt32(combo_bg));
+                rt->FillRoundedRectangle(combo_rect, brush);
+                brush->SetColor(ColorFromUInt32(combo_border));
+                rt->DrawRoundedRectangle(combo_rect, brush, 1.0f);
+                brush->SetColor(ColorFromUInt32(combo_fg));
+                D2D1_RECT_F combo_text_rect = D2D1::RectF(col_x + 12, row_y, col_x + cw - 22, row_y + row_h);
+                if (!value.empty()) {
+                    IDWriteTextLayout* layout = nullptr;
+                    factory->CreateTextLayout(value.c_str(), (UINT32)value.length(), text_format, max(1.0f, combo_text_rect.right - combo_text_rect.left), max(1.0f, combo_text_rect.bottom - combo_text_rect.top), &layout);
+                    if (layout) {
+                        rt->DrawTextLayout(D2D1::Point2F(combo_text_rect.left, combo_text_rect.top), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                        layout->Release();
+                    }
+                }
+                float ax = col_x + cw - 16.0f;
+                float ay = row_y + row_h / 2.0f - 2.0f;
+                rt->DrawLine(D2D1::Point2F(ax, ay), D2D1::Point2F(ax + 4.0f, ay + 4.0f), brush, 1.4f);
+                rt->DrawLine(D2D1::Point2F(ax + 4.0f, ay + 4.0f), D2D1::Point2F(ax + 8.0f, ay), brush, 1.4f);
+                break;
+            }
+            case DGCOL_TAG: {
+                std::wstring value = DataGrid_GetCellDisplayText(state, r, c);
+                if (!value.empty()) {
+                    UINT32 tag_bg = cell_style.bg_color ? ResolveThemeColor(cell_style.bg_color) : ThemeColor_LightBg(ThemeColor_Primary());
+                    UINT32 tag_fg = cell_style.fg_color ? ResolveThemeColor(cell_style.fg_color) : ThemeColor_Primary();
+                    float tag_width = min(cw - 16.0f, max(48.0f, (float)value.length() * ((float)state->font.font_size * 0.9f)));
+                    float tag_height = row_h - 10.0f;
+                    float tag_x = col_x + 8.0f;
+                    if (state->columns[c].cell_alignment == DWRITE_TEXT_ALIGNMENT_CENTER) tag_x = col_x + (cw - tag_width) / 2.0f;
+                    else if (state->columns[c].cell_alignment == DWRITE_TEXT_ALIGNMENT_TRAILING) tag_x = col_x + cw - tag_width - 8.0f;
+                    float tag_y = row_y + (row_h - tag_height) / 2.0f;
+                    brush->SetColor(ColorFromUInt32(tag_bg));
+                    rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tag_x, tag_y, tag_x + tag_width, tag_y + tag_height), tag_height / 2.0f, tag_height / 2.0f), brush);
+                    brush->SetColor(ColorFromUInt32(tag_fg));
+                    IDWriteTextLayout* layout = nullptr;
+                    factory->CreateTextLayout(value.c_str(), (UINT32)value.length(), text_format, max(1.0f, tag_width - 14.0f), max(1.0f, tag_height), &layout);
+                    if (layout) {
+                        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        rt->DrawTextLayout(D2D1::Point2F(tag_x + 7.0f, tag_y), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                        layout->Release();
+                    }
+                }
+                break;
+            }
+            case DGCOL_IMAGE: {
+                DataGridCell* concrete_cell = DataGrid_GetConcreteCell(state, r, c);
+                bool has_bitmap = concrete_cell && !concrete_cell->image_data.empty();
+                float icon_box = min(cw - 18.0f, row_h - 10.0f);
+                float ix = col_x + (cw - icon_box) / 2.0f;
+                float iy = row_y + (row_h - icon_box) / 2.0f;
+                UINT32 image_bg = cell_style.bg_color ? ResolveThemeColor(cell_style.bg_color) : ThemeColor_LightBg(ThemeColor_Primary());
+                UINT32 image_fg = cell_style.fg_color ? ResolveThemeColor(cell_style.fg_color) : ThemeColor_Primary();
+
+                brush->SetColor(ColorFromUInt32(image_bg));
+                rt->FillRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(ix, iy, ix + icon_box, iy + icon_box), 8.0f, 8.0f),
+                    brush
+                );
+
+                if (has_bitmap) {
+                    ID2D1Bitmap* bitmap = CreateBitmapFromPNGData(rt, concrete_cell->image_data);
+                    if (bitmap) {
+                        D2D1_SIZE_F bmp_size = bitmap->GetSize();
+                        float inner_padding = 6.0f;
+                        float target_w = max(1.0f, icon_box - inner_padding * 2.0f);
+                        float target_h = max(1.0f, icon_box - inner_padding * 2.0f);
+                        float scale = min(target_w / max(1.0f, bmp_size.width), target_h / max(1.0f, bmp_size.height));
+                        float draw_w = max(1.0f, bmp_size.width * scale);
+                        float draw_h = max(1.0f, bmp_size.height * scale);
+                        float draw_x = ix + (icon_box - draw_w) / 2.0f;
+                        float draw_y = iy + (icon_box - draw_h) / 2.0f;
+                        rt->DrawBitmap(
+                            bitmap,
+                            D2D1::RectF(draw_x, draw_y, draw_x + draw_w, draw_y + draw_h),
+                            1.0f,
+                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR
+                        );
+                        bitmap->Release();
+                    }
+                }
+                else {
+                    std::wstring value = DataGrid_GetCellDisplayText(state, r, c);
+                    if (!value.empty()) {
+                        brush->SetColor(ColorFromUInt32(image_fg));
                         IDWriteTextLayout* layout = nullptr;
-                        factory->CreateTextLayout(text.c_str(), (UINT32)text.length(), text_format,
-                            tr.right - tr.left, tr.bottom - tr.top, &layout);
+                        factory->CreateTextLayout(value.c_str(), (UINT32)value.length(), text_format, max(1.0f, icon_box), max(1.0f, icon_box), &layout);
                         if (layout) {
-                            DWRITE_TEXT_RANGE range = { 0, (UINT32)text.length() };
-                            layout->SetUnderline(TRUE, range);
-                            rt->DrawTextLayout(D2D1::Point2F(tr.left, tr.top), layout, brush,
-                                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                            rt->DrawTextLayout(D2D1::Point2F(ix, iy), layout, brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
                             layout->Release();
                         }
-                        
-                        // 恢复裁剪区域
-                        rt->PopAxisAlignedClip();
                     }
-                    break;
                 }
-                case DGCOL_IMAGE:
-                    break;
+                break;
             }
+            default:
+                break;
+            }
+
+            rt->PopAxisAlignedClip();
 
             if (state->show_grid_lines) {
                 brush->SetColor(grid_color);
@@ -13760,35 +19270,67 @@ void DrawDataGridView(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, DataGr
 
     rt->PopAxisAlignedClip();
 
-    brush->SetColor(D2D1::ColorF(0xDCDFE6, 1.0f));
+    brush->SetColor(ColorFromUInt32(ThemeColor_BorderBase()));
     rt->DrawRectangle(D2D1::RectF(0, 0, size.width, size.height), brush, 1.0f);
 
-    // Scrollbar indicators
     int total_rows_h = DataGrid_GetTotalRowsHeight(state);
     int visible_h = state->height - state->header_height;
     if (total_rows_h > visible_h && visible_h > 0) {
-        float track_h = (float)visible_h;
+        const float scrollbar_width = 8.0f;
+        const float scrollbar_margin = 2.0f;
+        float track_x = size.width - scrollbar_width - scrollbar_margin;
+        float track_y = hdr_h + scrollbar_margin;
+        float track_h = (float)visible_h - scrollbar_margin * 2.0f;
         float thumb_h = max(20.0f, track_h * visible_h / total_rows_h);
-        float thumb_y = hdr_h + (track_h - thumb_h) * state->scroll_y / (total_rows_h - visible_h);
-        brush->SetColor(D2D1::ColorF(0xC0C4CC, 0.6f));
-        rt->FillRoundedRectangle(D2D1::RoundedRect(
-            D2D1::RectF(size.width - 6, thumb_y, size.width - 2, thumb_y + thumb_h), 2.0f, 2.0f), brush);
+        float thumb_y = track_y + (track_h - thumb_h) * state->scroll_y / (total_rows_h - visible_h);
+        brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f));
+        rt->FillRoundedRectangle(
+            D2D1::RoundedRect(
+                D2D1::RectF(track_x, track_y, track_x + scrollbar_width, track_y + track_h),
+                scrollbar_width / 2.0f, scrollbar_width / 2.0f
+            ),
+            brush
+        );
+        brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.22f));
+        rt->FillRoundedRectangle(
+            D2D1::RoundedRect(
+                D2D1::RectF(track_x + 1.0f, thumb_y, track_x + scrollbar_width - 1.0f, thumb_y + thumb_h),
+                (scrollbar_width - 2.0f) / 2.0f, (scrollbar_width - 2.0f) / 2.0f
+            ),
+            brush
+        );
     }
     int total_cols_w = DataGrid_GetTotalColumnsWidth(state);
     if (total_cols_w > state->width && state->width > 0) {
-        float track_w = (float)state->width;
+        const float scrollbar_width = 8.0f;
+        const float scrollbar_margin = 2.0f;
+        float track_x = scrollbar_margin;
+        float track_y = size.height - scrollbar_width - scrollbar_margin;
+        float track_w = (float)state->width - scrollbar_margin * 2.0f;
         float thumb_w = max(20.0f, track_w * state->width / total_cols_w);
-        float thumb_x = (track_w - thumb_w) * state->scroll_x / (total_cols_w - state->width);
-        brush->SetColor(D2D1::ColorF(0xC0C4CC, 0.6f));
-        rt->FillRoundedRectangle(D2D1::RoundedRect(
-            D2D1::RectF(thumb_x, size.height - 6, thumb_x + thumb_w, size.height - 2), 2.0f, 2.0f), brush);
+        float thumb_x = track_x + (track_w - thumb_w) * state->scroll_x / (total_cols_w - state->width);
+        brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.05f));
+        rt->FillRoundedRectangle(
+            D2D1::RoundedRect(
+                D2D1::RectF(track_x, track_y, track_x + track_w, track_y + scrollbar_width),
+                scrollbar_width / 2.0f, scrollbar_width / 2.0f
+            ),
+            brush
+        );
+        brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.22f));
+        rt->FillRoundedRectangle(
+            D2D1::RoundedRect(
+                D2D1::RectF(thumb_x, track_y + 1.0f, thumb_x + thumb_w, track_y + scrollbar_width - 1.0f),
+                (scrollbar_width - 2.0f) / 2.0f, (scrollbar_width - 2.0f) / 2.0f
+            ),
+            brush
+        );
     }
 
     if (header_format) header_format->Release();
     text_format->Release();
     brush->Release();
 }
-
 // --- DataGridViewProc ---
 LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                    UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
@@ -13824,17 +19366,28 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             SetFocus(hwnd);
             int px = GET_X_LPARAM(lparam);
             int py = GET_Y_LPARAM(lparam);
+            POINT screen_pt = { px, py };
+            ClientToScreen(hwnd, &screen_pt);
+            if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, false)) {
+                return 0;
+            }
 
             // --- Vertical scrollbar hit-test ---
             {
                 int total_rows_h = DataGrid_GetTotalRowsHeight(state);
                 int visible_h = state->height - state->header_height;
                 if (total_rows_h > visible_h && visible_h > 0 && px >= state->width - 12) {
-                    float track_h = (float)visible_h;
+                    const float scrollbar_width = 8.0f;
+                    const float scrollbar_margin = 2.0f;
+                    float track_h = (float)visible_h - scrollbar_margin * 2.0f;
                     float thumb_h = max(20.0f, track_h * visible_h / total_rows_h);
-                    float hdr_h = (float)state->header_height;
+                    float hdr_h = (float)state->header_height + scrollbar_margin;
                     int max_scroll = total_rows_h - visible_h;
                     float thumb_y = hdr_h + (track_h - thumb_h) * state->scroll_y / max_scroll;
+                    float track_x = (float)state->width - scrollbar_width - scrollbar_margin;
+                    if ((float)px < track_x) {
+                        break;
+                    }
                     if ((float)py >= thumb_y && (float)py <= thumb_y + thumb_h) {
                         // Click on thumb - start dragging
                         state->scrollbar_v_dragging = true;
@@ -13859,15 +19412,21 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             {
                 int total_cols_w = DataGrid_GetTotalColumnsWidth(state);
                 if (total_cols_w > state->width && state->width > 0 && py >= state->height - 12) {
-                    float track_w = (float)state->width;
+                    const float scrollbar_width = 8.0f;
+                    const float scrollbar_margin = 2.0f;
+                    float track_w = (float)state->width - scrollbar_margin * 2.0f;
                     float thumb_w = max(20.0f, track_w * state->width / total_cols_w);
                     int max_scroll = total_cols_w - state->width;
-                    float thumb_x = (track_w - thumb_w) * state->scroll_x / max_scroll;
+                    float thumb_x = scrollbar_margin + (track_w - thumb_w) * state->scroll_x / max_scroll;
+                    float track_y = (float)state->height - scrollbar_width - scrollbar_margin;
+                    if ((float)py < track_y) {
+                        break;
+                    }
                     if ((float)px >= thumb_x && (float)px <= thumb_x + thumb_w) {
                         state->scrollbar_h_dragging = true;
                         state->scrollbar_drag_offset = (float)px - thumb_x;
                     } else {
-                        float ratio = ((float)px - thumb_w * 0.5f) / (track_w - thumb_w);
+                        float ratio = ((float)px - scrollbar_margin - thumb_w * 0.5f) / (track_w - thumb_w);
                         ratio = max(0.0f, min(1.0f, ratio));
                         state->scroll_x = (int)(ratio * max_scroll);
                         state->scrollbar_h_dragging = true;
@@ -13935,6 +19494,12 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
                 state->selected_col = hit_col;
                 if (changed && state->selection_changed_cb) state->selection_changed_cb(hwnd, hit_row, hit_col);
                 if (state->cell_click_cb) state->cell_click_cb(hwnd, hit_row, hit_col);
+                if (!state->virtual_mode &&
+                    hit_col >= 0 &&
+                    hit_col < (int)state->columns.size() &&
+                    state->columns[hit_col].type == DGCOL_COMBOBOX) {
+                    DataGrid_BeginComboEdit(state, hit_row, hit_col);
+                }
                 InvalidateRect(hwnd, nullptr, TRUE);
             }
             return 0;
@@ -13942,21 +19507,41 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 
         case WM_LBUTTONDBLCLK: {
             if (!state->enabled) break;
+
+            auto dblclick_it = g_datagrid_double_click_enabled.find(hwnd);
+            if (dblclick_it != g_datagrid_double_click_enabled.end() && !dblclick_it->second) {
+                return 0;
+            }
+
             int px = GET_X_LPARAM(lparam);
             int py = GET_Y_LPARAM(lparam);
             int hit_row, hit_col;
             DataGrid_HitTest(state, px, py, hit_row, hit_col);
             if (hit_row >= 0 && hit_col >= 0) {
                 if (state->cell_dblclick_cb) state->cell_dblclick_cb(hwnd, hit_row, hit_col);
-                // Enter edit mode for text columns
-                if (state->columns[hit_col].type == DGCOL_TEXT) {
-                    DataGrid_BeginEdit(state, hit_row, hit_col);
+
+                if (!state->virtual_mode && hit_col < (int)state->columns.size()) {
+                    if (state->columns[hit_col].type == DGCOL_CHECKBOX && DataGrid_HasConcreteCell(state, hit_row, hit_col)) {
+                        state->rows[hit_row].cells[hit_col].checked = !state->rows[hit_row].cells[hit_col].checked;
+                        if (state->cell_value_changed_cb) state->cell_value_changed_cb(hwnd, hit_row, hit_col);
+                    }
+                    else if (state->columns[hit_col].type == DGCOL_COMBOBOX) {
+                        DataGrid_BeginComboEdit(state, hit_row, hit_col);
+                    }
+                    else if (state->columns[hit_col].type == DGCOL_TEXT) {
+                        DataGrid_BeginEdit(state, hit_row, hit_col);
+                    }
                 }
+                InvalidateRect(hwnd, nullptr, TRUE);
             }
             return 0;
         }
-
         case WM_LBUTTONUP: {
+            POINT screen_pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            ClientToScreen(hwnd, &screen_pt);
+            if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, true)) {
+                return 0;
+            }
             if (state->scrollbar_v_dragging || state->scrollbar_h_dragging) {
                 state->scrollbar_v_dragging = false;
                 state->scrollbar_h_dragging = false;
@@ -13972,6 +19557,24 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             return 0;
         }
 
+        case WM_RBUTTONDOWN: {
+            POINT screen_pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            ClientToScreen(hwnd, &screen_pt);
+            if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, false)) {
+                return 0;
+            }
+            break;
+        }
+
+        case WM_RBUTTONUP: {
+            POINT screen_pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            ClientToScreen(hwnd, &screen_pt);
+            if (DispatchVisiblePopupMenuClick(hwnd, screen_pt, true)) {
+                return 0;
+            }
+            break;
+        }
+
         case WM_MOUSEMOVE: {
             if (!state->enabled) break;
             int px = GET_X_LPARAM(lparam);
@@ -13982,9 +19585,10 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
                 int total_rows_h = DataGrid_GetTotalRowsHeight(state);
                 int visible_h = state->height - state->header_height;
                 int max_scroll = max(0, total_rows_h - visible_h);
-                float track_h = (float)visible_h;
+                const float scrollbar_margin = 2.0f;
+                float track_h = (float)visible_h - scrollbar_margin * 2.0f;
                 float thumb_h = max(20.0f, track_h * visible_h / total_rows_h);
-                float hdr_h = (float)state->header_height;
+                float hdr_h = (float)state->header_height + scrollbar_margin;
                 float new_thumb_y = (float)py - state->scrollbar_drag_offset - hdr_h;
                 float ratio = new_thumb_y / (track_h - thumb_h);
                 ratio = max(0.0f, min(1.0f, ratio));
@@ -13995,9 +19599,10 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             if (state->scrollbar_h_dragging) {
                 int total_cols_w = DataGrid_GetTotalColumnsWidth(state);
                 int max_scroll = max(0, total_cols_w - state->width);
-                float track_w = (float)state->width;
+                const float scrollbar_margin = 2.0f;
+                float track_w = (float)state->width - scrollbar_margin * 2.0f;
                 float thumb_w = max(20.0f, track_w * state->width / total_cols_w);
-                float new_thumb_x = (float)px - state->scrollbar_drag_offset;
+                float new_thumb_x = (float)px - state->scrollbar_drag_offset - scrollbar_margin;
                 float ratio = new_thumb_x / (track_w - thumb_w);
                 ratio = max(0.0f, min(1.0f, ratio));
                 state->scroll_x = (int)(ratio * max_scroll);
@@ -14115,8 +19720,12 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
                     break;
                 case VK_RETURN:
                 case VK_F2:
-                    if (col >= 0 && col < col_count && state->columns[col].type == DGCOL_TEXT) {
-                        DataGrid_BeginEdit(state, state->selected_row, state->selected_col);
+                    if (col >= 0 && col < col_count) {
+                        if (state->columns[col].type == DGCOL_TEXT) {
+                            DataGrid_BeginEdit(state, state->selected_row, state->selected_col);
+                        } else if (state->columns[col].type == DGCOL_COMBOBOX) {
+                            DataGrid_BeginComboEdit(state, state->selected_row, state->selected_col);
+                        }
                     }
                     return 0;
                 case VK_ESCAPE:
@@ -14147,18 +19756,62 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
         }
 
         case WM_KILLFOCUS: {
-            if (state->editing && (HWND)wparam != state->edit_hwnd) {
+            HWND next_focus = (HWND)wparam;
+            if (state->editing &&
+                state->edit_col >= 0 &&
+                state->edit_col < (int)state->columns.size() &&
+                state->columns[state->edit_col].type == DGCOL_COMBOBOX) {
+                return 0;
+            }
+            if (state->editing &&
+                next_focus != state->edit_hwnd &&
+                (!next_focus || !IsChild(state->edit_hwnd, next_focus))) {
                 DataGrid_EndEdit(state, true);
             }
             return 0;
         }
 
         case WM_COMMAND: {
-            // Handle edit box notifications
             if (state->editing && (HWND)lparam == state->edit_hwnd) {
-                if (HIWORD(wparam) == EN_KILLFOCUS) {
+                int notify = HIWORD(wparam);
+                int edit_col = state->edit_col;
+                if (edit_col >= 0 &&
+                    edit_col < (int)state->columns.size() &&
+                    state->columns[edit_col].type == DGCOL_COMBOBOX) {
+                    if (notify == CBN_SELENDOK || notify == CBN_KILLFOCUS) {
+                        DataGrid_EndEdit(state, true);
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                    }
+                } else if (notify == EN_KILLFOCUS) {
                     DataGrid_EndEdit(state, true);
                 }
+            }
+            return 0;
+        }
+
+        case WM_DATAGRID_COMBO_COMMIT: {
+            HWND combo_hwnd = (HWND)wparam;
+            if (state->editing && state->edit_hwnd == combo_hwnd) {
+                DataGrid_EndEdit(state, true);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+
+        case WM_DATAGRID_TEXT_COMMIT: {
+            HWND edit_hwnd = (HWND)wparam;
+            if (state->editing && state->edit_hwnd == edit_hwnd) {
+                DataGrid_EndEdit(state, true);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+
+        case WM_DATAGRID_TEXT_CANCEL: {
+            HWND edit_hwnd = (HWND)wparam;
+            if (state->editing && state->edit_hwnd == edit_hwnd) {
+                DataGrid_EndEdit(state, false);
+                InvalidateRect(hwnd, nullptr, TRUE);
             }
             return 0;
         }
@@ -14167,6 +19820,10 @@ LRESULT CALLBACK DataGridViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
             DataGrid_EndEdit(state, false);
             RemoveWindowSubclass(hwnd, DataGridViewProc, uIdSubclass);
             g_datagrids.erase(hwnd);
+            g_datagrid_double_click_enabled.erase(hwnd);
+            g_datagrid_header_multiline.erase(hwnd);
+            g_datagrid_header_styles.erase(hwnd);
+            g_datagrid_combo_items.erase(hwnd);
             delete state;
             return 0;
         }
@@ -14217,12 +19874,12 @@ __declspec(dllexport) HWND __stdcall CreateDataGridView(
     state->enabled = true;
     state->fg_color = fg_color;
     state->bg_color = bg_color;
-    state->header_bg_color = ThemeColor_BackgroundLight();
-    state->header_fg_color = ThemeColor_TextRegular();
-    state->grid_line_color = ThemeColor_BorderLighter();
-    state->select_color = ThemeColor_LightBg(ThemeColor_Primary());
-    state->hover_color = ThemeColor_BackgroundLight();
-    state->zebra_color = 0xFFFAFAFA;
+    state->header_bg_color = 14;
+    state->header_fg_color = 5;
+    state->grid_line_color = 11;
+    state->select_color = 15;
+    state->hover_color = 14;
+    state->zebra_color = 14;
     state->font.font_name = L"Microsoft YaHei UI";
     state->font.font_size = 14;
     state->font.bold = false; state->font.italic = false; state->font.underline = false;
@@ -14234,6 +19891,9 @@ __declspec(dllexport) HWND __stdcall CreateDataGridView(
     state->virtual_data_cb = nullptr;
 
     g_datagrids[hwnd] = state;
+    g_datagrid_double_click_enabled[hwnd] = true;
+    g_datagrid_header_multiline[hwnd] = false;
+    g_datagrid_header_styles[hwnd] = DGHEADER_STYLE_PLAIN;
     SetWindowSubclass(hwnd, DataGridViewProc, 0, (DWORD_PTR)state);
     return hwnd;
 }
@@ -14250,7 +19910,7 @@ static int DataGrid_AddColumn(HWND hGrid, const unsigned char* header_bytes, int
     col.min_width = 30;
     col.type = type;
     col.resizable = true;
-    col.sortable = (type == DGCOL_TEXT);
+    col.sortable = (type == DGCOL_TEXT || type == DGCOL_COMBOBOX || type == DGCOL_TAG);
     col.sort_order = DGSORT_NONE;
     state->columns.push_back(col);
     // Add cells to existing rows
@@ -14280,6 +19940,12 @@ __declspec(dllexport) int __stdcall DataGrid_AddImageColumn(HWND hGrid, const un
     return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_IMAGE);
 }
 
+__declspec(dllexport) int __stdcall DataGrid_AddComboBoxColumn(HWND hGrid, const unsigned char* h, int hl, int w) {
+    return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_COMBOBOX);
+}
+__declspec(dllexport) int __stdcall DataGrid_AddTagColumn(HWND hGrid, const unsigned char* h, int hl, int w) {
+    return DataGrid_AddColumn(hGrid, h, hl, w, DGCOL_TAG);
+}
 __declspec(dllexport) void __stdcall DataGrid_RemoveColumn(HWND hGrid, int col_index) {
     auto it = g_datagrids.find(hGrid);
     if (it == g_datagrids.end()) return;
@@ -14289,17 +19955,25 @@ __declspec(dllexport) void __stdcall DataGrid_RemoveColumn(HWND hGrid, int col_i
     for (auto& row : state->rows) {
         if (col_index < (int)row.cells.size()) row.cells.erase(row.cells.begin() + col_index);
     }
+    auto combo_grid_it = g_datagrid_combo_items.find(hGrid);
+    if (combo_grid_it != g_datagrid_combo_items.end()) {
+        std::map<int, std::vector<std::wstring>> shifted_items;
+        for (auto& pair : combo_grid_it->second) {
+            if (pair.first < col_index) shifted_items[pair.first] = pair.second;
+            else if (pair.first > col_index) shifted_items[pair.first - 1] = pair.second;
+        }
+        combo_grid_it->second.swap(shifted_items);
+    }
     InvalidateRect(hGrid, nullptr, TRUE);
 }
-
 __declspec(dllexport) void __stdcall DataGrid_ClearColumns(HWND hGrid) {
     auto it = g_datagrids.find(hGrid);
     if (it == g_datagrids.end()) return;
     it->second->columns.clear();
     it->second->rows.clear();
+    g_datagrid_combo_items[hGrid].clear();
     InvalidateRect(hGrid, nullptr, TRUE);
 }
-
 __declspec(dllexport) int __stdcall DataGrid_GetColumnCount(HWND hGrid) {
     auto it = g_datagrids.find(hGrid);
     if (it == g_datagrids.end()) return 0;
@@ -14312,6 +19986,32 @@ __declspec(dllexport) void __stdcall DataGrid_SetColumnWidth(HWND hGrid, int col
     if (col_index < 0 || col_index >= (int)it->second->columns.size()) return;
     it->second->columns[col_index].width = max(it->second->columns[col_index].min_width, width);
     InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetColumnHeaderText(HWND hGrid, int col_index,
+    const unsigned char* header_bytes, int header_len) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    if (col_index < 0 || col_index >= (int)it->second->columns.size()) return;
+    it->second->columns[col_index].header_text = Utf8ToWide(header_bytes, header_len);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) int __stdcall DataGrid_GetColumnHeaderText(HWND hGrid, int col_index,
+    unsigned char* buffer, int buffer_size) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return 0;
+    if (col_index < 0 || col_index >= (int)it->second->columns.size()) return 0;
+
+    std::string utf8 = WindowWideToUtf8(it->second->columns[col_index].header_text);
+    int len = (int)utf8.size();
+    if (!buffer || buffer_size <= 0) return len;
+
+    int copied = min(len, buffer_size);
+    if (copied > 0) {
+        memcpy(buffer, utf8.data(), copied);
+    }
+    return copied;
 }
 
 // --- Row management ---
@@ -14387,6 +20087,44 @@ __declspec(dllexport) int __stdcall DataGrid_GetCellText(HWND hGrid, int row, in
     if (!buffer || buffer_size <= 0) return needed;
     int written = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, (char*)buffer, buffer_size, nullptr, nullptr);
     return written > 0 ? written - 1 : 0;
+}
+
+static BOOL DataGrid_SetCellImageBytesInternal(HWND hGrid, int row, int col,
+    const unsigned char* image_data, int data_len) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return FALSE;
+    DataGridViewState* state = it->second;
+    DataGridCell* cell = DataGrid_GetConcreteCell(state, row, col);
+    if (!cell) return FALSE;
+
+    if (!image_data || data_len <= 0) {
+        cell->image_data.clear();
+        InvalidateRect(hGrid, nullptr, TRUE);
+        return TRUE;
+    }
+
+    cell->image_data.assign(image_data, image_data + data_len);
+    InvalidateRect(hGrid, nullptr, TRUE);
+    return TRUE;
+}
+
+__declspec(dllexport) BOOL __stdcall DataGrid_SetCellImageFromMemory(HWND hGrid, int row, int col,
+    const unsigned char* image_data, int data_len) {
+    return DataGrid_SetCellImageBytesInternal(hGrid, row, col, image_data, data_len);
+}
+
+__declspec(dllexport) BOOL __stdcall DataGrid_SetCellImageFromFile(HWND hGrid, int row, int col,
+    const unsigned char* file_path_bytes, int path_len) {
+    std::wstring file_path = Utf8ToWide(file_path_bytes, path_len);
+    if (file_path.empty()) return FALSE;
+
+    std::vector<unsigned char> file_bytes;
+    if (!ReadBinaryFileBytes(file_path, file_bytes) || file_bytes.empty()) return FALSE;
+    return DataGrid_SetCellImageBytesInternal(hGrid, row, col, file_bytes.data(), (int)file_bytes.size());
+}
+
+__declspec(dllexport) void __stdcall DataGrid_ClearCellImage(HWND hGrid, int row, int col) {
+    DataGrid_SetCellImageBytesInternal(hGrid, row, col, nullptr, 0);
 }
 
 __declspec(dllexport) void __stdcall DataGrid_SetCellChecked(HWND hGrid, int row, int col, BOOL checked) {
@@ -14519,6 +20257,53 @@ __declspec(dllexport) void __stdcall DataGrid_SetHeaderHeight(HWND hGrid, int he
     InvalidateRect(hGrid, nullptr, TRUE);
 }
 
+__declspec(dllexport) void __stdcall DataGrid_SetDoubleClickEnabled(HWND hGrid, BOOL enabled) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    g_datagrid_double_click_enabled[hGrid] = (enabled != 0);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetHeaderMultiline(HWND hGrid, BOOL enabled) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    g_datagrid_header_multiline[hGrid] = (enabled != 0);
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetHeaderStyle(HWND hGrid, int style) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+
+    if (style < DGHEADER_STYLE_PLAIN || style > DGHEADER_STYLE_BORDERED) {
+        style = DGHEADER_STYLE_PLAIN;
+    }
+
+    g_datagrid_header_styles[hGrid] = style;
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetColumnComboItems(
+    HWND hGrid,
+    int col_index,
+    const unsigned char* items_bytes,
+    int items_len
+) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+    DataGridViewState* state = it->second;
+    if (col_index < 0 || col_index >= (int)state->columns.size()) return;
+
+    auto& combo_items = g_datagrid_combo_items[hGrid];
+    if (!items_bytes || items_len <= 0) {
+        combo_items.erase(col_index);
+        InvalidateRect(hGrid, nullptr, TRUE);
+        return;
+    }
+
+    combo_items[col_index] = SplitLines(Utf8ToWide(items_bytes, items_len));
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
 // --- Event callbacks ---
 
 __declspec(dllexport) void __stdcall DataGrid_SetCellClickCallback(HWND hGrid, DataGridCellClickCallback cb) {
@@ -14561,6 +20346,54 @@ __declspec(dllexport) void __stdcall DataGrid_SetBounds(HWND hGrid, int x, int y
 
 __declspec(dllexport) void __stdcall DataGrid_Refresh(HWND hGrid) {
     InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) void __stdcall DataGrid_SetColors(
+    HWND hGrid,
+    UINT32 fg_color,
+    UINT32 bg_color,
+    UINT32 header_bg_color,
+    UINT32 header_fg_color,
+    UINT32 select_color,
+    UINT32 hover_color,
+    UINT32 grid_line_color
+) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return;
+
+    DataGridViewState* state = it->second;
+    state->fg_color = fg_color;
+    state->bg_color = bg_color;
+    state->header_bg_color = header_bg_color;
+    state->header_fg_color = header_fg_color;
+    state->select_color = select_color;
+    state->hover_color = hover_color;
+    state->grid_line_color = grid_line_color;
+    InvalidateRect(hGrid, nullptr, TRUE);
+}
+
+__declspec(dllexport) int __stdcall DataGrid_GetColors(
+    HWND hGrid,
+    UINT32* fg_color,
+    UINT32* bg_color,
+    UINT32* header_bg_color,
+    UINT32* header_fg_color,
+    UINT32* select_color,
+    UINT32* hover_color,
+    UINT32* grid_line_color
+) {
+    auto it = g_datagrids.find(hGrid);
+    if (it == g_datagrids.end()) return -1;
+
+    DataGridViewState* state = it->second;
+    if (fg_color) *fg_color = state->fg_color;
+    if (bg_color) *bg_color = state->bg_color;
+    if (header_bg_color) *header_bg_color = state->header_bg_color;
+    if (header_fg_color) *header_fg_color = state->header_fg_color;
+    if (select_color) *select_color = state->select_color;
+    if (hover_color) *hover_color = state->hover_color;
+    if (grid_line_color) *grid_line_color = state->grid_line_color;
+    return 0;
 }
 
 // 设置列头对齐方式 (0=左对齐, 1=居中, 2=右对齐)
@@ -14640,6 +20473,7 @@ EventCallbacks* FindEventCallbacks(HWND hwnd) {
     if (!hwnd) return nullptr;
 
     // 按使用频率排序查找
+    { auto it = g_windows.find(hwnd); if (it != g_windows.end()) return &it->second->events; }
     { auto it = g_checkboxes.find(hwnd); if (it != g_checkboxes.end()) return &it->second->events; }
     { auto it = g_radiobuttons.find(hwnd); if (it != g_radiobuttons.end()) return &it->second->events; }
     { auto it = g_listboxes.find(hwnd); if (it != g_listboxes.end()) return &it->second->events; }
@@ -14651,6 +20485,8 @@ EventCallbacks* FindEventCallbacks(HWND hwnd) {
     { auto it = g_pictureboxes.find(hwnd); if (it != g_pictureboxes.end()) return &it->second->events; }
     { auto it = g_hotkeys.find(hwnd); if (it != g_hotkeys.end()) return &it->second->events; }
     { auto it = g_groupboxes.find(hwnd); if (it != g_groupboxes.end()) return &it->second->events; }
+    { auto it = g_panels.find(hwnd); if (it != g_panels.end()) return &it->second->events; }
+    { auto it = g_tab_controls.find(hwnd); if (it != g_tab_controls.end()) return &it->second->events; }
     { auto it = g_datagrids.find(hwnd); if (it != g_datagrids.end()) return &it->second->events; }
 
     // 也检查D2DEditBox
@@ -14725,6 +20561,164 @@ static EmojiButton* FindEmojiButton(HWND hParent, int button_id) {
     return nullptr;
 }
 
+static EmojiButton* FindEmojiButtonByWindow(HWND hwnd, HWND* out_parent = nullptr, HWND* out_state_host = nullptr) {
+    auto it = g_button_window_bindings.find(hwnd);
+    if (it == g_button_window_bindings.end()) return nullptr;
+    if (out_parent) *out_parent = it->second.callback_parent;
+    if (out_state_host) *out_state_host = it->second.state_host;
+    return FindEmojiButton(it->second.state_host, it->second.button_id);
+}
+
+static UINT32 ResolveButtonHostBackgroundColor(HWND hwnd) {
+    return ResolveContainerBackgroundColor(hwnd, 13);
+}
+
+static void SyncEmojiButtonWindow(EmojiButton* button) {
+    if (!button || !button->hwnd || !IsWindow(button->hwnd)) return;
+    auto binding_it = g_button_window_bindings.find(button->hwnd);
+    if (binding_it == g_button_window_bindings.end()) return;
+
+    POINT child_pt = { button->x, button->y };
+    HWND state_host = binding_it->second.state_host;
+    HWND callback_parent = binding_it->second.callback_parent;
+    if (state_host && callback_parent && state_host != callback_parent) {
+        MapWindowPoints(state_host, callback_parent, &child_pt, 1);
+    }
+    UINT flags = SWP_NOZORDER | SWP_NOACTIVATE;
+    flags |= button->visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+    SetWindowPos(button->hwnd, nullptr, child_pt.x, child_pt.y, button->width, button->height, flags);
+    InvalidateRect(button->hwnd, nullptr, FALSE);
+}
+
+static UINT32 GetButtonHostBackgroundColor(HWND hwnd) {
+    return ResolveButtonHostBackgroundColor(hwnd);
+}
+
+static LRESULT CALLBACK EmojiButtonWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    HWND logical_parent = nullptr;
+    HWND state_host = nullptr;
+    EmojiButton* button = FindEmojiButtonByWindow(hwnd, &logical_parent, &state_host);
+    if (!button) return DefWindowProcW(hwnd, msg, wparam, lparam);
+
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        RECT rc = {};
+        GetClientRect(hwnd, &rc);
+        int w = max(1, rc.right - rc.left);
+        int h = max(1, rc.bottom - rc.top);
+        ID2D1HwndRenderTarget* rt = nullptr;
+        HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(),
+            D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU((UINT)w, (UINT)h)),
+            &rt
+        );
+        if (SUCCEEDED(hr) && rt) {
+            UINT dpi = GetDpiForWindow(hwnd);
+            if (dpi > 0) rt->SetDpi((float)dpi, (float)dpi);
+            rt->BeginDraw();
+            rt->Clear(ColorFromUInt32(GetButtonHostBackgroundColor(logical_parent)));
+            EmojiButton local_button = *button;
+            local_button.x = 0;
+            local_button.y = 0;
+            DrawButton(rt, g_dwrite_factory, local_button);
+            rt->EndDraw();
+            rt->Release();
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+        bool hovered = button->enabled && button->visible && !button->loading;
+        if (hovered != button->is_hovered) {
+            button->is_hovered = hovered;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT) };
+        tme.dwFlags = TME_LEAVE;
+        tme.hwndTrack = hwnd;
+        TrackMouseEvent(&tme);
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        if (button->is_hovered) {
+            button->is_hovered = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        if (button->enabled && button->visible && !button->loading) {
+            button->is_pressed = true;
+            SetCapture(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+
+    case WM_LBUTTONUP: {
+        bool was_pressed = button->is_pressed;
+        button->is_pressed = false;
+        if (GetCapture() == hwnd) ReleaseCapture();
+        if (was_pressed && button->enabled && button->visible && !button->loading) {
+            POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            if (pt.x >= 0 && pt.x <= button->width && pt.y >= 0 && pt.y <= button->height) {
+                if (g_button_callback) g_button_callback(button->id, logical_parent);
+            }
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_TIMER:
+        if (wparam == 1 && button->loading) {
+            button->loading_phase = (button->loading_phase + 1) % 8;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        break;
+
+    case WM_ENABLE:
+        button->enabled = (wparam != 0);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_CONTEXTMENU: {
+        POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+        if (pt.x == -1 && pt.y == -1) GetCursorPos(&pt);
+        HWND popup = nullptr;
+        auto binding_group_it = g_button_popup_menu_bindings.find(logical_parent);
+        if (binding_group_it != g_button_popup_menu_bindings.end()) {
+            auto popup_it = binding_group_it->second.find(button->id);
+            if (popup_it != binding_group_it->second.end() && LookupPopupMenuState(popup_it->second)) {
+                popup = popup_it->second;
+            }
+        }
+        if (!popup) {
+            HWND root = GetAncestor(hwnd, GA_ROOT);
+            popup = ResolveBoundButtonMenuAtPoint(root ? root : logical_parent, pt);
+        }
+        if (popup) {
+            ShowContextMenu(popup, pt.x, pt.y);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    case WM_NCDESTROY:
+        KillTimer(hwnd, 1);
+        g_button_window_bindings.erase(hwnd);
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
 static LabelState* FindLabelState(HWND hwnd) {
     auto it = g_labels.find(hwnd);
     return it != g_labels.end() ? it->second : nullptr;
@@ -14745,12 +20739,49 @@ static void SetParentDrawnLabelBounds(HWND hwnd, int x, int y, int width, int he
 }
 
 static void ApplyDeferredWindowPos(HDWP* hdwp, HWND hChild, int x, int y, int width, int height) {
-    UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
+    UINT flags = SWP_NOZORDER | SWP_NOACTIVATE;
     if (hdwp && *hdwp) {
         *hdwp = DeferWindowPos(*hdwp, hChild, nullptr, x, y, width, height, flags);
         if (*hdwp) return;
     }
     SetWindowPos(hChild, nullptr, x, y, width, height, flags);
+}
+
+static SIZE GetPreferredButtonSize(LayoutManager* lm, int button_id, EmojiButton* btn) {
+    SIZE size = {};
+    auto it = g_layout_button_preferred_sizes.find(std::make_pair(lm->parent_hwnd, button_id));
+    if (it != g_layout_button_preferred_sizes.end()) {
+        return it->second;
+    }
+    if (btn) {
+        size.cx = btn->width;
+        size.cy = btn->height;
+    }
+    return size;
+}
+
+static SIZE GetPreferredControlSize(HWND hChild) {
+    SIZE size = {};
+    auto it = g_layout_control_preferred_sizes.find(hChild);
+    if (it != g_layout_control_preferred_sizes.end()) {
+        return it->second;
+    }
+
+    if (IsParentDrawnLabel(hChild)) {
+        LabelState* label = FindLabelState(hChild);
+        if (label) {
+            size.cx = label->width;
+            size.cy = label->height;
+        }
+        return size;
+    }
+
+    RECT rc = {};
+    if (GetWindowRect(hChild, &rc)) {
+        size.cx = rc.right - rc.left;
+        size.cy = rc.bottom - rc.top;
+    }
+    return size;
 }
 
 // 流式布局计算（水平/垂直）
@@ -14771,8 +20802,9 @@ void CalculateFlowLayout(LayoutManager* lm, int client_width, int client_height,
             if (!btn) continue;
             auto prop_it = lm->button_props.find(item.button_id);
             if (prop_it != lm->button_props.end()) props = prop_it->second;
-            cw = btn->width;
-            ch = btn->height;
+            SIZE preferred = GetPreferredButtonSize(lm, item.button_id, btn);
+            cw = preferred.cx;
+            ch = preferred.cy;
 
             if (lm->type == LAYOUT_FLOW_HORIZONTAL) {
                 int needed_width = props.margin_left + cw + props.margin_right;
@@ -14808,19 +20840,9 @@ void CalculateFlowLayout(LayoutManager* lm, int client_width, int client_height,
             if (!IsWindow(hChild) || (!IsWindowVisible(hChild) && !IsParentDrawnLabel(hChild))) continue;
             auto prop_it = lm->control_props.find(hChild);
             if (prop_it != lm->control_props.end()) props = prop_it->second;
-
-            if (IsParentDrawnLabel(hChild)) {
-                LabelState* label = FindLabelState(hChild);
-                cw = label->width;
-                ch = label->height;
-            } else {
-                RECT rc;
-                GetWindowRect(hChild, &rc);
-                HWND hParent = GetParent(hChild);
-                MapWindowPoints(HWND_DESKTOP, hParent, (LPPOINT)&rc, 2);
-                cw = rc.right - rc.left;
-                ch = rc.bottom - rc.top;
-            }
+            SIZE preferred = GetPreferredControlSize(hChild);
+            cw = preferred.cx;
+            ch = preferred.cy;
 
             if (lm->type == LAYOUT_FLOW_HORIZONTAL) {
                 int needed_width = props.margin_left + cw + props.margin_right;
@@ -14885,14 +20907,15 @@ void CalculateGridLayout(LayoutManager* lm, int client_width, int client_height,
 
             auto prop_it = lm->button_props.find(item.button_id);
             if (prop_it != lm->button_props.end()) props = prop_it->second;
+            SIZE preferred = GetPreferredButtonSize(lm, item.button_id, btn);
 
             int cell_x = lm->padding_left + col * (cell_width + lm->spacing);
             int cell_y = lm->padding_top + tb_offset + row * (cell_height + lm->spacing);
 
             int ctrl_x = cell_x + props.margin_left;
             int ctrl_y = cell_y + props.margin_top;
-            int ctrl_w = props.stretch_horizontal ? (cell_width - props.margin_left - props.margin_right) : btn->width;
-            int ctrl_h = props.stretch_vertical ? (cell_height - props.margin_top - props.margin_bottom) : btn->height;
+            int ctrl_w = props.stretch_horizontal ? (cell_width - props.margin_left - props.margin_right) : preferred.cx;
+            int ctrl_h = props.stretch_vertical ? (cell_height - props.margin_top - props.margin_bottom) : preferred.cy;
             if (ctrl_w < 0) ctrl_w = 0;
             if (ctrl_h < 0) ctrl_h = 0;
 
@@ -14914,31 +20937,18 @@ void CalculateGridLayout(LayoutManager* lm, int client_width, int client_height,
             int ctrl_x = cell_x + props.margin_left;
             int ctrl_y = cell_y + props.margin_top;
             int ctrl_w, ctrl_h;
+            SIZE preferred = GetPreferredControlSize(hChild);
 
             if (props.stretch_horizontal) {
                 ctrl_w = cell_width - props.margin_left - props.margin_right;
             } else {
-                if (!IsParentDrawnLabel(hChild)) {
-                    RECT rc;
-                    GetWindowRect(hChild, &rc);
-                    ctrl_w = rc.right - rc.left;
-                } else {
-                    LabelState* label = FindLabelState(hChild);
-                    ctrl_w = label->width;
-                }
+                ctrl_w = preferred.cx;
             }
 
             if (props.stretch_vertical) {
                 ctrl_h = cell_height - props.margin_top - props.margin_bottom;
             } else {
-                if (!IsParentDrawnLabel(hChild)) {
-                    RECT rc;
-                    GetWindowRect(hChild, &rc);
-                    ctrl_h = rc.bottom - rc.top;
-                } else {
-                    LabelState* label = FindLabelState(hChild);
-                    ctrl_h = label->height;
-                }
+                ctrl_h = preferred.cy;
             }
 
             if (ctrl_w < 0) ctrl_w = 0;
@@ -14976,23 +20986,17 @@ void CalculateDockLayout(LayoutManager* lm, int client_width, int client_height,
             if (!btn) continue;
             auto prop_it = lm->button_props.find(item.button_id);
             if (prop_it != lm->button_props.end()) props = prop_it->second;
-            cw = btn->width;
-            ch = btn->height;
+            SIZE preferred = GetPreferredButtonSize(lm, item.button_id, btn);
+            cw = preferred.cx;
+            ch = preferred.cy;
         } else {
             hChild = item.hwnd;
             if (!IsWindow(hChild) || (!IsWindowVisible(hChild) && !IsParentDrawnLabel(hChild))) continue;
             auto prop_it = lm->control_props.find(hChild);
             if (prop_it != lm->control_props.end()) props = prop_it->second;
-            if (IsParentDrawnLabel(hChild)) {
-                LabelState* label = FindLabelState(hChild);
-                cw = label->width;
-                ch = label->height;
-            } else {
-                RECT rc;
-                GetWindowRect(hChild, &rc);
-                cw = rc.right - rc.left;
-                ch = rc.bottom - rc.top;
-            }
+            SIZE preferred = GetPreferredControlSize(hChild);
+            cw = preferred.cx;
+            ch = preferred.cy;
         }
 
         if (props.dock == DOCK_FILL) {
@@ -15200,6 +21204,18 @@ __declspec(dllexport) void __stdcall AddControlToLayout(HWND hParent, HWND hCont
         if (lm->button_props.find(button_id) == lm->button_props.end()) {
             lm->button_props[button_id] = LayoutProperties();
         }
+        auto preferred_key = std::make_pair(hParent, button_id);
+        if (g_layout_button_preferred_sizes.find(preferred_key) == g_layout_button_preferred_sizes.end()) {
+            for (auto& btn : win_it->second->buttons) {
+                if (btn.id == button_id) {
+                    SIZE size = {};
+                    size.cx = btn.width;
+                    size.cy = btn.height;
+                    g_layout_button_preferred_sizes[preferred_key] = size;
+                    break;
+                }
+            }
+        }
     } else if (IsWindow(hControl)) {
         // HWND控件
         for (HWND h : lm->control_order) {
@@ -15208,6 +21224,9 @@ __declspec(dllexport) void __stdcall AddControlToLayout(HWND hParent, HWND hCont
         lm->control_order.push_back(hControl);
         if (lm->control_props.find(hControl) == lm->control_props.end()) {
             lm->control_props[hControl] = LayoutProperties();
+        }
+        if (g_layout_control_preferred_sizes.find(hControl) == g_layout_control_preferred_sizes.end()) {
+            g_layout_control_preferred_sizes[hControl] = GetPreferredControlSize(hControl);
         }
         // 如果是标签，则切换为父窗口统一绘制，避免 live resize 时子窗口闪烁
         auto label_it = g_labels.find(hControl);
@@ -15305,12 +21324,14 @@ __declspec(dllexport) void __stdcall UpdateLayout(HWND hParent) {
         EndDeferWindowPos(hdwp);
     }
 
-    // 布局更新后，统一触发子控件重绘，避免缩放时逐个 SetWindowPos 造成闪烁
+    // 布局更新后，统一触发完整重绘，清理旧区域残影
     bool has_buttons = false;
     bool has_parent_drawn_labels = false;
     for (auto& item : lm->item_order) {
         if (item.is_button) {
             has_buttons = true;
+            EmojiButton* btn = FindEmojiButton(lm->parent_hwnd, item.button_id);
+            if (btn) SyncEmojiButtonWindow(btn);
         } else if (item.hwnd && IsWindow(item.hwnd)) {
             if (IsParentDrawnLabel(item.hwnd)) {
                 has_parent_drawn_labels = true;
@@ -15319,9 +21340,11 @@ __declspec(dllexport) void __stdcall UpdateLayout(HWND hParent) {
             }
         }
     }
+    UINT redraw_flags = RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN;
     if (has_buttons || has_parent_drawn_labels) {
-        InvalidateRect(hParent, nullptr, FALSE);
+        redraw_flags |= RDW_FRAME;
     }
+    RedrawWindow(hParent, nullptr, nullptr, redraw_flags);
 }
 
 // 移除窗口的布局管理器
@@ -15566,53 +21589,95 @@ static bool ParseThemeJSON(const std::string& json, Theme& theme) {
 
 // 刷新所有控件（主题切换后调用）
 void ApplyThemeToAllControls() {
-    // 刷新所有窗口
-    for (auto& pair : g_windows) {
-        InvalidateRect(pair.first, NULL, TRUE);
+    auto redraw_visible = [](HWND hwnd, bool include_children = false) {
+        if (!hwnd || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) return;
+        UINT flags = RDW_INVALIDATE | RDW_NOERASE | RDW_FRAME;
+        if (include_children) flags |= RDW_ALLCHILDREN;
+        RedrawWindow(hwnd, nullptr, nullptr, flags);
+    };
+
+    for (auto& pair : g_editboxes) {
+        if (pair.second) {
+            RebuildBrush(pair.second->bg_brush, pair.second->bg_color);
+        }
+        redraw_visible(pair.first);
     }
-    // 刷新所有标签
+    for (auto& pair : g_d2d_editboxes) {
+        redraw_visible(pair.first);
+    }
     for (auto& pair : g_labels) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        if (pair.second) {
+            RebuildLabelBackgroundBrush(pair.second);
+        }
+        redraw_visible(pair.first);
     }
-    // 刷新所有复选框
     for (auto& pair : g_checkboxes) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        redraw_visible(pair.first);
     }
-    // 刷新所有进度条
-    for (auto& pair : g_progressbars) {
-        InvalidateRect(pair.first, NULL, TRUE);
-    }
-    // 刷新所有图片框
-    for (auto& pair : g_pictureboxes) {
-        InvalidateRect(pair.first, NULL, TRUE);
-    }
-    // 刷新所有单选按钮
     for (auto& pair : g_radiobuttons) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        redraw_visible(pair.first);
     }
-    // 刷新所有列表框
+    for (auto& pair : g_progressbars) {
+        redraw_visible(pair.first);
+    }
+    for (auto& pair : g_pictureboxes) {
+        redraw_visible(pair.first);
+    }
+    for (auto& pair : g_sliders) {
+        redraw_visible(pair.first);
+    }
+    for (auto& pair : g_switches) {
+        redraw_visible(pair.first);
+    }
     for (auto& pair : g_listboxes) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        redraw_visible(pair.first);
     }
-    // 刷新所有组合框
     for (auto& pair : g_comboboxes) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        redraw_visible(pair.first, true);
     }
-    // 刷新所有D2D组合框
     for (auto& pair : g_d2d_comboboxes) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        redraw_visible(pair.first, true);
     }
-    // 刷新所有热键控件
     for (auto& pair : g_hotkeys) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        redraw_visible(pair.first, true);
     }
-    // 刷新所有分组框
-    for (auto& pair : g_groupboxes) {
-        InvalidateRect(pair.first, NULL, TRUE);
-    }
-    // 刷新所有DataGridView
     for (auto& pair : g_datagrids) {
-        InvalidateRect(pair.first, NULL, TRUE);
+        redraw_visible(pair.first);
+    }
+    for (auto& pair : g_tab_controls) {
+        redraw_visible(pair.first, true);
+    }
+    for (auto& pair : g_tooltips) {
+        redraw_visible(pair.first);
+    }
+    for (auto& pair : g_notifications) {
+        redraw_visible(pair.first);
+    }
+
+    for (auto& pair : g_panels) {
+        redraw_visible(pair.first);
+    }
+
+    for (auto& pair : g_windows) {
+        redraw_visible(pair.first, true);
+    }
+
+    for (auto& pair : g_groupboxes) {
+        redraw_visible(pair.first, true);
+    }
+
+    for (auto& pair : g_d2d_comboboxes) {
+        if (pair.second && pair.second->dropdown_hwnd && IsWindowVisible(pair.second->dropdown_hwnd)) {
+            RedrawWindow(pair.second->dropdown_hwnd, nullptr, nullptr,
+                RDW_INVALIDATE | RDW_NOERASE | RDW_NOCHILDREN | RDW_FRAME);
+        }
+    }
+
+    for (auto& pair : g_button_window_bindings) {
+        EmojiButton* btn = FindEmojiButton(pair.second.state_host, pair.second.button_id);
+        if (btn) {
+            SyncEmojiButtonWindow(btn);
+        }
     }
 }
 
@@ -15750,7 +21815,8 @@ __declspec(dllexport) UINT32 __stdcall EW_GetThemeColor(
 // 索引: 0=primary, 1=success, 2=warning, 3=danger, 4=info,
 //       5=text_primary, 6=text_regular, 7=text_secondary, 8=text_placeholder,
 //       9=border_base, 10=border_light, 11=border_lighter, 12=border_extra_light,
-//       13=background, 14=background_light
+//       13=background, 14=background_light,
+//       15=surface_primary, 16=surface_success, 17=surface_warning, 18=surface_danger, 19=surface_info
 __declspec(dllexport) UINT32 __stdcall EW_GetThemeColorByIndex(int color_index) {
     EnsureThemesInitialized();
     const ThemeColors& c = g_current_theme->colors;
@@ -15770,6 +21836,11 @@ __declspec(dllexport) UINT32 __stdcall EW_GetThemeColorByIndex(int color_index) 
         case 12: return c.border_extra_light;
         case 13: return c.background;
         case 14: return c.background_light;
+        case 15: return ThemeColor_LightBg(c.primary);
+        case 16: return ThemeColor_LightBg(c.success);
+        case 17: return ThemeColor_LightBg(c.warning);
+        case 18: return ThemeColor_LightBg(c.danger);
+        case 19: return ThemeColor_LightBg(c.info);
         default: return 0;
     }
 }
@@ -15911,10 +21982,12 @@ __declspec(dllexport) HWND __stdcall CreateMenuBar(HWND hWindow) {
         WriteLog("CreateMenuBar: hWindow is NULL!");
         return nullptr;
     }
-    
-    auto it = g_windows.find(hWindow);
-    if (it == g_windows.end()) {
-        WriteLog("CreateMenuBar: window not found in g_windows!");
+
+    bool supported_host =
+        (g_windows.find(hWindow) != g_windows.end()) ||
+        (g_panels.find(hWindow) != g_panels.end());
+    if (!supported_host) {
+        WriteLog("CreateMenuBar: host not found in g_windows/g_panels!");
         return nullptr;
     }
     
@@ -15944,6 +22017,7 @@ __declspec(dllexport) void __stdcall DestroyMenuBar(HWND hMenuBar) {
     auto it = g_menubars.find(hMenuBar);
     if (it != g_menubars.end()) {
         MenuBarState* menubar = it->second;
+        DestroyMenuBarPopup(menubar);
         
         // 清理子菜单窗口
         if (menubar->submenu) {
@@ -16032,7 +22106,13 @@ __declspec(dllexport) void __stdcall SetMenuBarPlacement(
     HWND hMenuBar,
     int x, int y, int width, int height
 ) {
-    // 菜单栏位置由窗口自动管理，此函数预留用于未来扩展
+    auto it = g_menubars.find(hMenuBar);
+    if (it == g_menubars.end() || !it->second) return;
+    MenuBarState* state = it->second;
+    state->x = x;
+    state->y = y;
+    state->width = width;
+    state->height = height;
     InvalidateRect(hMenuBar, NULL, FALSE);
 }
 
@@ -16100,14 +22180,21 @@ __declspec(dllexport) HWND __stdcall CreateEmojiPopupMenu(HWND hOwner) {
     if (!hOwner) return nullptr;
     
     PopupMenuState* state = new PopupMenuState();
-    state->owner_hwnd = hOwner;
+    state->owner_hwnd = GetAncestor(hOwner, GA_ROOT);
+    if (!state->owner_hwnd) {
+        state->owner_hwnd = hOwner;
+    }
     state->visible = false;
-    state->hover_color = 0;
-    state->item_height = 32;
+    state->bg_color = ThemeColor_Background();
+    state->hover_color = ThemeColor_LightBg(ThemeColor_Primary());
+    state->item_height = 34;
     state->callback = nullptr;
+    state->font.font_name = L"Segoe UI Emoji";
+    state->font.font_size = 14;
     
     // 生成唯一句柄（使用指针地址）
     HWND hPopupMenu = (HWND)state;
+    state->handle_key = hPopupMenu;
     g_popup_menus[hPopupMenu] = state;
     
     return hPopupMenu;
@@ -16115,11 +22202,32 @@ __declspec(dllexport) HWND __stdcall CreateEmojiPopupMenu(HWND hOwner) {
 
 // 销毁弹出菜单
 __declspec(dllexport) void __stdcall DestroyEmojiPopupMenu(HWND hPopupMenu) {
-    auto it = g_popup_menus.find(hPopupMenu);
-    if (it != g_popup_menus.end()) {
-        delete it->second;
-        g_popup_menus.erase(it);
+    PopupMenuState* state = LookupPopupMenuState(hPopupMenu);
+    if (!state) return;
+
+    HWND popup_hwnd = state->hwnd;
+    HWND handle_key = state->handle_key;
+    if (popup_hwnd && IsWindow(popup_hwnd)) {
+        DestroyWindow(popup_hwnd);
+        return;
     }
+
+    for (auto it = g_control_popup_menu_bindings.begin(); it != g_control_popup_menu_bindings.end(); ) {
+        if (it->second == hPopupMenu) {
+            it = g_control_popup_menu_bindings.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (popup_hwnd) {
+        g_popup_menus.erase(popup_hwnd);
+    }
+    if (handle_key) {
+        g_popup_menus.erase(handle_key);
+    }
+    g_popup_menus.erase(hPopupMenu);
+    delete state;
 }
 
 // 添加弹出菜单项
@@ -16138,8 +22246,8 @@ __declspec(dllexport) int __stdcall PopupMenuAddItem(
         fclose(log);
     }
     
-    auto it = g_popup_menus.find(hPopupMenu);
-    if (it == g_popup_menus.end()) {
+    PopupMenuState* state = LookupPopupMenuState(hPopupMenu);
+    if (!state) {
         FILE* log2 = nullptr;
         fopen_s(&log2, "C:\\popup_menu_debug.txt", "a");
         if (log2) {
@@ -16148,8 +22256,6 @@ __declspec(dllexport) int __stdcall PopupMenuAddItem(
         }
         return -1;
     }
-    
-    PopupMenuState* state = it->second;
     
     MenuItem item;
     item.id = item_id;
@@ -16200,10 +22306,8 @@ __declspec(dllexport) int __stdcall PopupMenuAddSubItem(
     int text_len,
     int item_id
 ) {
-    auto it = g_popup_menus.find(hPopupMenu);
-    if (it == g_popup_menus.end()) return -1;
-    
-    PopupMenuState* state = it->second;
+    PopupMenuState* state = LookupPopupMenuState(hPopupMenu);
+    if (!state) return -1;
     MenuItem* parent = FindMenuItem(state->items, parent_item_id);
     if (!parent) return -1;
     
@@ -16224,8 +22328,33 @@ __declspec(dllexport) void __stdcall BindControlMenu(
     HWND hControl,
     HWND hPopupMenu
 ) {
-    if (!hControl || !hPopupMenu) return;
+    if (!hControl) return;
+    if (!hPopupMenu) {
+        g_control_popup_menu_bindings.erase(hControl);
+        return;
+    }
+    if (!LookupPopupMenuState(hPopupMenu)) return;
     g_control_popup_menu_bindings[hControl] = hPopupMenu;
+}
+
+__declspec(dllexport) void __stdcall BindButtonMenu(
+    HWND hParent,
+    int button_id,
+    HWND hPopupMenu
+) {
+    if (!hParent || button_id <= 0) return;
+    if (!hPopupMenu) {
+        auto it = g_button_popup_menu_bindings.find(hParent);
+        if (it != g_button_popup_menu_bindings.end()) {
+            it->second.erase(button_id);
+            if (it->second.empty()) {
+                g_button_popup_menu_bindings.erase(it);
+            }
+        }
+        return;
+    }
+    if (!LookupPopupMenuState(hPopupMenu)) return;
+    g_button_popup_menu_bindings[hParent][button_id] = hPopupMenu;
 }
 
 // 显示右键菜单
@@ -16243,8 +22372,8 @@ __declspec(dllexport) void __stdcall ShowContextMenu(
         fclose(log);
     }
     
-    auto it = g_popup_menus.find(hPopupMenu);
-    if (it == g_popup_menus.end()) {
+    PopupMenuState* state = LookupPopupMenuState(hPopupMenu);
+    if (!state) {
         FILE* log2 = nullptr;
         fopen_s(&log2, "C:\\popup_menu_debug.txt", "a");
         if (log2) {
@@ -16253,8 +22382,6 @@ __declspec(dllexport) void __stdcall ShowContextMenu(
         }
         return;
     }
-    
-    PopupMenuState* state = it->second;
     
     FILE* log3 = nullptr;
     fopen_s(&log3, "C:\\popup_menu_debug.txt", "a");
@@ -16279,11 +22406,50 @@ __declspec(dllexport) void __stdcall ShowContextMenu(
     }
     
     // 计算菜单尺寸
-    int menu_width = 200;
+    int menu_width = 160;
     int menu_height = 0;
-    int item_height = 32;
+    int item_height = state->item_height > 0 ? state->item_height : 34;
     int separator_height = 8;
-    
+
+    if (g_dwrite_factory) {
+        IDWriteTextFormat* measure_fmt = nullptr;
+        g_dwrite_factory->CreateTextFormat(
+            state->font.font_name.empty() ? L"Segoe UI Emoji" : state->font.font_name.c_str(),
+            nullptr,
+            state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            state->font.font_size > 0 ? (float)state->font.font_size : 14.0f,
+            L"zh-CN",
+            &measure_fmt);
+        if (measure_fmt) {
+            for (const auto& item : state->items) {
+                if (item.separator) continue;
+                IDWriteTextLayout* layout = nullptr;
+                g_dwrite_factory->CreateTextLayout(
+                    item.text.c_str(),
+                    (UINT32)item.text.length(),
+                    measure_fmt,
+                    1000.0f,
+                    (float)item_height,
+                    &layout);
+                if (layout) {
+                    DWRITE_TEXT_METRICS metrics = {};
+                    if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                        int content_width = (int)(metrics.widthIncludingTrailingWhitespace + 0.999f) + 56;
+                        if (!item.sub_items.empty()) {
+                            content_width += 18;
+                        }
+                        menu_width = max(menu_width, content_width);
+                    }
+                    layout->Release();
+                }
+            }
+            measure_fmt->Release();
+        }
+    }
+    menu_width = min(max(menu_width, 148), 320);
+
     for (const auto& item : state->items) {
         if (item.separator) {
             menu_height += separator_height;
@@ -16291,6 +22457,7 @@ __declspec(dllexport) void __stdcall ShowContextMenu(
             menu_height += item_height;
         }
     }
+    menu_height += 12;
     
     // 如果x,y为-1,使用当前鼠标位置
     if (x == -1 || y == -1) {
@@ -16299,13 +22466,17 @@ __declspec(dllexport) void __stdcall ShowContextMenu(
         x = pt.x;
         y = pt.y;
     }
+
+    if (state->hwnd && IsWindow(state->hwnd)) {
+        DestroyWindow(state->hwnd);
+    }
     
     // 创建弹出窗口
     HWND hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         L"EmojiPopupMenuClass",
         L"",
-        WS_POPUP | WS_BORDER,
+        WS_POPUP,
         x, y, menu_width, menu_height,
         state->owner_hwnd,
         nullptr,
@@ -16323,12 +22494,12 @@ __declspec(dllexport) void __stdcall ShowContextMenu(
     }
     
     if (hwnd) {
-        state->hwnd = hwnd;
+        state->x = x;
+        state->y = y;
         state->width = menu_width;
         state->height = menu_height;
-        
-        // 将state与窗口关联
-        g_popup_menus[hwnd] = state;
+        state->visible = true;
+        state->ignore_initial_button_up_until = GetTickCount() + 180;
         
         FILE* log5 = nullptr;
         fopen_s(&log5, "C:\\popup_menu_debug.txt", "a");
@@ -16362,9 +22533,9 @@ __declspec(dllexport) void __stdcall SetPopupMenuCallback(
     HWND hPopupMenu,
     MenuItemClickCallback callback
 ) {
-    auto it = g_popup_menus.find(hPopupMenu);
-    if (it != g_popup_menus.end()) {
-        it->second->callback = callback;
+    PopupMenuState* state = LookupPopupMenuState(hPopupMenu);
+    if (state) {
+        state->callback = callback;
     }
 }
 
