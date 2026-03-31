@@ -12,6 +12,8 @@ Debug/
 # C# build outputs
 bin/
 obj/
+.dotnet/
+packages/
 *.dll
 *.exe
 *.cache
