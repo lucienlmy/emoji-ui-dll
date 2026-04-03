@@ -429,8 +429,9 @@ static void ShowMenuBarPopup(MenuBarState* menubar, const MenuItem& item, int sc
 
     popup->items = item.sub_items;
     popup->font = menubar->font;
-    popup->bg_color = menubar->bg_color ? menubar->bg_color : ThemeColor_Background();
-    popup->hover_color = ThemeColor_LightBg(ThemeColor_Primary());
+    popup->bg_color = menubar->bg_color ? menubar->bg_color : 13;
+    popup->fg_color = menubar->fg_color ? menubar->fg_color : 6;
+    popup->hover_color = 15;
     popup->callback = menubar->callback;
     popup->callback_menu_id = item.id;
     popup->auto_destroy = true;
@@ -1894,9 +1895,10 @@ void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenu
     const float text_padding_x = 14.0f;
     const float arrow_area_w = 20.0f;
 
-    UINT32 panel_bg = popup->bg_color ? popup->bg_color : ThemeColor_Background();
+    UINT32 panel_bg = ResolveOptionalColor(popup->bg_color, ThemeColor_Background());
+    UINT32 panel_fg = ResolveOptionalColor(popup->fg_color, ThemeColor_TextRegular());
     UINT32 panel_border = ThemeColor_BorderLight();
-    UINT32 hover_bg = popup->hover_color ? popup->hover_color : ThemeColor_LightBg(ThemeColor_Primary());
+    UINT32 hover_bg = ResolveOptionalColor(popup->hover_color, ThemeColor_LightBg(ThemeColor_Primary()));
 
     ID2D1SolidColorBrush* panel_brush = nullptr;
     ID2D1SolidColorBrush* border_brush = nullptr;
@@ -1967,7 +1969,7 @@ void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenu
             }
             
             // 绘制文本
-            UINT32 fg = item.enabled ? ThemeColor_TextRegular() : ThemeColor_TextPlaceholder();
+            UINT32 fg = item.enabled ? panel_fg : ThemeColor_TextPlaceholder();
             ID2D1SolidColorBrush* text_brush = nullptr;
             rt->CreateSolidColorBrush(ColorFromUInt32(fg), &text_brush);
             
@@ -1999,7 +2001,7 @@ void DrawPopupMenu(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PopupMenu
             if (!item.sub_items.empty()) {
                 D2D1_RECT_F arrow_rect = D2D1::RectF(item.bounds.right - 18.0f, y + item_height / 2.0f - 4.0f, item.bounds.right - 10.0f, y + item_height / 2.0f + 4.0f);
                 ID2D1SolidColorBrush* arrow_brush = nullptr;
-                rt->CreateSolidColorBrush(ColorFromUInt32(ThemeColor_TextPlaceholder()), &arrow_brush);
+                rt->CreateSolidColorBrush(ColorFromUInt32(item.enabled ? panel_fg : ThemeColor_TextPlaceholder()), &arrow_brush);
                 rt->DrawLine(D2D1::Point2F(arrow_rect.left, arrow_rect.top), D2D1::Point2F(arrow_rect.right, y + item_height / 2.0f), arrow_brush, 1.2f);
                 rt->DrawLine(D2D1::Point2F(arrow_rect.left, arrow_rect.bottom), D2D1::Point2F(arrow_rect.right, y + item_height / 2.0f), arrow_brush, 1.2f);
                 arrow_brush->Release();
@@ -4000,7 +4002,7 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
             state->render_target->BeginDraw();
             
             // 清除背景
-            UINT32 bg = ThemeColor_Background();
+            UINT32 bg = ResolveOptionalColor(state->bg_color, ThemeColor_Background());
             state->render_target->Clear(D2D1::ColorF(
                 ((bg >> 16) & 0xFF) / 255.0f,
                 ((bg >> 8) & 0xFF) / 255.0f,
@@ -22657,8 +22659,9 @@ __declspec(dllexport) HWND __stdcall CreateEmojiPopupMenu(HWND hOwner) {
         state->owner_hwnd = hOwner;
     }
     state->visible = false;
-    state->bg_color = ThemeColor_Background();
-    state->hover_color = ThemeColor_LightBg(ThemeColor_Primary());
+    state->bg_color = 13;
+    state->fg_color = 6;
+    state->hover_color = 15;
     state->item_height = 34;
     state->callback = nullptr;
     state->font.font_name = L"Segoe UI Emoji";
@@ -22937,6 +22940,22 @@ __declspec(dllexport) void __stdcall ShowContextMenu(
         GetCursorPos(&pt);
         x = pt.x;
         y = pt.y;
+    }
+
+    if (!state->parent_popup_handle) {
+        HWND root_hwnd = state->owner_hwnd ? GetAncestor(state->owner_hwnd, GA_ROOT) : nullptr;
+        if (!root_hwnd) {
+            root_hwnd = state->owner_hwnd;
+        }
+        if (!root_hwnd && state->owner_menubar) {
+            root_hwnd = GetAncestor(state->owner_menubar, GA_ROOT);
+            if (!root_hwnd) {
+                root_hwnd = state->owner_menubar;
+            }
+        }
+        if (root_hwnd) {
+            DestroyVisiblePopupMenusForRoot(root_hwnd);
+        }
     }
 
     if (state->hwnd && IsWindow(state->hwnd)) {

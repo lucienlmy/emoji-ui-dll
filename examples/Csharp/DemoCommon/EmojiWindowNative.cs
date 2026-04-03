@@ -142,6 +142,7 @@ namespace EmojiWindowDemo
         [UnmanagedFunctionPointer(Cc)] public delegate void ControlKeyCallback(IntPtr hwnd, int vkCode, int shift, int ctrl, int alt);
         [UnmanagedFunctionPointer(Cc)] public delegate void ControlCharCallback(IntPtr hwnd, int charCode);
         [UnmanagedFunctionPointer(Cc)] public delegate void TreeNodeCallback(int nodeId, IntPtr context);
+        [UnmanagedFunctionPointer(Cc)] public delegate void ThemeChangedCallback([MarshalAs(UnmanagedType.LPStr)] string themeName);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr create_window_bytes_ex(byte[] title, int titleLen, int x, int y, int width, int height, uint titlebarColor, uint clientBgColor);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void set_message_loop_main_window(IntPtr hwnd);
@@ -157,6 +158,9 @@ namespace EmojiWindowDemo
         [DllImport(Dll, CallingConvention = Cc)] public static extern uint GetTitleBarTextColor(IntPtr hwnd);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetWindowBackgroundColor(IntPtr hwnd, uint color);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetDarkMode(int darkMode);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int IsDarkMode();
+        [DllImport(Dll, CallingConvention = Cc)] public static extern uint EW_GetThemeColor(byte[] colorNameUtf8, int nameLen);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetThemeChangedCallback(ThemeChangedCallback callback);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetWindowResizeCallback(WindowResizeCallback callback);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetWindowCloseCallback(WindowCloseCallback callback);
 
@@ -230,15 +234,32 @@ namespace EmojiWindowDemo
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetCheckBoxState(IntPtr hCheckBox, int checkedState);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetCheckBoxCallback(IntPtr hCheckBox, CheckBoxCallback callback);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetCheckBoxText(IntPtr hCheckBox, IntPtr buffer, int bufferSize);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void EnableCheckBox(IntPtr hCheckBox, int enable);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void ShowCheckBox(IntPtr hCheckBox, int show);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetCheckBoxText(IntPtr hCheckBox, byte[] text, int textLen);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetCheckBoxBounds(IntPtr hCheckBox, int x, int y, int width, int height);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetCheckBoxColor(IntPtr hCheckBox, uint fgColor, uint bgColor);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetCheckBoxCheckColor(IntPtr hCheckBox, uint color);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetCheckBoxStyle(IntPtr hCheckBox, int style);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetCheckBoxStyle(IntPtr hCheckBox);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetCheckBoxColor(IntPtr hCheckBox, out uint fgColor, out uint bgColor);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetCheckBoxCheckColor(IntPtr hCheckBox, out uint checkColor);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreateRadioButton(IntPtr parent, int x, int y, int width, int height, byte[] text, int textLen, int groupId, int checkedState, uint fgColor, uint bgColor, byte[] fontName, int fontNameLen, int fontSize, int bold, int italic, int underline);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetRadioButtonState(IntPtr hRadioButton);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetRadioButtonState(IntPtr hRadioButton, int checkedState);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetRadioButtonCallback(IntPtr hRadioButton, RadioButtonCallback callback);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetRadioButtonText(IntPtr hRadioButton, IntPtr buffer, int bufferSize);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void EnableRadioButton(IntPtr hRadioButton, int enable);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void ShowRadioButton(IntPtr hRadioButton, int show);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetRadioButtonText(IntPtr hRadioButton, byte[] text, int textLen);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetRadioButtonBounds(IntPtr hRadioButton, int x, int y, int width, int height);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetRadioButtonColor(IntPtr hRadioButton, uint fgColor, uint bgColor);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetRadioButtonDotColor(IntPtr hRadioButton, uint color);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetRadioButtonStyle(IntPtr hRadioButton, int style);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetRadioButtonColor(IntPtr hRadioButton, out uint fgColor, out uint bgColor);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetRadioButtonDotColor(IntPtr hRadioButton, out uint dotColor);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetRadioButtonStyle(IntPtr hRadioButton);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreateProgressBar(IntPtr parent, int x, int y, int width, int height, int initialValue, uint fgColor, uint bgColor, int showText, uint textColor);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetProgressValue(IntPtr hProgressBar, int value);
@@ -264,12 +285,20 @@ namespace EmojiWindowDemo
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreateComboBox(IntPtr parent, int x, int y, int width, int height, int readOnly, uint fgColor, uint bgColor, int itemHeight, byte[] fontName, int fontNameLen, int fontSize, int bold, int italic, int underline);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int AddComboItem(IntPtr hComboBox, byte[] text, int textLen);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void RemoveComboItem(IntPtr hComboBox, int index);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void ClearComboBox(IntPtr hComboBox);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetComboItemCount(IntPtr hComboBox);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetComboSelectedIndex(IntPtr hComboBox);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetComboSelectedIndex(IntPtr hComboBox, int index);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetComboItemText(IntPtr hComboBox, int index, IntPtr buffer, int bufferSize);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetComboBoxText(IntPtr hComboBox, IntPtr buffer, int bufferSize);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetComboBoxText(IntPtr hComboBox, byte[] text, int textLen);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetComboBoxCallback(IntPtr hComboBox, ComboBoxCallback callback);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void EnableComboBox(IntPtr hComboBox, int enable);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void ShowComboBox(IntPtr hComboBox, int show);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetComboBoxBounds(IntPtr hComboBox, int x, int y, int width, int height);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetComboBoxColors(IntPtr hComboBox, uint fgColor, uint bgColor, uint selectColor, uint hoverColor);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetComboBoxColors(IntPtr hComboBox, out uint fgColor, out uint bgColor, out uint selectColor, out uint hoverColor);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreateMenuBar(IntPtr hWindow);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void DestroyMenuBar(IntPtr hMenuBar);
@@ -351,12 +380,21 @@ namespace EmojiWindowDemo
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreateD2DComboBox(IntPtr parent, int x, int y, int width, int height, int readOnly, uint fgColor, uint bgColor, int itemHeight, byte[] fontName, int fontNameLen, int fontSize, int bold, int italic, int underline);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int AddD2DComboItem(IntPtr hComboBox, byte[] text, int textLen);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void RemoveD2DComboItem(IntPtr hComboBox, int index);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void ClearD2DComboBox(IntPtr hComboBox);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetD2DComboSelectedIndex(IntPtr hComboBox);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetD2DComboItemCount(IntPtr hComboBox);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetD2DComboItemText(IntPtr hComboBox, int index, IntPtr buffer, int bufferSize);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetD2DComboText(IntPtr hComboBox, IntPtr buffer, int bufferSize);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetD2DComboSelectedText(IntPtr hComboBox, IntPtr buffer, int bufferSize);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetD2DComboText(IntPtr hComboBox, byte[] text, int textLen);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetD2DComboSelectedIndex(IntPtr hComboBox, int index);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetD2DComboBoxCallback(IntPtr hComboBox, ComboBoxCallback callback);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void EnableD2DComboBox(IntPtr hComboBox, int enable);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void ShowD2DComboBox(IntPtr hComboBox, int show);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetD2DComboBoxBounds(IntPtr hComboBox, int x, int y, int width, int height);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetD2DComboBoxColors(IntPtr hComboBox, uint fgColor, uint bgColor, uint selectColor, uint hoverColor, uint borderColor, uint buttonColor);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetD2DComboBoxColors(IntPtr hComboBox, out uint fgColor, out uint bgColor, out uint selectColor, out uint hoverColor, out uint borderColor, out uint buttonColor);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreateD2DDateTimePicker(IntPtr parent, int x, int y, int width, int height, int initialPrecision, uint fgColor, uint bgColor, uint borderColor, byte[] fontName, int fontNameLen, int fontSize, int bold, int italic, int underline);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void GetD2DDateTimePickerDateTime(IntPtr hPicker, out int year, out int month, out int day, out int hour, out int minute, out int second);

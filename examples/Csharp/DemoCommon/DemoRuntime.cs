@@ -56,11 +56,74 @@ namespace EmojiWindowDemo
         public static readonly uint LightRed = EmojiWindowNative.ARGB(255, 254, 240, 240);
     }
 
+    internal static class DemoTheme
+    {
+        public const uint Primary = 0;
+        public const uint Success = 1;
+        public const uint Warning = 2;
+        public const uint Danger = 3;
+        public const uint Info = 4;
+        public const uint Text = 5;
+        public const uint Muted = 6;
+        public const uint Subtle = 7;
+        public const uint Border = 9;
+        public const uint BorderLight = 10;
+        public const uint BorderSoft = 11;
+        public const uint Background = 13;
+        public const uint Surface = 14;
+        public const uint SurfacePrimary = 15;
+        public const uint SurfaceSuccess = 16;
+        public const uint SurfaceWarning = 17;
+        public const uint SurfaceDanger = 18;
+        public const uint SurfaceInfo = 19;
+    }
+
+    internal sealed class DemoThemePalette
+    {
+        public DemoThemePalette(
+            bool dark,
+            uint pageBackground,
+            uint cardBackground,
+            uint text,
+            uint muted,
+            uint accent,
+            uint sidebarBackground,
+            uint sidebarText,
+            uint sidebarMuted,
+            uint treeBackground,
+            uint treeHoverBackground)
+        {
+            Dark = dark;
+            PageBackground = pageBackground;
+            CardBackground = cardBackground;
+            Text = text;
+            Muted = muted;
+            Accent = accent;
+            SidebarBackground = sidebarBackground;
+            SidebarText = sidebarText;
+            SidebarMuted = sidebarMuted;
+            TreeBackground = treeBackground;
+            TreeHoverBackground = treeHoverBackground;
+        }
+
+        public bool Dark { get; }
+        public uint PageBackground { get; }
+        public uint CardBackground { get; }
+        public uint Text { get; }
+        public uint Muted { get; }
+        public uint Accent { get; }
+        public uint SidebarBackground { get; }
+        public uint SidebarText { get; }
+        public uint SidebarMuted { get; }
+        public uint TreeBackground { get; }
+        public uint TreeHoverBackground { get; }
+    }
+
     internal sealed class DemoApp
     {
         private readonly Dictionary<int, Action> _buttonActions = new Dictionary<int, Action>();
         private readonly List<Delegate> _pinnedDelegates = new List<Delegate>();
-        private readonly byte[] _fontBytes = EmojiWindowNative.ToUtf8("微软雅黑");
+        private readonly byte[] _fontBytes = EmojiWindowNative.ToUtf8("Microsoft YaHei UI");
 
         public IntPtr Window { get; private set; }
         public IntPtr StatusLabel { get; private set; }
@@ -80,14 +143,22 @@ namespace EmojiWindowDemo
             Width = width;
             Height = height;
             byte[] titleBytes = U(title);
-            Window = EmojiWindowNative.create_window_bytes_ex(titleBytes, titleBytes.Length, 120, 90, width, height, titlebarColor ?? DemoColors.Blue, backgroundColor ?? DemoColors.WindowBg);
+            Window = EmojiWindowNative.create_window_bytes_ex(
+                titleBytes,
+                titleBytes.Length,
+                120,
+                90,
+                width,
+                height,
+                NormalizeThemeColor(titlebarColor ?? DemoColors.Blue),
+                NormalizeThemeColor(backgroundColor ?? DemoColors.WindowBg));
             if (Window == IntPtr.Zero)
             {
-                throw new InvalidOperationException("创建窗口失败。");
+                throw new InvalidOperationException("Failed to create window.");
             }
         }
 
-        public void CreateStatusBar(string text) => StatusLabel = Label(16, Height - 52, Width - 32, 28, text, DemoColors.Black, DemoColors.LightBlue);
+        public void CreateStatusBar(string text) => StatusLabel = Label(16, Height - 72, Width - 32, 32, text, DemoTheme.Muted, DemoTheme.Background);
 
         public void UpdateWindowSize(int width, int height)
         {
@@ -109,7 +180,24 @@ namespace EmojiWindowDemo
         public IntPtr Label(int x, int y, int width, int height, string text, uint? fg = null, uint? bg = null, int fontSize = 12, int align = 0, bool wrap = false, IntPtr? parent = null)
         {
             byte[] bytes = U(text);
-            return EmojiWindowNative.CreateLabel(parent ?? Window, x, y, width, height, bytes, bytes.Length, fg ?? DemoColors.Black, bg ?? DemoColors.Transparent, _fontBytes, _fontBytes.Length, fontSize, 0, 0, 0, align, wrap ? 1 : 0);
+            return EmojiWindowNative.CreateLabel(
+                parent ?? Window,
+                x,
+                y,
+                width,
+                height,
+                bytes,
+                bytes.Length,
+                NormalizeThemeColor(fg ?? DemoColors.Black),
+                NormalizeThemeColor(bg ?? DemoColors.Transparent),
+                _fontBytes,
+                _fontBytes.Length,
+                fontSize,
+                0,
+                0,
+                0,
+                align,
+                wrap ? 1 : 0);
         }
 
         public IntPtr EditBox(int x, int y, int width, int height, string text, bool multiline = false, bool readOnly = false, bool password = false, bool colorEmoji = false, IntPtr? parent = null)
@@ -117,21 +205,95 @@ namespace EmojiWindowDemo
             byte[] bytes = U(text);
             if (colorEmoji)
             {
-                return EmojiWindowNative.CreateColorEmojiEditBox(parent ?? Window, x, y, width, height, bytes, bytes.Length, DemoColors.Black, DemoColors.White, _fontBytes, _fontBytes.Length, 13, 0, 0, 0, 0, multiline ? 1 : 0, readOnly ? 1 : 0, password ? 1 : 0, 1, multiline ? 0 : 1);
+                return EmojiWindowNative.CreateColorEmojiEditBox(
+                    parent ?? Window,
+                    x,
+                    y,
+                    width,
+                    height,
+                    bytes,
+                    bytes.Length,
+                    NormalizeThemeColor(DemoColors.Black),
+                    NormalizeThemeColor(DemoColors.White),
+                    _fontBytes,
+                    _fontBytes.Length,
+                    13,
+                    0,
+                    0,
+                    0,
+                    0,
+                    multiline ? 1 : 0,
+                    readOnly ? 1 : 0,
+                    password ? 1 : 0,
+                    1,
+                    multiline ? 0 : 1);
             }
 
-            return EmojiWindowNative.CreateEditBox(parent ?? Window, x, y, width, height, bytes, bytes.Length, DemoColors.Black, DemoColors.White, _fontBytes, _fontBytes.Length, 13, 0, 0, 0, 0, multiline ? 1 : 0, readOnly ? 1 : 0, password ? 1 : 0, 1, multiline ? 0 : 1);
+            return EmojiWindowNative.CreateEditBox(
+                parent ?? Window,
+                x,
+                y,
+                width,
+                height,
+                bytes,
+                bytes.Length,
+                NormalizeThemeColor(DemoColors.Black),
+                NormalizeThemeColor(DemoColors.White),
+                _fontBytes,
+                _fontBytes.Length,
+                13,
+                0,
+                0,
+                0,
+                0,
+                multiline ? 1 : 0,
+                readOnly ? 1 : 0,
+                password ? 1 : 0,
+                1,
+                multiline ? 0 : 1);
         }
 
         public IntPtr GroupBox(int x, int y, int width, int height, string title, uint? borderColor = null, uint? bgColor = null, IntPtr? parent = null)
         {
             byte[] bytes = U(title);
-            return EmojiWindowNative.CreateGroupBox(parent ?? Window, x, y, width, height, bytes, bytes.Length, borderColor ?? DemoColors.Border, bgColor ?? DemoColors.Surface, _fontBytes, _fontBytes.Length, 13, 1, 0, 0);
+            uint resolvedBorder = borderColor ?? DemoTheme.BorderLight;
+            uint resolvedBackground = bgColor ?? DemoTheme.Surface;
+
+            // Match the Python demo's default card-style group box look.
+            if (resolvedBorder == DemoTheme.Border)
+            {
+                resolvedBorder = DemoTheme.BorderLight;
+            }
+
+            if (resolvedBackground == DemoTheme.Background)
+            {
+                resolvedBackground = DemoTheme.Surface;
+            }
+
+            IntPtr groupBox = EmojiWindowNative.CreateGroupBox(
+                parent ?? Window,
+                x,
+                y,
+                width,
+                height,
+                bytes,
+                bytes.Length,
+                NormalizeThemeColor(resolvedBorder),
+                NormalizeThemeColor(resolvedBackground),
+                _fontBytes,
+                _fontBytes.Length,
+                13,
+                1,
+                0,
+                0);
+            EmojiWindowNative.SetGroupBoxStyle(groupBox, PageCommon.GroupBoxStyleCard);
+            EmojiWindowNative.SetGroupBoxTitleColor(groupBox, DemoTheme.Text);
+            return groupBox;
         }
 
         public IntPtr Panel(int x, int y, int width, int height, uint? bgColor = null, IntPtr? parent = null)
         {
-            return EmojiWindowNative.CreatePanel(parent ?? Window, x, y, width, height, bgColor ?? DemoColors.Surface);
+            return EmojiWindowNative.CreatePanel(parent ?? Window, x, y, width, height, NormalizeThemeColor(bgColor ?? DemoColors.Surface));
         }
 
         public void AttachToGroup(IntPtr groupBox, params IntPtr[] children)
@@ -149,13 +311,82 @@ namespace EmojiWindowDemo
         {
             byte[] textBytes = U(text);
             byte[] emojiBytes = U(emoji);
-            int buttonId = EmojiWindowNative.create_emoji_button_bytes(parent ?? Window, emojiBytes, emojiBytes.Length, textBytes, textBytes.Length, x, y, width, height, color ?? DemoColors.Blue);
+            int buttonId = EmojiWindowNative.create_emoji_button_bytes(
+                parent ?? Window,
+                emojiBytes,
+                emojiBytes.Length,
+                textBytes,
+                textBytes.Length,
+                x,
+                y,
+                width,
+                height,
+                NormalizeThemeColor(color ?? DemoColors.Blue));
             if (onClick != null)
             {
                 _buttonActions[buttonId] = onClick;
             }
 
             return buttonId;
+        }
+
+        public bool IsDarkTheme() => EmojiWindowNative.IsDarkMode() != 0;
+
+        public uint ThemeColor(string name)
+        {
+            byte[] bytes = U(name);
+            return EmojiWindowNative.EW_GetThemeColor(bytes, bytes.Length);
+        }
+
+        public DemoThemePalette GetThemePalette()
+        {
+            bool dark = IsDarkTheme();
+            uint pageBackground = dark ? EmojiWindowNative.ARGB(255, 29, 30, 31) : EmojiWindowNative.ARGB(255, 245, 247, 250);
+            uint cardBackground = ThemeColor("background_light");
+            uint text = ThemeColor("text_primary");
+            uint muted = ThemeColor("text_regular");
+            uint accent = ThemeColor("primary");
+            uint sidebarBackground = dark ? EmojiWindowNative.ARGB(255, 22, 23, 24) : DemoColors.White;
+            uint sidebarText = dark ? EmojiWindowNative.ARGB(255, 243, 245, 247) : DemoColors.Black;
+            uint sidebarMuted = dark ? EmojiWindowNative.ARGB(255, 156, 163, 175) : DemoColors.Gray;
+            uint treeBackground = dark ? EmojiWindowNative.ARGB(255, 29, 30, 32) : DemoColors.White;
+            uint treeHoverBackground = dark ? EmojiWindowNative.ARGB(255, 43, 47, 54) : DemoColors.LightBlue;
+            return new DemoThemePalette(
+                dark,
+                pageBackground,
+                cardBackground,
+                text,
+                muted,
+                accent,
+                sidebarBackground,
+                sidebarText,
+                sidebarMuted,
+                treeBackground,
+                treeHoverBackground);
+        }
+
+        public static uint NormalizeThemeColor(uint color)
+        {
+            if (color <= DemoTheme.SurfaceInfo)
+            {
+                return color;
+            }
+
+            if (color == DemoColors.Blue) return DemoTheme.Primary;
+            if (color == DemoColors.Green) return DemoTheme.Success;
+            if (color == DemoColors.Orange) return DemoTheme.Warning;
+            if (color == DemoColors.Red) return DemoTheme.Danger;
+            if (color == DemoColors.Cyan) return DemoTheme.Info;
+            if (color == DemoColors.Black) return DemoTheme.Text;
+            if (color == DemoColors.Gray) return DemoTheme.Muted;
+            if (color == DemoColors.Border) return DemoTheme.BorderLight;
+            if (color == DemoColors.WindowBg) return DemoTheme.Background;
+            if (color == DemoColors.Surface || color == DemoColors.White) return DemoTheme.Surface;
+            if (color == DemoColors.LightBlue) return DemoTheme.SurfacePrimary;
+            if (color == DemoColors.LightGreen) return DemoTheme.SurfaceSuccess;
+            if (color == DemoColors.Yellow) return DemoTheme.SurfaceWarning;
+            if (color == DemoColors.LightRed) return DemoTheme.SurfaceDanger;
+            return color;
         }
 
         public void DispatchButton(int buttonId)

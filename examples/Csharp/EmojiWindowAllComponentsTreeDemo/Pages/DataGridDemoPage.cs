@@ -12,20 +12,27 @@ namespace EmojiWindowDemo
         public static void Build(AllDemoShell shell, IntPtr page)
         {
             var app = shell.App;
-            IntPtr modeLabel = app.Label(40, 48, 240, 24, "当前模式: 普通表格", DemoColors.Blue, DemoColors.Surface, 13, PageCommon.AlignLeft, false, page);
-            IntPtr gridState = app.Label(296, 48, 760, 58, "等待表格状态。", DemoColors.Gray, DemoColors.Surface, 12, PageCommon.AlignLeft, true, page);
-            IntPtr exportLabel = app.Label(1096, 48, 328, 58, "CSV 尚未导出。", DemoColors.Gray, DemoColors.Surface, 12, PageCommon.AlignLeft, true, page);
-            IntPtr headerReadout = app.Label(1104, 328, 336, 74, "等待读取表头。", DemoColors.Gray, DemoColors.Surface, 12, PageCommon.AlignLeft, true, page);
-            IntPtr cellReadout = app.Label(1104, 542, 336, 74, "等待读取单元格。", DemoColors.Gray, DemoColors.Surface, 12, PageCommon.AlignLeft, true, page);
 
-            IntPtr toolbar = EmojiWindowNative.CreatePanel(page, 40, 146, 1384, 42, DemoColors.Surface);
-            IntPtr normalGrid = EmojiWindowNative.CreateDataGridView(page, 36, 300, 996, 448, 0, 1, DemoColors.Black, DemoColors.WindowBg);
-            IntPtr virtualGrid = EmojiWindowNative.CreateDataGridView(page, 36, 300, 996, 448, 1, 1, DemoColors.Black, DemoColors.WindowBg);
-            EmojiWindowNative.DataGrid_Show(virtualGrid, 0);
+            app.GroupBox(16, 16, 1448, 192, "🧩 DataGridView 属性读取 / 主操作工具栏", DemoTheme.Border, DemoTheme.Background, page);
+            app.GroupBox(16, 224, 1048, 500, "📋 全列型 DataGridView 演示", DemoTheme.Border, DemoTheme.Background, page);
+            app.GroupBox(1080, 224, 384, 202, "📚 表头 / 列操作", DemoTheme.Border, DemoTheme.Background, page);
+            app.GroupBox(1080, 438, 384, 140, "🧪 单元格 / 定位", DemoTheme.Border, DemoTheme.Background, page);
+            app.GroupBox(1080, 590, 384, 134, "🎨 勾选 / 对齐 / 表头样式", DemoTheme.Border, DemoTheme.Background, page);
 
-            string[] normalHeaders = { "🧾 任务", "☑️ 启用", "🚦 状态", "🏷️ 标签", "🔘 动作", "🔗 链接", "🖼️ 图片", "📝 备注" };
-            string[] virtualHeaders = { "🧾 序号", "🚦 状态", "🏷️ 优先级", "👤 节点", "🛠 路由", "🖼️ 图片", "📝 虚拟备注" };
-            (string Title, Func<IntPtr, byte[], int, int, int> Add, int Width)[] normalColumns =
+            IntPtr modeLabel = app.Label(40, 48, 250, 24, "当前模式: 普通表格", DemoTheme.Primary, DemoTheme.Background, 13, PageCommon.AlignLeft, false, page);
+            IntPtr stateLabel = app.Label(296, 48, 760, 58, "等待表格状态。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+            IntPtr exportLabel = app.Label(1096, 48, 328, 58, "CSV 尚未导出。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+            app.Label(40, 116, 1180, 18, "这一页只保留表格相关能力：普通 / 虚拟表格、排序、单元格读写、表头读写、对齐切换和 CSV 导出。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+
+            IntPtr toolbar = app.Panel(40, 146, 1384, 42, DemoTheme.Surface, page);
+            app.Label(40, 256, 960, 24, "左侧是完整表格区，支持普通表格与 1,000,000 行虚拟表格切换，并绑定右键菜单。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+            app.Label(0, 0, 1, 1, string.Empty, DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+            IntPtr headerReadout = app.Label(0, 0, 1, 1, string.Empty, DemoTheme.Muted, DemoTheme.Surface, 12, PageCommon.AlignLeft, true, page);
+            IntPtr cellReadout = app.Label(0, 0, 1, 1, string.Empty, DemoTheme.Muted, DemoTheme.Surface, 12, PageCommon.AlignLeft, true, page);
+
+            string[] normalHeaders = { "📝 任务", "☑️ 启用", "📍 状态", "🏷️ 标签", "🔘 动作", "🔗 链接", "🖼️ 图片", "🗒️ 备注" };
+            string[] virtualHeaders = { "📝 序号", "📍 状态", "🏷️ 优先级", "👁 节点", "🛠 路由", "🖼️ 图片", "🗒️ 虚拟备注" };
+            (string title, Func<IntPtr, byte[], int, int, int> add, int width)[] normalColumns =
             {
                 (normalHeaders[0], EmojiWindowNative.DataGrid_AddTextColumn, 168),
                 (normalHeaders[1], EmojiWindowNative.DataGrid_AddCheckBoxColumn, 68),
@@ -38,46 +45,33 @@ namespace EmojiWindowDemo
             };
             int[] virtualWidths = { 124, 118, 108, 110, 126, 88, 270 };
 
+            IntPtr normalGrid = EmojiWindowNative.CreateDataGridView(page, 36, 292, 1008, 420, 0, 1, DemoTheme.Text, DemoTheme.Background);
+            IntPtr virtualGrid = EmojiWindowNative.CreateDataGridView(page, 36, 292, 1008, 420, 1, 1, DemoTheme.Text, DemoTheme.Background);
+            EmojiWindowNative.DataGrid_Show(virtualGrid, 0);
+
             foreach (var column in normalColumns)
             {
-                byte[] header = app.U(column.Title);
-                column.Add(normalGrid, header, header.Length, column.Width);
+                byte[] text = app.U(column.title);
+                column.add(normalGrid, text, text.Length, column.width);
             }
 
             for (int i = 0; i < virtualHeaders.Length; i++)
             {
-                byte[] header = app.U(virtualHeaders[i]);
-                EmojiWindowNative.DataGrid_AddTextColumn(virtualGrid, header, header.Length, virtualWidths[i]);
+                byte[] text = app.U(virtualHeaders[i]);
+                EmojiWindowNative.DataGrid_AddTextColumn(virtualGrid, text, text.Length, virtualWidths[i]);
             }
 
-            EmojiWindowNative.DataGrid_SetColors(normalGrid, DemoColors.Black, DemoColors.WindowBg, DemoColors.Surface, DemoColors.Black, DemoColors.LightBlue, DemoColors.Surface, DemoColors.Border);
-            EmojiWindowNative.DataGrid_SetColors(virtualGrid, DemoColors.Black, DemoColors.WindowBg, DemoColors.Surface, DemoColors.Black, DemoColors.LightBlue, DemoColors.Surface, DemoColors.Border);
-            ApplyCommonGridStyle(normalGrid, normalHeaders.Length);
-            ApplyCommonGridStyle(virtualGrid, virtualHeaders.Length);
-            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 1, PageCommon.AlignCenter);
-            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 2, PageCommon.AlignCenter);
-            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 3, PageCommon.AlignCenter);
-            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 4, PageCommon.AlignCenter);
-            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 6, PageCommon.AlignCenter);
-
-            byte[] comboItems = app.U("🕒 待处理\n🚧 进行中\n✅ 已完成\n⏸️ 已暂停");
-            EmojiWindowNative.DataGrid_SetColumnComboItems(normalGrid, 2, comboItems, comboItems.Length);
-            EmojiWindowNative.DataGrid_SetFreezeHeader(normalGrid, 1);
-            EmojiWindowNative.DataGrid_SetFreezeColumnCount(normalGrid, 2);
-            EmojiWindowNative.DataGrid_SetFreezeRowCount(normalGrid, 2);
-
+            var rows = new List<RowSeed>
+            {
+                new RowSeed("📝 任务 1", true, "🟡 进行中", "🔵 P1", "执行", "查看详情", "图片-A", "支持下拉、勾选和标签色块"),
+                new RowSeed("📝 任务 2", false, "🕓 待处理", "🟢 P2", "审核", "打开文档", "图片-B", "支持按钮列、链接列和图片列"),
+                new RowSeed("📝 任务 3", true, "✅ 已完成", "🟠 P3", "归档", "查看报告", "图片-C", "支持排序、导出 CSV 与表头读写"),
+            };
             string[] imagePaths =
             {
                 PageCommon.FindFirstExistingPath(app, @"imgs\1.png"),
                 PageCommon.FindFirstExistingPath(app, @"imgs\2.png"),
                 PageCommon.FindFirstExistingPath(app, @"imgs\3.png"),
-            };
-
-            var rows = new List<RowSeed>
-            {
-                new RowSeed("🧾 任务 1", true, "🚧 进行中", "🔵 P1", "执行", "查看详情", "图片-A", "支持下拉、勾选和标签色块"),
-                new RowSeed("🧾 任务 2", false, "🕒 待处理", "🟢 P2", "审核", "打开文档", "图片-B", "支持按钮列、链接列和图片列"),
-                new RowSeed("🧾 任务 3", true, "✅ 已完成", "🟠 P3", "归档", "查看报告", "图片-C", "支持排序、导出 CSV 与表头读写"),
             };
 
             bool virtualMode = false;
@@ -92,37 +86,38 @@ namespace EmojiWindowDemo
 
             void SetState(string text)
             {
-                shell.SetLabelText(gridState, text);
+                shell.SetLabelText(stateLabel, text);
                 shell.SetStatus(text);
             }
 
             IntPtr ActiveGrid() => virtualMode ? virtualGrid : normalGrid;
 
-            void UpdateModeLabel()
+            string ReadHeader(IntPtr grid, int index) => EmojiWindowNative.ReadUtf8(EmojiWindowNative.DataGrid_GetColumnHeaderText, grid, index);
+            string ReadCell(IntPtr grid, int row, int col) => grid == virtualGrid ? PageCommon.BuildVirtualGridText(row, col) : EmojiWindowNative.ReadUtf8(EmojiWindowNative.DataGrid_GetCellText, grid, row, col);
+
+            void ApplyTheme()
+            {
+                EmojiWindowNative.SetPanelBackgroundColor(toolbar, shell.Palette.CardBackground);
+                EmojiWindowNative.DataGrid_SetColors(normalGrid, DemoTheme.Text, DemoTheme.Background, DemoTheme.Surface, DemoTheme.Text, DemoTheme.SurfacePrimary, DemoTheme.Surface, DemoTheme.BorderLight);
+                EmojiWindowNative.DataGrid_SetColors(virtualGrid, DemoTheme.Text, DemoTheme.Background, DemoTheme.Surface, DemoTheme.Text, DemoTheme.SurfacePrimary, DemoTheme.Surface, DemoTheme.BorderLight);
+                EmojiWindowNative.DataGrid_SetHeaderStyle(normalGrid, headerDark ? HeaderStyleDark : HeaderStylePlain);
+                EmojiWindowNative.DataGrid_SetHeaderStyle(virtualGrid, headerDark ? HeaderStyleDark : HeaderStylePlain);
+                EmojiWindowNative.DataGrid_SetDoubleClickEnabled(normalGrid, doubleClickEnabled ? 1 : 0);
+                EmojiWindowNative.DataGrid_Refresh(normalGrid);
+                EmojiWindowNative.DataGrid_Refresh(virtualGrid);
+            }
+
+            void RefreshMode()
             {
                 shell.SetLabelText(modeLabel, virtualMode ? "当前模式: 虚拟表格 1,000,000 行" : $"当前模式: 普通表格 {rows.Count} 行");
             }
 
-            string ReadHeader(IntPtr grid, int index) => EmojiWindowNative.ReadUtf8(EmojiWindowNative.DataGrid_GetColumnHeaderText, grid, index);
-
-            string ReadCell(IntPtr grid, int row, int col)
+            void RefreshHeaders(string prefix)
             {
-                if (grid == virtualGrid)
-                {
-                    return PageCommon.BuildVirtualGridText(row, col);
-                }
-
-                return EmojiWindowNative.ReadUtf8(EmojiWindowNative.DataGrid_GetCellText, grid, row, col);
+                shell.SetLabelText(headerReadout, $"{prefix}\r\n普通表头: {string.Join(" | ", ReadAllHeaders(normalGrid))}\r\n虚拟表头: {string.Join(" | ", ReadAllHeaders(virtualGrid))}");
             }
 
-            void RefreshHeaderReadout(string prefix)
-            {
-                string normalText = string.Join(" | ", ReadHeaders(normalGrid));
-                string virtualText = string.Join(" | ", ReadHeaders(virtualGrid));
-                shell.SetLabelText(headerReadout, $"{prefix}\r\n普通表头: {normalText}\r\n虚拟表头: {virtualText}");
-            }
-
-            IEnumerable<string> ReadHeaders(IntPtr grid)
+            IEnumerable<string> ReadAllHeaders(IntPtr grid)
             {
                 int count = EmojiWindowNative.DataGrid_GetColumnCount(grid);
                 for (int i = 0; i < count; i++)
@@ -131,7 +126,7 @@ namespace EmojiWindowDemo
                 }
             }
 
-            void RefreshCellReadout(string prefix)
+            void RefreshCell(string prefix)
             {
                 IntPtr grid = ActiveGrid();
                 int row = EmojiWindowNative.DataGrid_GetSelectedRow(grid);
@@ -148,37 +143,28 @@ namespace EmojiWindowDemo
                     extra = $"\r\n勾选状态: {EmojiWindowNative.DataGrid_GetCellChecked(grid, row, col) != 0}";
                 }
 
-                shell.SetLabelText(cellReadout, $"{prefix}\r\nrow={row}, col={col}\r\nvalue={ReadCell(grid, row, col)}{extra}");
+                string value = ReadCell(grid, row, col);
+                shell.SetLabelText(cellReadout, $"{prefix}\r\nrow={row}, col={col}\r\nvalue={(string.IsNullOrEmpty(value) ? "(空)" : value)}{extra}");
             }
 
             void ApplyRowStyles()
             {
                 for (int row = 0; row < rows.Count; row++)
                 {
-                    uint tagFg = row % 3 == 0 ? DemoColors.Blue : (row % 3 == 1 ? DemoColors.Green : DemoColors.Orange);
-                    uint tagBg = row % 3 == 0 ? DemoColors.LightBlue : (row % 3 == 1 ? DemoColors.LightGreen : DemoColors.Yellow);
-                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 3, tagFg, tagBg, 0, 0);
+                    uint fg = row % 3 == 0 ? DemoTheme.Primary : row % 3 == 1 ? DemoTheme.Success : DemoTheme.Warning;
+                    uint bg = row % 3 == 0 ? DemoTheme.SurfacePrimary : row % 3 == 1 ? DemoTheme.SurfaceSuccess : DemoTheme.SurfaceWarning;
+                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 3, fg, bg, 0, 0);
                     EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 4, DemoColors.White, row % 2 == 0 ? DemoColors.Blue : DemoColors.Green, 0, 0);
-                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 5, DemoColors.Blue, 0, 0, 0);
-                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 6, tagFg, tagBg, 0, 0);
-                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 0, accentStyle ? DemoColors.Purple : 0, accentStyle ? DemoColors.LightBlue : 0, accentStyle ? 1 : 0, 0);
-                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 7, 0, accentStyle ? DemoColors.Yellow : 0, 0, 0);
+                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 5, DemoTheme.Primary, 0, 0, 0);
+                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 6, fg, bg, 0, 0);
+                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 0, accentStyle ? DemoColors.Purple : 0, accentStyle ? DemoTheme.SurfaceInfo : 0, accentStyle ? 1 : 0, 0);
+                    EmojiWindowNative.DataGrid_SetCellStyle(normalGrid, row, 7, accentStyle ? DemoTheme.Text : 0, accentStyle ? DemoTheme.SurfaceWarning : 0, 0, 0);
                 }
 
                 EmojiWindowNative.DataGrid_Refresh(normalGrid);
             }
 
-            void LoadImageCell(int row, int imageIndex)
-            {
-                string path = imagePaths[imageIndex % imagePaths.Length];
-                if (!string.IsNullOrEmpty(path))
-                {
-                    byte[] bytes = app.U(path);
-                    EmojiWindowNative.DataGrid_SetCellImageFromFile(normalGrid, row, 6, bytes, bytes.Length);
-                }
-            }
-
-            void RebuildNormalRows()
+            void RebuildRows()
             {
                 EmojiWindowNative.DataGrid_ClearRows(normalGrid);
                 for (int i = 0; i < rows.Count; i++)
@@ -193,36 +179,18 @@ namespace EmojiWindowDemo
                     PageCommon.SetGridCellText(app, normalGrid, row, 5, item.LinkText);
                     PageCommon.SetGridCellText(app, normalGrid, row, 6, item.ImageAlt);
                     PageCommon.SetGridCellText(app, normalGrid, row, 7, item.Note);
-                    LoadImageCell(row, i);
+
+                    string imagePath = imagePaths[i % imagePaths.Length];
+                    if (!string.IsNullOrEmpty(imagePath))
+                    {
+                        byte[] bytes = app.U(imagePath);
+                        EmojiWindowNative.DataGrid_SetCellImageFromFile(normalGrid, row, 6, bytes, bytes.Length);
+                    }
                 }
 
                 ApplyRowStyles();
-                UpdateModeLabel();
-            }
-
-            void AddRow()
-            {
-                rows.Add(new RowSeed($"🧾 新任务 {rows.Count + 1}", rows.Count % 2 == 0, "🕒 待处理", rows.Count % 2 == 0 ? "🔵 P1" : "🟢 P2", "打开", "查看详情", "图片-N", "运行时追加的数据"));
-                RebuildNormalRows();
-                SetState("➕ 已向普通表格新增一行。");
-            }
-
-            void ClearRows()
-            {
-                rows.Clear();
-                RebuildNormalRows();
-                SetState("🧹 已清空普通表格。");
-                RefreshCellReadout("清空后读取单元格");
-            }
-
-            void ToggleVirtualMode()
-            {
-                virtualMode = !virtualMode;
-                EmojiWindowNative.DataGrid_Show(normalGrid, virtualMode ? 0 : 1);
-                EmojiWindowNative.DataGrid_Show(virtualGrid, virtualMode ? 1 : 0);
-                UpdateModeLabel();
-                RefreshCellReadout("切换模式后读取单元格");
-                SetState(virtualMode ? "🚀 已切换到虚拟表格 1,000,000 行。" : "🧾 已切回普通表格。");
+                RefreshMode();
+                ApplyTheme();
             }
 
             void ToggleSort(int col)
@@ -233,41 +201,12 @@ namespace EmojiWindowDemo
                     return;
                 }
 
-                int nextOrder = !sortStates.ContainsKey(col) || sortStates[col] != 1 ? 1 : 2;
-                sortStates[col] = nextOrder;
-                EmojiWindowNative.DataGrid_SortByColumn(normalGrid, col, nextOrder);
+                int next = !sortStates.ContainsKey(col) || sortStates[col] != 1 ? 1 : 2;
+                sortStates[col] = next;
+                EmojiWindowNative.DataGrid_SortByColumn(normalGrid, col, next);
                 EmojiWindowNative.DataGrid_Refresh(normalGrid);
-                SetState($"🔀 已按列 {col} {(nextOrder == 1 ? "升序" : "降序")} 排序。");
-                RefreshCellReadout("排序后读取单元格");
-            }
-
-            void RenameHeader(IntPtr grid, int col, string text, string note)
-            {
-                byte[] bytes = app.U(text);
-                EmojiWindowNative.DataGrid_SetColumnHeaderText(grid, col, bytes, bytes.Length);
-                EmojiWindowNative.DataGrid_Refresh(grid);
-                RefreshHeaderReadout("修改表头后读取");
-                SetState(note);
-            }
-
-            void RestoreHeaders()
-            {
-                for (int i = 0; i < normalHeaders.Length; i++)
-                {
-                    byte[] text = app.U(normalHeaders[i]);
-                    EmojiWindowNative.DataGrid_SetColumnHeaderText(normalGrid, i, text, text.Length);
-                }
-
-                for (int i = 0; i < virtualHeaders.Length; i++)
-                {
-                    byte[] text = app.U(virtualHeaders[i]);
-                    EmojiWindowNative.DataGrid_SetColumnHeaderText(virtualGrid, i, text, text.Length);
-                }
-
-                EmojiWindowNative.DataGrid_Refresh(normalGrid);
-                EmojiWindowNative.DataGrid_Refresh(virtualGrid);
-                RefreshHeaderReadout("已恢复默认表头");
-                SetState("↩️ 已恢复普通表格和虚拟表格默认表头。");
+                SetState($"📊 已按列 {col} {(next == 1 ? "升序" : "降序")} 排序。");
+                RefreshCell("排序后读取单元格");
             }
 
             void SelectCell(int row, int col)
@@ -279,30 +218,36 @@ namespace EmojiWindowDemo
                 EmojiWindowNative.DataGrid_SetSelectedCell(grid, row, col);
                 selectedRow = row;
                 selectedCol = col;
-                RefreshCellReadout($"已定位到 [{row}, {col}]");
+                RefreshCell($"已定位到 [{row}, {col}]");
             }
 
-            void ToggleSelectedCheck()
+            void RenameHeader(IntPtr grid, int col, string text, string note)
             {
-                if (virtualMode)
+                byte[] bytes = app.U(text);
+                EmojiWindowNative.DataGrid_SetColumnHeaderText(grid, col, bytes, bytes.Length);
+                EmojiWindowNative.DataGrid_Refresh(grid);
+                RefreshHeaders("修改表头后读取");
+                SetState(note);
+            }
+
+            void RestoreHeaders()
+            {
+                for (int i = 0; i < normalHeaders.Length; i++)
                 {
-                    SetState("虚拟表格没有勾选列，请先切回普通表格。");
-                    return;
+                    byte[] bytes = app.U(normalHeaders[i]);
+                    EmojiWindowNative.DataGrid_SetColumnHeaderText(normalGrid, i, bytes, bytes.Length);
                 }
 
-                int row = EmojiWindowNative.DataGrid_GetSelectedRow(normalGrid);
-                if (row < 0)
+                for (int i = 0; i < virtualHeaders.Length; i++)
                 {
-                    row = 0;
+                    byte[] bytes = app.U(virtualHeaders[i]);
+                    EmojiWindowNative.DataGrid_SetColumnHeaderText(virtualGrid, i, bytes, bytes.Length);
                 }
 
-                bool nextValue = EmojiWindowNative.DataGrid_GetCellChecked(normalGrid, row, 1) == 0;
-                EmojiWindowNative.DataGrid_SetCellChecked(normalGrid, row, 1, nextValue ? 1 : 0);
                 EmojiWindowNative.DataGrid_Refresh(normalGrid);
-                selectedRow = row;
-                selectedCol = 1;
-                SetState($"☑️ 已切换第 {row} 行勾选状态为 {nextValue}。");
-                RefreshCellReadout("切换勾选后读取单元格");
+                EmojiWindowNative.DataGrid_Refresh(virtualGrid);
+                RefreshHeaders("已恢复默认表头");
+                SetState("↩ 已恢复默认表头。");
             }
 
             void WriteSelectedCell()
@@ -325,87 +270,118 @@ namespace EmojiWindowDemo
                 EmojiWindowNative.DataGrid_Refresh(normalGrid);
                 selectedRow = row;
                 selectedCol = col;
-                SetState($"✏️ 已修改普通表格单元格 [{row}, {col}]。");
-                RefreshCellReadout("修改后读取单元格");
+                SetState($"✏️ 已修改单元格 [{row}, {col}]。");
+                RefreshCell("修改后读取单元格");
+            }
+
+            void ToggleCheck()
+            {
+                if (virtualMode)
+                {
+                    SetState("虚拟表格没有勾选列，请先切回普通表格。");
+                    return;
+                }
+
+                int row = EmojiWindowNative.DataGrid_GetSelectedRow(normalGrid);
+                if (row < 0) row = 0;
+                bool next = EmojiWindowNative.DataGrid_GetCellChecked(normalGrid, row, 1) == 0;
+                EmojiWindowNative.DataGrid_SetCellChecked(normalGrid, row, 1, next ? 1 : 0);
+                EmojiWindowNative.DataGrid_Refresh(normalGrid);
+                selectedRow = row;
+                selectedCol = 1;
+                SetState($"☑️ 第 {row} 行勾选状态已切到 {next}。");
+                RefreshCell("切换勾选后读取单元格");
+            }
+
+            void ToggleVirtual()
+            {
+                virtualMode = !virtualMode;
+                EmojiWindowNative.DataGrid_Show(normalGrid, virtualMode ? 0 : 1);
+                EmojiWindowNative.DataGrid_Show(virtualGrid, virtualMode ? 1 : 0);
+                RefreshMode();
+                RefreshCell("切换模式后读取单元格");
+                SetState(virtualMode ? "🚀 已切换到虚拟表格 1,000,000 行。" : "📋 已切回普通表格。");
             }
 
             void ToggleHeaderStyle()
             {
                 headerDark = !headerDark;
-                EmojiWindowNative.DataGrid_SetHeaderStyle(normalGrid, headerDark ? HeaderStyleDark : HeaderStylePlain);
-                EmojiWindowNative.DataGrid_SetHeaderStyle(virtualGrid, headerDark ? HeaderStyleDark : HeaderStylePlain);
-                EmojiWindowNative.DataGrid_Refresh(normalGrid);
-                EmojiWindowNative.DataGrid_Refresh(virtualGrid);
-                SetState($"🎨 已切换表头样式为 {(headerDark ? "Dark" : "Plain")}。");
+                ApplyTheme();
+                SetState($"🎛️ 表头样式已切到 {(headerDark ? "Dark" : "Plain")}。");
             }
 
-            void ToggleDoubleClickEdit()
-            {
-                doubleClickEnabled = !doubleClickEnabled;
-                EmojiWindowNative.DataGrid_SetDoubleClickEnabled(normalGrid, doubleClickEnabled ? 1 : 0);
-                SetState($"🖱️ 普通表格双击编辑已{(doubleClickEnabled ? "开启" : "关闭")}。");
-            }
-
-            void ToggleAccentStyle()
+            void ToggleAccent()
             {
                 accentStyle = !accentStyle;
                 ApplyRowStyles();
-                SetState($"🪄 单元格演示样式已{(accentStyle ? "开启" : "恢复默认")}。");
+                SetState($"🎨 单元格演示样式已{(accentStyle ? "开启" : "恢复默认")}。");
             }
 
-            void CycleHeaderAlignment()
+            void ToggleDoubleClick()
             {
-                headerAlignment = headerAlignment == PageCommon.AlignLeft ? PageCommon.AlignCenter : (headerAlignment == PageCommon.AlignCenter ? PageCommon.AlignRight : PageCommon.AlignLeft);
-                int count = EmojiWindowNative.DataGrid_GetColumnCount(ActiveGrid());
-                for (int i = 0; i < count; i++)
-                {
-                    EmojiWindowNative.DataGrid_SetColumnHeaderAlignment(ActiveGrid(), i, headerAlignment);
-                }
+                doubleClickEnabled = !doubleClickEnabled;
+                ApplyTheme();
+                SetState($"🖋️ 双击编辑已{(doubleClickEnabled ? "开启" : "关闭")}。");
+            }
 
+            void CycleHeaderAlign()
+            {
+                headerAlignment = headerAlignment == PageCommon.AlignLeft ? PageCommon.AlignCenter : headerAlignment == PageCommon.AlignCenter ? PageCommon.AlignRight : PageCommon.AlignLeft;
+                int count = EmojiWindowNative.DataGrid_GetColumnCount(ActiveGrid());
+                for (int i = 0; i < count; i++) EmojiWindowNative.DataGrid_SetColumnHeaderAlignment(ActiveGrid(), i, headerAlignment);
                 EmojiWindowNative.DataGrid_Refresh(ActiveGrid());
                 SetState($"📐 表头对齐已切到 {AlignmentName(headerAlignment)}。");
             }
 
-            void CycleCellAlignment()
+            void CycleCellAlign()
             {
-                cellAlignment = cellAlignment == PageCommon.AlignLeft ? PageCommon.AlignCenter : (cellAlignment == PageCommon.AlignCenter ? PageCommon.AlignRight : PageCommon.AlignLeft);
+                cellAlignment = cellAlignment == PageCommon.AlignLeft ? PageCommon.AlignCenter : cellAlignment == PageCommon.AlignCenter ? PageCommon.AlignRight : PageCommon.AlignLeft;
                 int count = EmojiWindowNative.DataGrid_GetColumnCount(ActiveGrid());
-                for (int i = 0; i < count; i++)
-                {
-                    EmojiWindowNative.DataGrid_SetColumnCellAlignment(ActiveGrid(), i, cellAlignment);
-                }
-
+                for (int i = 0; i < count; i++) EmojiWindowNative.DataGrid_SetColumnCellAlignment(ActiveGrid(), i, cellAlignment);
                 EmojiWindowNative.DataGrid_Refresh(ActiveGrid());
-                SetState($"📏 单元格对齐已切到 {AlignmentName(cellAlignment)}。");
+                SetState($"🧭 单元格对齐已切到 {AlignmentName(cellAlignment)}。");
             }
 
             void ExportCsv()
             {
-                string exportPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_datagrid_export_demo.csv");
-                byte[] pathBytes = app.U(exportPath);
-                bool ok = EmojiWindowNative.DataGrid_ExportCSV(normalGrid, pathBytes, pathBytes.Length) != 0;
-                shell.SetLabelText(exportLabel, ok ? "CSV 已导出:\r\n" + exportPath : "CSV 导出失败。");
-                SetState(ok ? "📤 已导出 CSV。" : "CSV 导出失败。");
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_datagrid_export_demo.csv");
+                byte[] bytes = app.U(path);
+                bool ok = EmojiWindowNative.DataGrid_ExportCSV(normalGrid, bytes, bytes.Length) != 0;
+                shell.SetLabelText(exportLabel, ok ? "CSV 已导出\r\n" + path : "CSV 导出失败。");
+                SetState(ok ? "💾 已导出 CSV。" : "CSV 导出失败。");
             }
 
-            int OnGridMenuAdd = 9301;
-            int OnGridMenuClear = 9302;
-            int OnGridMenuToggle = 9303;
-            int OnGridMenuRead = 9304;
-            int OnGridMenuHeader = 9305;
+            ApplyCommonGridStyle(normalGrid, normalHeaders.Length);
+            ApplyCommonGridStyle(virtualGrid, virtualHeaders.Length);
+            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 1, PageCommon.AlignCenter);
+            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 2, PageCommon.AlignCenter);
+            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 3, PageCommon.AlignCenter);
+            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 4, PageCommon.AlignCenter);
+            EmojiWindowNative.DataGrid_SetColumnCellAlignment(normalGrid, 6, PageCommon.AlignCenter);
+            byte[] comboItems = app.U("🕓 待处理\n🟡 进行中\n✅ 已完成\n⚪ 已暂停");
+            EmojiWindowNative.DataGrid_SetColumnComboItems(normalGrid, 2, comboItems, comboItems.Length);
+            EmojiWindowNative.DataGrid_SetFreezeHeader(normalGrid, 1);
+            EmojiWindowNative.DataGrid_SetFreezeColumnCount(normalGrid, 2);
+            EmojiWindowNative.DataGrid_SetFreezeRowCount(normalGrid, 2);
+
+            const int MenuAdd = 9301;
+            const int MenuClear = 9302;
+            const int MenuToggle = 9303;
+            const int MenuRead = 9304;
+            const int MenuHeader = 9305;
             IntPtr popupMenu = EmojiWindowNative.CreateEmojiPopupMenu(page);
-            AddMenuItem(app, popupMenu, "➕ 添加一行", OnGridMenuAdd);
-            AddMenuItem(app, popupMenu, "🧹 清空普通表格", OnGridMenuClear);
-            AddMenuItem(app, popupMenu, "🚀 切换虚拟表格", OnGridMenuToggle);
-            AddMenuItem(app, popupMenu, "📄 读取当前单元格", OnGridMenuRead);
-            AddMenuItem(app, popupMenu, "🎨 切换表头样式", OnGridMenuHeader);
+            AddMenuItem(app, popupMenu, "➕ 添加一行", MenuAdd);
+            AddMenuItem(app, popupMenu, "🧹 清空普通表格", MenuClear);
+            AddMenuItem(app, popupMenu, "🚀 切换虚拟表格", MenuToggle);
+            AddMenuItem(app, popupMenu, "📖 读取当前单元格", MenuRead);
+            AddMenuItem(app, popupMenu, "🎛️ 切换表头样式", MenuHeader);
             var popupCallback = app.Pin(new EmojiWindowNative.MenuItemClickCallback((_, itemId) =>
             {
-                if (itemId == OnGridMenuAdd) AddRow();
-                else if (itemId == OnGridMenuClear) ClearRows();
-                else if (itemId == OnGridMenuToggle) ToggleVirtualMode();
-                else if (itemId == OnGridMenuRead) RefreshCellReadout("右键菜单读取单元格");
-                else if (itemId == OnGridMenuHeader) ToggleHeaderStyle();
+                if (itemId == MenuAdd) { rows.Add(new RowSeed($"📝 新任务 {rows.Count + 1}", rows.Count % 2 == 0, "🕓 待处理", rows.Count % 2 == 0 ? "🔵 P1" : "🟢 P2", "打开", "查看详情", "图片-N", "运行时追加的数据")); RebuildRows(); SetState("➕ 已新增一行。"); }
+                else if (itemId == MenuClear) { rows.Clear(); RebuildRows(); SetState("🧹 已清空普通表格。"); }
+                else if (itemId == MenuToggle) ToggleVirtual();
+                else if (itemId == MenuRead) RefreshCell("右键菜单读取单元格");
+                else if (itemId == MenuHeader) ToggleHeaderStyle();
             }));
             EmojiWindowNative.SetPopupMenuCallback(popupMenu, popupCallback);
             EmojiWindowNative.BindControlMenu(normalGrid, popupMenu);
@@ -416,65 +392,33 @@ namespace EmojiWindowDemo
                 selectedRow = row;
                 selectedCol = col;
                 string value = ReadCell(grid, row, col);
-                if (grid == normalGrid && col == 4)
-                {
-                    byte[] title = app.U("按钮列点击");
-                    byte[] message = app.U($"点击了按钮列: row={row}, value={value}");
-                    byte[] icon = app.U("🔘");
-                    EmojiWindowNative.show_message_box_bytes(page, title, title.Length, message, message.Length, icon, icon.Length);
-                }
-                else if (grid == normalGrid && col == 5)
-                {
-                    byte[] title = app.U("链接列点击");
-                    byte[] message = app.U($"点击了链接列: row={row}, value={value}");
-                    byte[] icon = app.U("🔗");
-                    EmojiWindowNative.show_message_box_bytes(page, title, title.Length, message, message.Length, icon, icon.Length);
-                }
-                else if (grid == normalGrid && col == 6)
-                {
-                    byte[] title = app.U("图片列点击");
-                    byte[] message = app.U($"点击了图片列: row={row}, alt={value}");
-                    byte[] icon = app.U("🖼️");
-                    EmojiWindowNative.show_message_box_bytes(page, title, title.Length, message, message.Length, icon, icon.Length);
-                }
-
-                SetState($"🧾 单元格点击: row={row}, col={col}, value={value}");
-                RefreshCellReadout("点击后读取单元格");
+                SetState($"📋 单元格点击: row={row}, col={col}, value={value}");
+                RefreshCell("点击后读取单元格");
             }));
-            var doubleClickCallback = app.Pin(new EmojiWindowNative.DataGridCellCallback((_, row, col) => SetState($"🖱️ 双击编辑: row={row}, col={col}")));
+            var doubleClickCallback = app.Pin(new EmojiWindowNative.DataGridCellCallback((_, row, col) => SetState($"🖋️ 双击编辑: row={row}, col={col}")));
             var valueChangedCallback = app.Pin(new EmojiWindowNative.DataGridCellCallback((grid, row, col) =>
             {
                 selectedRow = row;
                 selectedCol = col;
                 SetState($"✏️ 单元格值变化: row={row}, col={col}, value={ReadCell(grid, row, col)}");
-                RefreshCellReadout("值变化后读取单元格");
+                RefreshCell("值变化后读取单元格");
             }));
             var selectionChangedCallback = app.Pin(new EmojiWindowNative.DataGridCellCallback((grid, row, col) =>
             {
                 selectedRow = row;
                 selectedCol = col;
                 SetState($"🎯 选中单元格: row={row}, col={col}, value={ReadCell(grid, row, col)}");
-                RefreshCellReadout("选中后读取单元格");
+                RefreshCell("选中后读取单元格");
             }));
             var headerClickCallback = app.Pin(new EmojiWindowNative.DataGridColumnHeaderCallback((grid, col) =>
             {
-                if (grid == normalGrid)
-                {
-                    ToggleSort(col);
-                }
-                else
-                {
-                    SetState($"📑 虚拟表格列表头点击: col={col}");
-                }
+                if (grid == normalGrid) ToggleSort(col);
+                else SetState($"🧭 虚拟表格列表头点击: col={col}");
             }));
             var virtualCallback = app.Pin(new EmojiWindowNative.DataGridVirtualDataCallback((_, row, col, buffer, bufferSize) =>
             {
                 byte[] bytes = app.U(PageCommon.BuildVirtualGridText(row, col));
-                if (buffer == IntPtr.Zero || bufferSize <= 0)
-                {
-                    return bytes.Length;
-                }
-
+                if (buffer == IntPtr.Zero || bufferSize <= 0) return bytes.Length;
                 int copied = Math.Min(bytes.Length, bufferSize);
                 System.Runtime.InteropServices.Marshal.Copy(bytes, 0, buffer, copied);
                 return copied;
@@ -492,38 +436,46 @@ namespace EmojiWindowDemo
             EmojiWindowNative.DataGrid_SetVirtualDataCallback(virtualGrid, virtualCallback);
             EmojiWindowNative.DataGrid_SetVirtualRowCount(virtualGrid, 1_000_000);
 
-            AddToolbarButton(app, toolbar, 10, "➕", "加一行", DemoColors.Blue, AddRow);
-            AddToolbarButton(app, toolbar, 112, "🧹", "清空表格", DemoColors.Red, ClearRows);
-            AddToolbarButton(app, toolbar, 222, "🚀", "切换虚拟", DemoColors.Purple, ToggleVirtualMode);
-            AddToolbarButton(app, toolbar, 332, "🖼️", "定位图片列", DemoColors.Blue, () =>
+            AddToolbarButton(app, toolbar, 10, "➕", "加一行", DemoColors.Blue, () =>
             {
-                SelectCell(0, virtualMode ? 5 : 6);
-                SetState(virtualMode ? "🖼️ 已定位到虚拟表格图片列（col=5）。" : "🖼️ 已定位到普通表格图片列（col=6）。");
+                rows.Add(new RowSeed($"📝 新任务 {rows.Count + 1}", rows.Count % 2 == 0, "🕓 待处理", rows.Count % 2 == 0 ? "🔵 P1" : "🟢 P2", "打开", "查看详情", "图片-N", "运行时追加的数据"));
+                RebuildRows();
+                SetState("➕ 已新增一行。");
             });
-            AddToolbarButton(app, toolbar, 446, "🔀", "任务排序", DemoColors.Blue, () => ToggleSort(0));
-            AddToolbarButton(app, toolbar, 550, "🖱️", "双击编辑", DemoColors.Gray, ToggleDoubleClickEdit);
-            AddToolbarButton(app, toolbar, 676, "📤", "导出 CSV", DemoColors.Green, ExportCsv);
-            AddToolbarButton(app, toolbar, 784, "🎨", "单元格样式", DemoColors.Orange, ToggleAccentStyle);
+            AddToolbarButton(app, toolbar, 112, "🧹", "清空表格", DemoColors.Red, () =>
+            {
+                rows.Clear();
+                RebuildRows();
+                SetState("🧹 已清空普通表格。");
+            });
+            AddToolbarButton(app, toolbar, 222, "🚀", "切换虚拟", DemoColors.Purple, ToggleVirtual);
+            AddToolbarButton(app, toolbar, 332, "🖼️", "定位图片列", DemoColors.Blue, () => SelectCell(0, virtualMode ? 5 : 6));
+            AddToolbarButton(app, toolbar, 446, "📊", "任务排序", DemoColors.Blue, () => ToggleSort(0));
+            AddToolbarButton(app, toolbar, 550, "🖋️", "双击编辑", DemoColors.Gray, ToggleDoubleClick);
+            AddToolbarButton(app, toolbar, 676, "💾", "导出 CSV", DemoColors.Green, ExportCsv);
+            AddToolbarButton(app, toolbar, 784, "🎨", "单元格样式", DemoColors.Orange, ToggleAccent);
 
-            app.Button(1104, 416, 150, 36, "读取表头", "📄", DemoColors.Blue, () => RefreshHeaderReadout("手动读取表头"), page);
-            app.Button(1266, 416, 174, 36, "改普通首列", "1", DemoColors.Orange, () => RenameHeader(normalGrid, 0, "🧩 工单", "🗂️ 已修改普通表格首列表头"), page);
-            app.Button(1104, 460, 150, 36, "改虚拟末列", "7", DemoColors.Green, () => RenameHeader(virtualGrid, 6, "📝 虚拟说明", "🗂️ 已修改虚拟表格末列表头"), page);
-            app.Button(1266, 460, 174, 36, "恢复默认表头", "↩", DemoColors.Gray, RestoreHeaders, page);
+            app.Button(1104, 280, 150, 34, "读取表头", "📖", DemoColors.Blue, () => RefreshHeaders("手动读取表头"), page);
+            app.Button(1266, 280, 174, 34, "改普通首列", "1", DemoColors.Orange, () => RenameHeader(normalGrid, 0, "🧾 工单", "✏️ 已修改普通表格首列表头"), page);
+            app.Button(1104, 322, 150, 34, "改虚拟末列", "7", DemoColors.Green, () => RenameHeader(virtualGrid, 6, "🗒️ 虚拟说明", "✏️ 已修改虚拟表格末列表头"), page);
+            app.Button(1266, 322, 174, 34, "恢复默认表头", "↩", DemoColors.Gray, RestoreHeaders, page);
 
-            app.Button(1104, 630, 150, 34, "定位 [0,0]", "🎯", DemoColors.Blue, () => SelectCell(0, 0), page);
-            app.Button(1266, 630, 174, 34, "定位末列", "📍", DemoColors.Orange, () => SelectCell(0, virtualMode ? 6 : 7), page);
-            app.Button(1104, 672, 150, 34, "修改当前格", "📝", DemoColors.Purple, WriteSelectedCell, page);
-            app.Button(1266, 672, 174, 34, "切换勾选", "☑️", DemoColors.Green, ToggleSelectedCheck, page);
+            app.Button(1104, 474, 150, 34, "定位 [0,0]", "🎯", DemoColors.Blue, () => SelectCell(0, 0), page);
+            app.Button(1266, 474, 174, 34, "定位末列", "📌", DemoColors.Orange, () => SelectCell(0, virtualMode ? 6 : 7), page);
+            app.Button(1104, 516, 336, 34, "修改当前格", "🗒️", DemoColors.Purple, WriteSelectedCell, page);
 
-            app.Button(1104, 744, 104, 34, "表头对齐", "📐", DemoColors.Blue, CycleHeaderAlignment, page);
-            app.Button(1218, 744, 104, 34, "内容对齐", "📏", DemoColors.Orange, CycleCellAlignment, page);
-            app.Button(1332, 744, 108, 34, "切换表头", "🎨", DemoColors.Gray, ToggleHeaderStyle, page);
+            app.Button(1104, 626, 78, 32, "勾选", "☑️", DemoColors.Green, ToggleCheck, page);
+            app.Button(1190, 626, 78, 32, "头对齐", "📐", DemoColors.Blue, CycleHeaderAlign, page);
+            app.Button(1276, 626, 78, 32, "格对齐", "🧭", DemoColors.Orange, CycleCellAlign, page);
+            app.Button(1362, 626, 78, 32, "头样式", "🎛️", DemoColors.Gray, ToggleHeaderStyle, page);
 
-            RebuildNormalRows();
-            RefreshHeaderReadout("初始表头");
-            UpdateModeLabel();
+            shell.RegisterPageThemeHandler(page, ApplyTheme);
+            ApplyTheme();
+            RebuildRows();
+            RefreshHeaders("初始表头");
+            RefreshMode();
             SelectCell(0, 0);
-            SetState("🧾 表格页已升级：高级列、排序、回调、CSV、普通 / 虚拟模式和冻结前 N 列 / 前 N 行都已接入。");
+            SetState("📋 表格页已统一成 Python 版的分区结构。");
         }
 
         private static void ApplyCommonGridStyle(IntPtr grid, int columnCount)

@@ -1,6 +1,10 @@
 # Emoji Window DLL（C++）
 
-基于 **Direct2D / DirectWrite** 的 Windows 原生 UI 控件 DLL：彩色 **Emoji** 与 Unicode 文本显示、多套主题（亮/暗）、布局与表格等能力，面向 **易语言**、也可配合 **C# / Python** 等通过 P/Invoke 或 ctypes 调用。仓库内含源码、主题 JSON、以及各语言示例。
+基于 **Direct2D / DirectWrite** 的 Windows 原生 UI 控件 DLL，支持彩色 **Emoji** 与 Unicode 文本、多套主题（亮/暗）、布局与表格等能力。
+
+导出为 **`__stdcall` C 风格 API**：凡能在 Windows 上加载 DLL 并绑定原生函数的语言均可调用。常见环境包括 **C/C++**、**C#**（P/Invoke）、**VB.NET**、**Python**（ctypes）、**易语言**（`.DLL命令`）、**Delphi / Free Pascal**、**Rust**、**Go**、**Java**（JNA 等）、**Node.js**（ffi-napi 等）。
+
+**当前仓库仅附带易语言、C#、Python 三种示例 Demo**；其他语言请对照 `docs` 与 `emoji_window.def` 自行声明。仓库另含源码与主题 JSON。
 
 ---
 

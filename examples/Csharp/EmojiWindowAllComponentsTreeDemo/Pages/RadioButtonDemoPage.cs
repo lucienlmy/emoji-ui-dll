@@ -8,66 +8,193 @@ namespace EmojiWindowDemo
         {
             var app = shell.App;
             byte[] font = app.U("Microsoft YaHei UI");
-            IntPtr readout = app.Label(40, 184, 900, 72, string.Empty, DemoColors.Black, DemoColors.WindowBg, 13, PageCommon.AlignLeft, true, page);
-            IntPtr state = app.Label(40, 760, 1360, 22, "RadioButton 页状态将在这里更新。", DemoColors.Blue, DemoColors.WindowBg, 12, PageCommon.AlignLeft, false, page);
 
-            byte[] t1 = app.U("🅰️ 方案 A");
-            byte[] t2 = app.U("🅱️ 方案 B");
-            byte[] t3 = app.U("🅲️ 按钮样式");
-            IntPtr rb1 = EmojiWindowNative.CreateRadioButton(page, 56, 110, 180, 34, t1, t1.Length, 99, 1, DemoColors.Black, DemoColors.Transparent, font, font.Length, 13, 0, 0, 0);
-            IntPtr rb2 = EmojiWindowNative.CreateRadioButton(page, 256, 110, 180, 34, t2, t2.Length, 99, 0, DemoColors.Black, DemoColors.Transparent, font, font.Length, 13, 0, 0, 0);
-            IntPtr rb3 = EmojiWindowNative.CreateRadioButton(page, 456, 110, 200, 38, t3, t3.Length, 99, 0, DemoColors.Black, DemoColors.Transparent, font, font.Length, 13, 0, 0, 0);
-            EmojiWindowNative.SetRadioButtonStyle(rb2, PageCommon.RadioStyleBorder);
-            EmojiWindowNative.SetRadioButtonStyle(rb3, PageCommon.RadioStyleButton);
-            EmojiWindowNative.SetRadioButtonDotColor(rb1, DemoColors.Blue);
-            EmojiWindowNative.SetRadioButtonDotColor(rb2, DemoColors.Orange);
-            EmojiWindowNative.SetRadioButtonDotColor(rb3, DemoColors.Green);
+            app.GroupBox(16, 16, 980, 324, "RadioButton 样式演示", DemoTheme.Border, DemoTheme.Background, page);
+            app.GroupBox(1020, 16, 444, 424, "状态 / 样式 / 分组", DemoTheme.Border, DemoTheme.Background, page);
+            app.GroupBox(16, 538, 1448, 220, "RadioButton API 说明", DemoTheme.Border, DemoTheme.Background, page);
+
+            app.Label(40, 56, 980, 24, "这一页只保留 RadioButton，不再混入 CheckBox、ProgressBar、Slider 和 Switch。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+
+            byte[] defaultText = app.U("默认样式");
+            byte[] borderText = app.U("Border 样式");
+            byte[] buttonText = app.U("Button 样式");
+            byte[] disabledText = app.U("禁用态");
+            byte[] dynamicText = app.U("动态样式");
+
+            IntPtr rbDefault = EmojiWindowNative.CreateRadioButton(page, 56, 118, 250, 34, defaultText, defaultText.Length, 301, 1, DemoTheme.Text, DemoTheme.Background, font, font.Length, 13, 0, 0, 0);
+            IntPtr rbBorder = EmojiWindowNative.CreateRadioButton(page, 56, 166, 250, 36, borderText, borderText.Length, 301, 0, DemoTheme.Text, DemoTheme.Background, font, font.Length, 13, 0, 0, 0);
+            IntPtr rbButton = EmojiWindowNative.CreateRadioButton(page, 56, 214, 250, 38, buttonText, buttonText.Length, 301, 0, DemoTheme.Text, DemoTheme.Surface, font, font.Length, 13, 0, 0, 0);
+            IntPtr rbDisabled = EmojiWindowNative.CreateRadioButton(page, 360, 118, 260, 34, disabledText, disabledText.Length, 302, 1, DemoTheme.Text, DemoTheme.Background, font, font.Length, 13, 0, 0, 0);
+            IntPtr rbDynamic = EmojiWindowNative.CreateRadioButton(page, 360, 170, 260, 38, dynamicText, dynamicText.Length, 302, 0, DemoTheme.Text, DemoTheme.Background, font, font.Length, 13, 0, 0, 0);
+
+            EmojiWindowNative.SetRadioButtonStyle(rbBorder, PageCommon.RadioStyleBorder);
+            EmojiWindowNative.SetRadioButtonStyle(rbButton, PageCommon.RadioStyleButton);
+            EmojiWindowNative.SetRadioButtonStyle(rbDynamic, PageCommon.RadioStyleBorder);
+            EmojiWindowNative.SetRadioButtonDotColor(rbDefault, DemoTheme.Primary);
+            EmojiWindowNative.SetRadioButtonDotColor(rbBorder, DemoTheme.Warning);
+            EmojiWindowNative.SetRadioButtonDotColor(rbButton, DemoTheme.Success);
+            EmojiWindowNative.SetRadioButtonDotColor(rbDisabled, DemoTheme.Muted);
+            EmojiWindowNative.SetRadioButtonDotColor(rbDynamic, DemoColors.Purple);
+            EmojiWindowNative.EnableRadioButton(rbDisabled, 0);
+
+            IntPtr readout = app.Label(40, 366, 920, 108, "等待读取单选框属性。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+            IntPtr state = app.Label(40, 490, 920, 22, "单选框页面状态会显示在这里。", DemoTheme.Primary, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
+            app.Label(40, 288, 960, 24, "左侧展示 default / border / button 三种主样式，并补上禁用态和一个可动态切换样式的单选框。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+
+            IntPtr[] radios = { rbDefault, rbBorder, rbButton, rbDisabled, rbDynamic };
+            string[] names = { "default", "border", "button", "disabled", "dynamic" };
+            int[] groups = { 301, 301, 301, 302, 302 };
+            int dynamicX = 360;
+            bool dynamicAltText = false;
+
+            string StyleName(int style)
+            {
+                switch (style)
+                {
+                    case 0: return "default";
+                    case PageCommon.RadioStyleBorder: return "border";
+                    case PageCommon.RadioStyleButton: return "button";
+                    default: return "unknown(" + style + ")";
+                }
+            }
+
+            void ApplyTheme()
+            {
+                EmojiWindowNative.SetRadioButtonColor(rbDefault, DemoTheme.Text, DemoTheme.Background);
+                EmojiWindowNative.SetRadioButtonColor(rbBorder, DemoTheme.Text, DemoTheme.Background);
+                EmojiWindowNative.SetRadioButtonColor(rbButton, DemoTheme.Text, DemoTheme.Surface);
+                EmojiWindowNative.SetRadioButtonColor(rbDisabled, DemoTheme.Text, DemoTheme.Background);
+                EmojiWindowNative.SetRadioButtonColor(rbDynamic, DemoTheme.Text, DemoTheme.Background);
+            }
 
             void Refresh(string note)
             {
-                shell.SetLabelText(
-                    readout,
-                    $"A={EmojiWindowNative.GetRadioButtonState(rb1)}  B={EmojiWindowNative.GetRadioButtonState(rb2)}  C={EmojiWindowNative.GetRadioButtonState(rb3)}\r\n" +
-                    $"文本={EmojiWindowNative.ReadUtf8(EmojiWindowNative.GetRadioButtonText, rb1)} / {EmojiWindowNative.ReadUtf8(EmojiWindowNative.GetRadioButtonText, rb2)} / {EmojiWindowNative.ReadUtf8(EmojiWindowNative.GetRadioButtonText, rb3)}\r\n" +
-                    $"{note}");
+                string text = note + "\r\n";
+                for (int i = 0; i < radios.Length; i++)
+                {
+                    EmojiWindowNative.GetRadioButtonColor(radios[i], out uint fg, out uint bg);
+                    EmojiWindowNative.GetRadioButtonDotColor(radios[i], out uint dot);
+                    string visible = Win32Native.IsWindowVisible(radios[i]) ? "显示" : "隐藏";
+                    string enabled = Win32Native.IsWindowEnabled(radios[i]) ? "启用" : "禁用";
+                    text += $"{names[i]}: checked={EmojiWindowNative.GetRadioButtonState(radios[i])} group={groups[i]} style={StyleName(EmojiWindowNative.GetRadioButtonStyle(radios[i]))} {visible}/{enabled} text={EmojiWindowNative.ReadUtf8(EmojiWindowNative.GetRadioButtonText, radios[i])} fg={PageCommon.FormatColor(fg)} bg={PageCommon.FormatColor(bg)} dot={PageCommon.FormatColor(dot)}";
+                    if (i < radios.Length - 1)
+                    {
+                        text += "\r\n";
+                    }
+                }
+
+                shell.SetLabelText(readout, text);
                 shell.SetLabelText(state, note);
                 shell.SetStatus(note);
             }
 
+            void SelectRadio(IntPtr radio, string note)
+            {
+                EmojiWindowNative.SetRadioButtonState(radio, 1);
+                Refresh(note);
+            }
+
+            void SetScheme(uint a, uint b, uint c, uint d, uint e, string note)
+            {
+                EmojiWindowNative.SetRadioButtonDotColor(rbDefault, a);
+                EmojiWindowNative.SetRadioButtonDotColor(rbBorder, b);
+                EmojiWindowNative.SetRadioButtonDotColor(rbButton, c);
+                EmojiWindowNative.SetRadioButtonDotColor(rbDisabled, d);
+                EmojiWindowNative.SetRadioButtonDotColor(rbDynamic, e);
+                Refresh(note);
+            }
+
+            void Restore()
+            {
+                EmojiWindowNative.SetRadioButtonText(rbDefault, defaultText, defaultText.Length);
+                EmojiWindowNative.SetRadioButtonText(rbBorder, borderText, borderText.Length);
+                EmojiWindowNative.SetRadioButtonText(rbButton, buttonText, buttonText.Length);
+                EmojiWindowNative.SetRadioButtonText(rbDisabled, disabledText, disabledText.Length);
+                EmojiWindowNative.SetRadioButtonText(rbDynamic, dynamicText, dynamicText.Length);
+                EmojiWindowNative.SetRadioButtonState(rbDefault, 1);
+                EmojiWindowNative.SetRadioButtonState(rbDisabled, 1);
+                EmojiWindowNative.SetRadioButtonStyle(rbDefault, 0);
+                EmojiWindowNative.SetRadioButtonStyle(rbBorder, PageCommon.RadioStyleBorder);
+                EmojiWindowNative.SetRadioButtonStyle(rbButton, PageCommon.RadioStyleButton);
+                EmojiWindowNative.SetRadioButtonStyle(rbDynamic, PageCommon.RadioStyleBorder);
+                EmojiWindowNative.EnableRadioButton(rbDisabled, 0);
+                EmojiWindowNative.ShowRadioButton(rbDynamic, 1);
+                dynamicX = 360;
+                EmojiWindowNative.SetRadioButtonBounds(rbDynamic, dynamicX, 170, 260, 38);
+                dynamicAltText = false;
+                ApplyTheme();
+                SetScheme(DemoTheme.Primary, DemoTheme.Warning, DemoTheme.Success, DemoTheme.Muted, DemoColors.Purple, "单选框页面已恢复默认");
+            }
+
             var callback = app.Pin(new EmojiWindowNative.RadioButtonCallback((handle, groupId, checkedState) =>
             {
-                string label = EmojiWindowNative.ReadUtf8(EmojiWindowNative.GetRadioButtonText, handle);
-                Refresh($"Radio 回调: {label} group={groupId} checked={checkedState}");
+                Refresh($"RadioButton 回调: {EmojiWindowNative.ReadUtf8(EmojiWindowNative.GetRadioButtonText, handle)} group={groupId} checked={checkedState}");
             }));
-            EmojiWindowNative.SetRadioButtonCallback(rb1, callback);
-            EmojiWindowNative.SetRadioButtonCallback(rb2, callback);
-            EmojiWindowNative.SetRadioButtonCallback(rb3, callback);
-
-            app.Button(40, 320, 140, 36, "读取状态", "📄", DemoColors.Blue, () => Refresh("已读取全部 RadioButton 状态"), page);
-            app.Button(196, 320, 140, 36, "读取文本", "ℹ", DemoColors.Gray, () =>
+            foreach (IntPtr radio in radios)
             {
-                Refresh("已读取当前 RadioButton 文本和分组状态");
-            }, page);
-            app.Button(352, 320, 140, 36, "蓝色方案", "💙", DemoColors.Blue, () =>
+                EmojiWindowNative.SetRadioButtonCallback(radio, callback);
+            }
+
+            app.Label(1044, 56, 220, 22, "分组选中", DemoTheme.Text, DemoTheme.Background, 14, PageCommon.AlignLeft, false, page);
+            app.Button(1044, 94, 116, 34, "选中默认", "1", DemoColors.Blue, () => SelectRadio(rbDefault, "默认样式单选框已设为选中"), page);
+            app.Button(1172, 94, 116, 34, "选中 Border", "2", DemoColors.Orange, () => SelectRadio(rbBorder, "Border 样式单选框已设为选中"), page);
+            app.Button(1300, 94, 124, 34, "选中 Button", "3", DemoColors.Green, () => SelectRadio(rbButton, "Button 样式单选框已设为选中"), page);
+
+            app.Label(1044, 148, 220, 22, "动态样式", DemoTheme.Text, DemoTheme.Background, 14, PageCommon.AlignLeft, false, page);
+            app.Button(1044, 182, 116, 34, "选中动态", "4", DemoColors.Purple, () => SelectRadio(rbDynamic, "动态样式单选框已设为选中"), page);
+            app.Button(1172, 182, 116, 34, "禁用/启用", "E", DemoColors.Gray, () =>
             {
-                EmojiWindowNative.SetRadioButtonDotColor(rb1, DemoColors.Blue);
-                EmojiWindowNative.SetRadioButtonDotColor(rb2, DemoColors.Blue);
-                EmojiWindowNative.SetRadioButtonDotColor(rb3, DemoColors.Blue);
-                Refresh("RadioButton 圆点色已统一切到蓝色方案");
+                EmojiWindowNative.EnableRadioButton(rbDisabled, Win32Native.IsWindowEnabled(rbDisabled) ? 0 : 1);
+                Refresh("禁用态单选框已切换启用状态");
             }, page);
-            app.Button(508, 320, 140, 36, "彩色方案", "🌈", DemoColors.Purple, () =>
+            app.Button(1300, 182, 124, 34, "显示/隐藏", "V", DemoColors.Blue, () =>
             {
-                EmojiWindowNative.SetRadioButtonDotColor(rb1, DemoColors.Blue);
-                EmojiWindowNative.SetRadioButtonDotColor(rb2, DemoColors.Orange);
-                EmojiWindowNative.SetRadioButtonDotColor(rb3, DemoColors.Green);
-                Refresh("RadioButton 圆点色已恢复彩色方案");
+                EmojiWindowNative.ShowRadioButton(rbDynamic, Win32Native.IsWindowVisible(rbDynamic) ? 0 : 1);
+                Refresh("动态单选框已切换显示状态");
+            }, page);
+            app.Button(1044, 226, 116, 34, "默认样式", "A", DemoColors.Gray, () =>
+            {
+                EmojiWindowNative.SetRadioButtonStyle(rbDynamic, 0);
+                Refresh("动态单选框已切到 default 样式");
+            }, page);
+            app.Button(1172, 226, 116, 34, "Border 样式", "B", DemoColors.Orange, () =>
+            {
+                EmojiWindowNative.SetRadioButtonStyle(rbDynamic, PageCommon.RadioStyleBorder);
+                Refresh("动态单选框已切到 border 样式");
+            }, page);
+            app.Button(1300, 226, 124, 34, "Button 样式", "C", DemoColors.Green, () =>
+            {
+                EmojiWindowNative.SetRadioButtonStyle(rbDynamic, PageCommon.RadioStyleButton);
+                Refresh("动态单选框已切到 button 样式");
             }, page);
 
-            app.Label(40, 598, 1320, 22, "1. GetRadioButtonState / SetRadioButtonCallback：读取当前选中项并监听分组变化。", DemoColors.Black, DemoColors.WindowBg, 12, PageCommon.AlignLeft, false, page);
-            app.Label(40, 632, 1320, 22, "2. GetRadioButtonText：读取当前 RadioButton 文本。", DemoColors.Black, DemoColors.WindowBg, 12, PageCommon.AlignLeft, false, page);
-            app.Label(40, 666, 1320, 22, "3. SetRadioButtonStyle / SetRadioButtonDotColor：切换边框样式、按钮样式和圆点色。", DemoColors.Black, DemoColors.WindowBg, 12, PageCommon.AlignLeft, false, page);
+            app.Label(1044, 280, 220, 22, "文本与配色", DemoTheme.Text, DemoTheme.Background, 14, PageCommon.AlignLeft, false, page);
+            app.Button(1044, 314, 116, 34, "切换文本", "T", DemoColors.Purple, () =>
+            {
+                dynamicAltText = !dynamicAltText;
+                byte[] text = app.U(dynamicAltText ? "动态样式 / 文本已切换" : "动态样式");
+                EmojiWindowNative.SetRadioButtonText(rbDynamic, text, text.Length);
+                Refresh("动态单选框文本已切换");
+            }, page);
+            app.Button(1172, 314, 116, 34, "右移 60", ">", DemoColors.Gray, () =>
+            {
+                dynamicX += 60;
+                EmojiWindowNative.SetRadioButtonBounds(rbDynamic, dynamicX, 170, 260, 38);
+                Refresh("动态单选框位置已更新 dx=60");
+            }, page);
+            app.Button(1300, 314, 124, 34, "恢复默认", "R", DemoColors.Blue, Restore, page);
+            app.Button(1044, 358, 116, 34, "默认配色", "D", DemoColors.Blue, () => SetScheme(DemoTheme.Primary, DemoTheme.Warning, DemoTheme.Success, DemoTheme.Muted, DemoColors.Purple, "单选框已切到默认配色方案"), page);
+            app.Button(1172, 358, 116, 34, "暖色方案", "W", DemoColors.Orange, () => SetScheme(DemoTheme.Warning, DemoTheme.Danger, DemoTheme.Warning, DemoTheme.Muted, DemoTheme.Danger, "单选框已切到暖色配色方案"), page);
 
-            Refresh("RadioButton 页已加载，可直接测试分组单选和样式切换");
+            app.Label(40, 582, 1120, 24, "1. GetRadioButtonState / SetRadioButtonState：读取与切换当前组内选中项。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
+            app.Label(40, 616, 1120, 24, "2. GetRadioButtonStyle / SetRadioButtonStyle：直接切换 default / border / button。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
+            app.Label(40, 650, 1120, 24, "3. GetRadioButtonColor / SetRadioButtonColor / SetRadioButtonDotColor：读取文本色、背景色和圆点色。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
+            app.Label(40, 684, 1120, 24, "4. GetRadioButtonText / SetRadioButtonText：动态切换单选框文案。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
+            app.Label(40, 718, 1120, 24, "5. EnableRadioButton / ShowRadioButton / SetRadioButtonBounds：演示启用态、显示态和位置更新。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
+
+            shell.RegisterPageThemeHandler(page, ApplyTheme);
+            ApplyTheme();
+            Refresh("单选框页面已整理：只保留 RadioButton，并补上样式、分组和状态控制。");
         }
     }
 }

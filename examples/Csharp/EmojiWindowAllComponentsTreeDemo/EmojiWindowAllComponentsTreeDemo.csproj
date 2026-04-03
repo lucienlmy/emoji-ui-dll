@@ -7,12 +7,19 @@
     <LangVersion>latest</LangVersion>
     <Prefer32Bit>false</Prefer32Bit>
     <RootNamespace>EmojiWindowDemo</RootNamespace>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="..\DemoCommon\EmojiWindowNative.cs" Link="DemoCommon\EmojiWindowNative.cs" />
     <Compile Include="..\DemoCommon\DemoRuntime.cs" Link="DemoCommon\DemoRuntime.cs" />
     <Compile Include="..\DemoCommon\DemoScenarios.cs" Link="DemoCommon\DemoScenarios.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
