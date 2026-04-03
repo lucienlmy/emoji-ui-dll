@@ -47,6 +47,9 @@
 
 ## 界面截图
 
+<details>
+<summary>点击展开查看界面效果示例</summary>
+
 4.0 起整体向 Element 风格与皮肤系统靠拢，以下为界面效果示例（图源：`WindowsEmojiDll/4.0/截图.md`）。
 
 ![9d48a9b1cde44b44b53704196a18e971](https://img.msblog.cc/img/9d48a9b1cde44b44b53704196a18e971.png)
@@ -64,6 +67,8 @@
 ![2fc5373e9547348d67f1fa44d26966be](https://img.msblog.cc/img/2fc5373e9547348d67f1fa44d26966be.png)
 
 ![40cc75a4cbe644b5146dfb0002df2070](https://img.msblog.cc/img/40cc75a4cbe644b5146dfb0002df2070.png)
+
+</details>
 
 ---
 
