@@ -266,6 +266,8 @@ EXPORTS
     SetGroupBoxBounds
     SetGroupBoxCallback
     CreatePanel
+    SetPanelBackgroundColor
+    GetPanelBackgroundColor
     GetGroupBoxTitle
     GetGroupBoxBounds
     GetGroupBoxVisible
