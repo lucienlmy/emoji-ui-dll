@@ -116,6 +116,7 @@ EXPORTS
     GetLabelColor
     GetLabelBounds
     GetLabelAlignment
+    SetLabelAlignment
     GetLabelEnabled
     GetLabelVisible
     CreateCheckBox

@@ -211,6 +211,7 @@ namespace EmojiWindowDemo
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetLabelColor(IntPtr hLabel, out uint fgColor, out uint bgColor);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetLabelBounds(IntPtr hLabel, out int x, out int y, out int width, out int height);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetLabelAlignment(IntPtr hLabel);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetLabelAlignment(IntPtr hLabel, int alignment);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetLabelEnabled(IntPtr hLabel);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetLabelVisible(IntPtr hLabel);
 

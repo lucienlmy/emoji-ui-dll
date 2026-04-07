@@ -129,6 +129,8 @@ dll.GetLabelBounds.restype = c_int
 dll.GetLabelBounds.argtypes = [c_int, POINTER(c_int), POINTER(c_int), POINTER(c_int), POINTER(c_int)]
 dll.GetLabelAlignment.restype = c_int
 dll.GetLabelAlignment.argtypes = [c_int]
+dll.SetLabelAlignment.restype = None
+dll.SetLabelAlignment.argtypes = [c_int, c_int]
 
 # -- 复选框 --
 dll.CreateCheckBox.restype = c_int
@@ -225,6 +227,7 @@ btn_get_lbl_font = 0
 btn_get_lbl_color = 0
 btn_get_lbl_pos = 0
 btn_get_lbl_align = 0
+btn_set_lbl_align = 0
 
 # 操作按钮 ID —— 复选框/单选按钮属性区
 btn_get_chk_text = 0
@@ -357,6 +360,16 @@ def on_button_click(button_id, parent_hwnd):
         align_names = {0: "左对齐", 1: "居中", 2: "右对齐"}
         show_result(f"标签对齐方式: {align_names.get(align, '未知')} ({align})")
 
+    elif button_id == btn_set_lbl_align:
+        # 循环切换标签对齐：左 -> 中 -> 右 -> 左
+        cur = dll.GetLabelAlignment(demo_label)
+        if cur < 0:
+            cur = 0
+        nxt = (cur + 1) % 3
+        dll.SetLabelAlignment(demo_label, nxt)
+        align_names = {0: "左对齐", 1: "居中", 2: "右对齐"}
+        show_result(f"已 SetLabelAlignment：{align_names.get(nxt, '未知')} ({nxt})")
+
     # ===== 复选框/单选按钮属性操作 =====
     elif button_id == btn_get_chk_text:
         # 获取复选框文本（两次调用）
@@ -472,7 +485,7 @@ def comprehensive_demo():
     global btn_set_btn_color, btn_toggle_btn_vis, btn_get_btn_enabled
     global btn_get_win_title, btn_get_win_pos, btn_get_win_color
     global btn_get_lbl_text, btn_get_lbl_font, btn_get_lbl_color
-    global btn_get_lbl_pos, btn_get_lbl_align
+    global btn_get_lbl_pos, btn_get_lbl_align, btn_set_lbl_align
     global btn_get_chk_text, btn_get_rdo_text
     global btn_get_grp_title, btn_get_grp_pos
     global btn_get_tab_title, btn_get_tab_pos
@@ -626,6 +639,7 @@ def comprehensive_demo():
     btn_get_lbl_color = create_btn(hwnd, b'\xf0\x9f\x8e\xa8', "获取标签颜色", 290, 530, 130, 36, GREEN)
     btn_get_lbl_pos = create_btn(hwnd, b'\xf0\x9f\x93\x90', "获取标签位置", 10, 575, 130, 36, RED)
     btn_get_lbl_align = create_btn(hwnd, b'\xe2\x86\x94', "获取标签对齐", 150, 575, 130, 36, RED)
+    btn_set_lbl_align = create_btn(hwnd, b'\xf0\x9f\x94\x84', "切换标签对齐", 290, 575, 130, 36, RED)
 
     # --- 复选框/单选按钮属性区 ---
     create_section_label(hwnd, "【复选框/单选按钮属性】", 540, 300, 550, 24, argb(255,150,80,150))

@@ -8001,6 +8001,21 @@ __declspec(dllexport) int __stdcall GetLabelAlignment(
     return (int)state->alignment;
 }
 
+// 设置标签对齐方式（0=左 1=中 2=右），创建后也可调用
+__declspec(dllexport) void __stdcall SetLabelAlignment(
+    HWND hLabel,
+    int alignment
+) {
+    if (!hLabel || alignment < 0 || alignment > 2) return;
+    auto it = g_labels.find(hLabel);
+    if (it == g_labels.end()) return;
+
+    LabelState* state = it->second;
+    state->alignment = (TextAlignment)alignment;
+    if (state->parent_drawn) InvalidateRect(state->parent, NULL, FALSE);
+    else InvalidateRect(hLabel, NULL, TRUE);
+}
+
 // 获取标签启用状态
 __declspec(dllexport) int __stdcall GetLabelEnabled(
     HWND hLabel

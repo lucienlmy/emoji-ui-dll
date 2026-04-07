@@ -24,6 +24,7 @@ namespace EmojiWindowDemo
             EmojiWindowNative.GetLabelBounds(demoLabel, out int initialX, out int initialY, out int initialWidth, out int initialHeight);
             EmojiWindowNative.GetLabelColor(demoLabel, out uint initialFg, out uint initialBg);
             string initialFontName = ReadFontName(demoLabel, out int initialFontSize, out int initialBold, out _, out _);
+            int initialAlign = Math.Max(0, EmojiWindowNative.GetLabelAlignment(demoLabel));
             string colorMode = "theme";
 
             void Refresh(string note)
@@ -84,6 +85,7 @@ namespace EmojiWindowDemo
                 EmojiWindowNative.SetLabelText(demoLabel, textBytes, textBytes.Length);
                 EmojiWindowNative.SetLabelColor(demoLabel, initialFg, initialBg);
                 EmojiWindowNative.SetLabelBounds(demoLabel, initialX, initialY, initialWidth, initialHeight);
+                EmojiWindowNative.SetLabelAlignment(demoLabel, initialAlign);
                 EmojiWindowNative.SetLabelFont(demoLabel, fontBytes, fontBytes.Length, initialFontSize, initialBold, 0, 0);
                 EmojiWindowNative.EnableLabel(demoLabel, 1);
                 EmojiWindowNative.ShowLabel(demoLabel, 1);
@@ -116,24 +118,36 @@ namespace EmojiWindowDemo
             app.Button(1044, 314, 116, 34, "右移 80", "➡", DemoColors.Blue, () => MoveLabel(dx: 80), page);
             app.Button(1172, 314, 116, 34, "下移 20", "⬇", DemoColors.Green, () => MoveLabel(dy: 20), page);
             app.Button(1300, 314, 124, 34, "加宽 120", "↔", DemoColors.Orange, () => MoveLabel(dw: 120), page);
-            app.Button(1044, 358, 116, 34, "禁用/启用", "🚫", DemoColors.Purple, () =>
+            app.Label(1044, 348, 380, 22, "对齐 SetLabelAlignment(0/1/2)", DemoTheme.Text, DemoTheme.Background, 14, PageCommon.AlignLeft, false, page);
+            app.Button(1044, 378, 116, 34, "左对齐", "◀", DemoColors.Blue, () =>
+            {
+                EmojiWindowNative.SetLabelAlignment(demoLabel, PageCommon.AlignLeft);
+                Refresh("对齐已设为左");
+            }, page);
+            app.Button(1172, 378, 116, 34, "居中", "⏺", DemoColors.Green, () =>
+            {
+                EmojiWindowNative.SetLabelAlignment(demoLabel, PageCommon.AlignCenter);
+                Refresh("对齐已设为居中");
+            }, page);
+            app.Button(1300, 378, 124, 34, "右对齐", "▶", DemoColors.Orange, () =>
+            {
+                EmojiWindowNative.SetLabelAlignment(demoLabel, PageCommon.AlignRight);
+                Refresh("对齐已设为右");
+            }, page);
+            app.Button(1044, 422, 116, 34, "禁用/启用", "🚫", DemoColors.Purple, () =>
             {
                 EmojiWindowNative.EnableLabel(demoLabel, EmojiWindowNative.GetLabelEnabled(demoLabel) == 1 ? 0 : 1);
                 Refresh("标签启用状态已切换");
             }, page);
-            app.Button(1172, 358, 116, 34, "显示/隐藏", "👁", DemoColors.Gray, () =>
+            app.Button(1172, 422, 116, 34, "显示/隐藏", "👁", DemoColors.Gray, () =>
             {
                 EmojiWindowNative.ShowLabel(demoLabel, EmojiWindowNative.GetLabelVisible(demoLabel) == 1 ? 0 : 1);
                 Refresh("标签可见状态已切换");
             }, page);
-            app.Button(1300, 358, 124, 34, "恢复默认", "↺", DemoColors.Blue, Restore, page);
-            app.Label(1044, 410, 382, 56, "当前 DLL 对 Label 提供了对齐方式读取接口 GetLabelAlignment，但没有 SetLabelAlignment 真接口，所以这里只做“可读不伪造可写”。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
+            app.Button(1300, 422, 124, 34, "恢复默认", "↺", DemoColors.Blue, Restore, page);
+            app.Label(1044, 468, 382, 44, "「恢复默认」会连同对齐方式一并还原为进入本页时记录的值。", DemoTheme.Muted, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
 
-            app.Label(40, 598, 1320, 24, "1. GetLabelText / SetLabelText：读取和修改标签文本。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
-            app.Label(40, 632, 1320, 24, "2. GetLabelColor / SetLabelColor：读取和切换前景色 / 背景色。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
-            app.Label(40, 666, 1320, 24, "3. GetLabelBounds / SetLabelBounds：直接修改标签位置和宽度。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
-            app.Label(40, 700, 1320, 24, "4. GetLabelFont / SetLabelFont：这里用真实字体读写展示字体名、字号和粗体。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
-            app.Label(40, 734, 1320, 24, "5. EnableLabel / ShowLabel：演示启用态和可见态切换。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, false, page);
+            app.Label(40, 598, 1320, 96, "DLL 导出（与本页演示对应）：CreateLabel（创建时指定 alignment、word_wrap）；GetLabelText / SetLabelText；GetLabelColor / SetLabelColor；GetLabelBounds / SetLabelBounds；GetLabelFont / SetLabelFont；GetLabelAlignment / SetLabelAlignment（0=左 1=中 2=右）；GetLabelEnabled / EnableLabel；GetLabelVisible / ShowLabel。", DemoTheme.Text, DemoTheme.Background, 12, PageCommon.AlignLeft, true, page);
 
             void ApplyTheme()
             {

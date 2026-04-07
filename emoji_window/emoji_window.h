@@ -2006,6 +2006,12 @@ extern "C" {
         HWND hLabel
     );
 
+    // 璁剧疆鏍囩瀵归綈鏂瑰紡 (0=宸? 1=涓? 2=鍙?
+    __declspec(dllexport) void __stdcall SetLabelAlignment(
+        HWND hLabel,
+        int alignment
+    );
+
     // 鑾峰彇鏍囩鍚敤鐘舵€?(1=鍚敤, 0=绂佺敤, -1=閿欒)
     __declspec(dllexport) int __stdcall GetLabelEnabled(
         HWND hLabel

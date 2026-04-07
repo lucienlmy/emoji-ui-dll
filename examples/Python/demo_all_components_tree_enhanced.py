@@ -339,6 +339,7 @@ def bind_extra_apis() -> None:
     DLL.GetLabelBounds.restype = ctypes.c_int
     DLL.GetLabelAlignment.argtypes = [HWND]
     DLL.GetLabelAlignment.restype = ctypes.c_int
+    DLL.SetLabelAlignment.argtypes = [HWND, ctypes.c_int]
     DLL.GetLabelEnabled.argtypes = [HWND]
     DLL.GetLabelEnabled.restype = ctypes.c_int
     DLL.GetLabelVisible.argtypes = [HWND]
@@ -903,6 +904,7 @@ def build_page_overview_basic(page: HWND) -> None:
         "基础组件树形版已按按钮、文本、状态控件、容器拆开，便于大空间详细展示。",
         ["窗口", "按钮", "标签", "编辑框", "彩色 Emoji 编辑框", "复选框", "单选框", "进度条", "滑块", "开关", "分组框", "面板"],
         "重点接口: SetButtonType / SetButtonStyle / SetButtonLoading / SetLabelText / SetLabelColor / "
+        "GetLabelFont / SetLabelFont / GetLabelBounds / SetLabelBounds / GetLabelAlignment / SetLabelAlignment / "
         "GetCheckBoxState / SetCheckBoxState / GetProgressValue / SetProgressValue / GetSliderValue / SetSliderValue / "
         "GetSwitchState / SetSwitchState。",
     )
@@ -2644,7 +2646,7 @@ def build_page_label(page: HWND) -> None:
             return 0, 0, 0, 0
         return x.value, y.value, w.value, h.value
 
-    def read_label_font() -> tuple[str, int, int]:
+    def read_label_font() -> tuple[str, int, int, int, int]:
         buf = ctypes.create_string_buffer(128)
         size = ctypes.c_int()
         bold = ctypes.c_int()
@@ -2652,7 +2654,7 @@ def build_page_label(page: HWND) -> None:
         underline = ctypes.c_int()
         result = int(DLL.GetLabelFont(demo_label, buf, 128, ctypes.byref(size), ctypes.byref(bold), ctypes.byref(italic), ctypes.byref(underline)))
         name = buf.raw[:max(result, 0)].decode("utf-8", errors="replace") if result > 0 else ""
-        return name, size.value, bold.value
+        return name, size.value, bold.value, italic.value, underline.value
 
     fg0 = UINT32()
     bg0 = UINT32()
@@ -2662,6 +2664,7 @@ def build_page_label(page: HWND) -> None:
         "bounds": read_label_bounds(),
         "fg": int(fg0.value),
         "bg": int(bg0.value),
+        "alignment": max(0, int(DLL.GetLabelAlignment(demo_label))),
     }
 
     def refresh(note: str = "已刷新标签属性") -> None:
@@ -2669,14 +2672,14 @@ def build_page_label(page: HWND) -> None:
         bg = UINT32()
         DLL.GetLabelColor(demo_label, ctypes.byref(fg), ctypes.byref(bg))
         x, y, w, h = read_label_bounds()
-        font_name, font_size, bold = read_label_font()
+        font_name, font_size, bold, italic, underline = read_label_font()
         align_name = base.alignment_name(int(DLL.GetLabelAlignment(demo_label)))
         enabled = "启用" if int(DLL.GetLabelEnabled(demo_label)) == 1 else "禁用"
         visible = "显示" if int(DLL.GetLabelVisible(demo_label)) == 1 else "隐藏"
         base.set_label_text(
             readout,
             f"text={read_utf8_label()}  {visible}/{enabled}\n"
-            f"bounds=({x}, {y}, {w}, {h})  align={align_name}  font={font_name or 'default'} {font_size}px bold={bold}\n"
+            f"bounds=({x}, {y}, {w}, {h})  align={align_name}  font={font_name or 'default'} {font_size}px b/i/u={bold}/{italic}/{underline}\n"
             f"fg=0x{int(fg.value):08X}  bg=0x{int(bg.value):08X}"
         )
         base.set_label_text(state_text, note)
@@ -2699,11 +2702,16 @@ def build_page_label(page: HWND) -> None:
         DLL.SetLabelBounds(demo_label, x + dx, y + dy, w + dw, h)
         refresh(f"标签位置/尺寸已更新: dx={dx}, dy={dy}, dw={dw}")
 
+    def set_label_alignment(align: int, note: str) -> None:
+        DLL.SetLabelAlignment(demo_label, align)
+        refresh(note)
+
     def restore_label() -> None:
         x, y, w, h = initial["bounds"]
         DLL.SetLabelText(demo_label, *s(str(initial["text"]))[:2])
         DLL.SetLabelColor(demo_label, int(initial["fg"]), int(initial["bg"]))
         DLL.SetLabelBounds(demo_label, int(x), int(y), int(w), int(h))
+        DLL.SetLabelAlignment(demo_label, int(initial["alignment"]))
         DLL.SetLabelFont(demo_label, *s("Segoe UI Emoji")[:2], 15, BOOL(True), BOOL(False), BOOL(False))
         DLL.EnableLabel(demo_label, BOOL(True))
         DLL.ShowLabel(demo_label, BOOL(True))
@@ -2724,16 +2732,29 @@ def build_page_label(page: HWND) -> None:
     base.button(page, "➡️", "右移 80", 1044, 286, 118, 36, 0xFF409EFF, lambda: move_label(dx=80))
     base.button(page, "⬇️", "下移 20", 1176, 286, 118, 36, 0xFF67C23A, lambda: move_label(dy=20))
     base.button(page, "↔️", "加宽 120", 1308, 286, 118, 36, 0xFFE6A23C, lambda: move_label(dw=120))
-    base.button(page, "🚫", "禁用/启用", 1044, 336, 118, 36, 0xFF8E44AD, lambda: (DLL.EnableLabel(demo_label, BOOL(not (int(DLL.GetLabelEnabled(demo_label)) == 1))), refresh("标签启用状态已切换")))
-    base.button(page, "👁️", "显示/隐藏", 1176, 336, 118, 36, 0xFF909399, lambda: (DLL.ShowLabel(demo_label, BOOL(not (int(DLL.GetLabelVisible(demo_label)) == 1))), refresh("标签可见状态已切换")))
-    base.button(page, "↺", "恢复默认", 1308, 336, 118, 36, 0xFF409EFF, restore_label)
-    base.label(page, "当前 DLL 对 Label 提供了对齐方式读取接口 `GetLabelAlignment`，但没有 `SetLabelAlignment` 真接口，所以这里明确只做“可读不伪造可写”。", 1044, 392, 382, 56, fg=0xFF606266, bg=0xFFF5F7FA, wrap=True)
+    base.label(page, "↔️ 对齐 SetLabelAlignment(0/1/2)", 1044, 318, 380, 22, fg=0xFF303133, bg=0xFFF5F7FA, size=14, bold=True)
+    base.button(page, "◀️", "左对齐", 1044, 348, 118, 36, 0xFF409EFF, lambda: set_label_alignment(base.ALIGN_LEFT, "对齐已设为左"))
+    base.button(page, "⏺", "居中", 1176, 348, 118, 36, 0xFF67C23A, lambda: set_label_alignment(base.ALIGN_CENTER, "对齐已设为居中"))
+    base.button(page, "▶️", "右对齐", 1308, 348, 118, 36, 0xFFE6A23C, lambda: set_label_alignment(base.ALIGN_RIGHT, "对齐已设为右"))
+    base.button(page, "🚫", "禁用/启用", 1044, 394, 118, 36, 0xFF8E44AD, lambda: (DLL.EnableLabel(demo_label, BOOL(not (int(DLL.GetLabelEnabled(demo_label)) == 1))), refresh("标签启用状态已切换")))
+    base.button(page, "👁️", "显示/隐藏", 1176, 394, 118, 36, 0xFF909399, lambda: (DLL.ShowLabel(demo_label, BOOL(not (int(DLL.GetLabelVisible(demo_label)) == 1))), refresh("标签可见状态已切换")))
+    base.button(page, "↺", "恢复默认", 1308, 394, 118, 36, 0xFF409EFF, restore_label)
+    base.label(page, "「恢复默认」会连同对齐方式一并还原为进入本页时记录的值。", 1044, 438, 382, 44, fg=0xFF606266, bg=0xFFF5F7FA, wrap=True)
 
-    base.label(page, "1. GetLabelText / SetLabelText：读取和修改标签文本。", 40, 598, 640, 24, fg=0xFF303133, bg=0xFFF5F7FA)
-    base.label(page, "2. GetLabelColor / SetLabelColor：读取和切换前景色 / 背景色。", 40, 632, 700, 24, fg=0xFF303133, bg=0xFFF5F7FA)
-    base.label(page, "3. GetLabelBounds / SetLabelBounds：直接修改标签位置和宽度。", 40, 666, 720, 24, fg=0xFF303133, bg=0xFFF5F7FA)
-    base.label(page, "4. GetLabelFont / SetLabelFont：这里用真实字体读写展示字体名、字号和粗体。", 40, 700, 820, 24, fg=0xFF303133, bg=0xFFF5F7FA)
-    base.label(page, "5. EnableLabel / ShowLabel：演示启用态和可见态切换。", 40, 734, 720, 24, fg=0xFF303133, bg=0xFFF5F7FA)
+    base.label(
+        page,
+        "DLL 导出（与本页演示对应）：CreateLabel（创建时指定 alignment、word_wrap）；"
+        "GetLabelText / SetLabelText；GetLabelColor / SetLabelColor；GetLabelBounds / SetLabelBounds；"
+        "GetLabelFont / SetLabelFont（字体名 UTF-8、字号、粗/斜/下划线）；GetLabelAlignment / SetLabelAlignment（0=左 1=中 2=右）；"
+        "GetLabelEnabled / EnableLabel；GetLabelVisible / ShowLabel。",
+        40,
+        598,
+        1360,
+        120,
+        fg=0xFF303133,
+        bg=0xFFF5F7FA,
+        wrap=True,
+    )
     refresh("标签页已加载，可直接测试标签属性读取与设置")
 
 

@@ -347,6 +347,7 @@ def setup() -> None:
     DLL.CreateTooltip.restype = HWND
     DLL.SetTooltipText.argtypes = [HWND, ctypes.c_void_p, ctypes.c_int]
     DLL.SetLabelColor.argtypes = [HWND, UINT32, UINT32]
+    DLL.SetLabelAlignment.argtypes = [HWND, ctypes.c_int]
     DLL.SetTooltipPlacement.argtypes = [HWND, ctypes.c_int]
     DLL.SetTooltipTheme.argtypes = [HWND, ctypes.c_int]
     DLL.SetTooltipColors.argtypes = [HWND, UINT32, UINT32, UINT32]
