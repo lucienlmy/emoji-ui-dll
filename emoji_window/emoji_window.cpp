@@ -12879,6 +12879,18 @@ static bool IsD2DEditBoxWindow(HWND hwnd) {
     return hwnd && g_d2d_editboxes.find(hwnd) != g_d2d_editboxes.end();
 }
 
+// 非 D2D 组合框显示层仍走传统 Invalidate；D2D 路径由 SetD2DEditBoxText 单次父窗 RedrawWindow 完成，避免重复绘制导致闪烁。
+static void RedrawComboBoxEditAfterContentChange(HWND hComboBox, HWND hEdit) {
+    if (!hComboBox || !hEdit || !IsWindow(hEdit)) return;
+    if (IsD2DEditBoxWindow(hEdit)) {
+        return;
+    }
+    InvalidateRect(hEdit, nullptr, FALSE);
+    UpdateWindow(hEdit);
+    InvalidateRect(hComboBox, nullptr, FALSE);
+    UpdateWindow(hComboBox);
+}
+
 extern "C" __declspec(dllexport) HWND __stdcall CreateD2DColorEmojiEditBox(
     HWND hParent,
     int x, int y, int width, int height,
@@ -13686,6 +13698,17 @@ void __stdcall SetComboSelectedIndex(HWND hComboBox, int index) {
         if (state->events.on_value_changed && index >= 0) {
             state->events.on_value_changed(hComboBox);
         }
+
+        if (state->edit_hwnd && IsWindow(state->edit_hwnd)) {
+            RedrawComboBoxEditAfterContentChange(hComboBox, state->edit_hwnd);
+        } else {
+            InvalidateRect(hComboBox, nullptr, FALSE);
+            UpdateWindow(hComboBox);
+        }
+        if (state->dropdown_hwnd && state->dropdown_visible && IsWindow(state->dropdown_hwnd)) {
+            InvalidateRect(state->dropdown_hwnd, nullptr, TRUE);
+            UpdateWindow(state->dropdown_hwnd);
+        }
     }
 }
 
@@ -13748,6 +13771,14 @@ void __stdcall ShowComboBox(HWND hComboBox, BOOL show) {
     if (it == g_comboboxes.end()) return;
     
     ShowWindow(hComboBox, show ? SW_SHOW : SW_HIDE);
+    if (show) {
+        if (it->second->edit_hwnd && IsWindow(it->second->edit_hwnd)) {
+            InvalidateRect(it->second->edit_hwnd, nullptr, FALSE);
+            UpdateWindow(it->second->edit_hwnd);
+        }
+        InvalidateRect(hComboBox, nullptr, FALSE);
+        UpdateWindow(hComboBox);
+    }
     
     if (!show && it->second->dropdown_visible) {
         ShowWindow(it->second->dropdown_hwnd, SW_HIDE);
@@ -13761,12 +13792,31 @@ void __stdcall SetComboBoxBounds(HWND hComboBox, int x, int y, int width, int he
     if (it == g_comboboxes.end()) return;
     
     ComboBoxState* state = it->second;
+    HWND parent = GetParent(hComboBox);
+    if (!parent) return;
+
+    const int actual_y = AdjustChildControlYForParent(parent, y);
+
+    // 与目标一致则跳过 SetWindowPos，避免拖动主窗口时重复触发 WM_SIZE/子编辑框重绘导致文字闪烁
+    RECT wr;
+    if (GetWindowRect(hComboBox, &wr)) {
+        POINT pt = { wr.left, wr.top };
+        ScreenToClient(parent, &pt);
+        int cw = wr.right - wr.left;
+        int ch = wr.bottom - wr.top;
+        if (pt.x == x && pt.y == actual_y && cw == width && ch == height) {
+            state->x = x;
+            state->y = y;
+            state->width = width;
+            state->height = height;
+            return;
+        }
+    }
+
     state->x = x;
     state->y = y;
     state->width = width;
     state->height = height;
-    
-    const int actual_y = AdjustChildControlYForParent(GetParent(hComboBox), y);
     SetWindowPos(hComboBox, nullptr, x, actual_y, width, height, SWP_NOZORDER);
 }
 
@@ -13797,6 +13847,7 @@ void __stdcall SetComboBoxText(
     
     std::wstring text = Utf8ToWide(text_bytes, text_len);
     SetComboDisplayText(state->edit_hwnd, text);
+    RedrawComboBoxEditAfterContentChange(hComboBox, state->edit_hwnd);
 }
 
 void __stdcall SetComboBoxColors(
@@ -13816,10 +13867,13 @@ void __stdcall SetComboBoxColors(
     state->hover_color = hover_color;
     if (state->edit_hwnd) {
         SetD2DEditBoxColor(state->edit_hwnd, fg_color, bg_color);
+    } else {
+        InvalidateRect(hComboBox, nullptr, FALSE);
+        UpdateWindow(hComboBox);
     }
-    InvalidateRect(hComboBox, nullptr, FALSE);
     if (state->dropdown_hwnd && state->dropdown_visible) {
         InvalidateRect(state->dropdown_hwnd, nullptr, TRUE);
+        UpdateWindow(state->dropdown_hwnd);
     }
 }
 
@@ -17723,6 +17777,9 @@ LRESULT CALLBACK D2DEditBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_SIZE: {
         UINT width = LOWORD(lparam);
         UINT height = HIWORD(lparam);
+        if (width == state->width && height == state->height) {
+            return 0;
+        }
         state->width = width;
         state->height = height;
         if (state->render_target) {
@@ -17933,10 +17990,11 @@ __declspec(dllexport) void __stdcall SetD2DEditBoxText(
     state->scroll_offset_x = 0;
     state->scroll_offset_y = 0;
 
-    RedrawWindow(hEdit, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_FRAME);
     HWND parent = GetParent(hEdit);
     if (parent) {
         RedrawWindow(parent, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
+    } else {
+        RedrawWindow(hEdit, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_FRAME);
     }
 }
 
@@ -18032,7 +18090,12 @@ __declspec(dllexport) void __stdcall SetD2DEditBoxColor(
     state->fg_color = fg_color;
     state->bg_color = bg_color;
     
-    InvalidateRect(hEdit, NULL, FALSE);
+    HWND parent = GetParent(hEdit);
+    if (parent) {
+        RedrawWindow(parent, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
+    } else {
+        RedrawWindow(hEdit, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_FRAME);
+    }
 }
 
 

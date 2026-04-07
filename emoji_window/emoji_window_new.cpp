@@ -5924,11 +5924,28 @@ void __stdcall SetComboBoxBounds(HWND hComboBox, int x, int y, int width, int he
     if (it == g_comboboxes.end()) return;
     
     ComboBoxState* state = it->second;
+    HWND parent = GetParent(hComboBox);
+    if (!parent) return;
+
+    RECT wr;
+    if (GetWindowRect(hComboBox, &wr)) {
+        POINT pt = { wr.left, wr.top };
+        ScreenToClient(parent, &pt);
+        int cw = wr.right - wr.left;
+        int ch = wr.bottom - wr.top;
+        if (pt.x == x && pt.y == y && cw == width && ch == height) {
+            state->x = x;
+            state->y = y;
+            state->width = width;
+            state->height = height;
+            return;
+        }
+    }
+
     state->x = x;
     state->y = y;
     state->width = width;
     state->height = height;
-    
     SetWindowPos(hComboBox, nullptr, x, y, width, height, SWP_NOZORDER);
 }
 
@@ -7485,11 +7502,15 @@ LRESULT CALLBACK D2DEditBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_SIZE: {
         UINT width = LOWORD(lparam);
         UINT height = HIWORD(lparam);
+        if (width == state->width && height == state->height) {
+            return 0;
+        }
         state->width = width;
         state->height = height;
         if (state->render_target) {
             state->render_target->Resize(D2D1::SizeU(width, height));
         }
+        InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     }
     
@@ -7673,7 +7694,12 @@ __declspec(dllexport) void __stdcall SetD2DEditBoxText(
     state->scroll_offset_x = 0;
     state->scroll_offset_y = 0;
     
-    InvalidateRect(hEdit, NULL, FALSE);
+    HWND parent = GetParent(hEdit);
+    if (parent) {
+        RedrawWindow(parent, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
+    } else {
+        RedrawWindow(hEdit, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_FRAME);
+    }
 }
 
 __declspec(dllexport) void __stdcall SetD2DEditBoxKeyCallback(
@@ -7752,5 +7778,10 @@ __declspec(dllexport) void __stdcall SetD2DEditBoxColor(
     state->fg_color = fg_color;
     state->bg_color = bg_color;
     
-    InvalidateRect(hEdit, NULL, FALSE);
+    HWND parent = GetParent(hEdit);
+    if (parent) {
+        RedrawWindow(parent, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
+    } else {
+        RedrawWindow(hEdit, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_FRAME);
+    }
 }
