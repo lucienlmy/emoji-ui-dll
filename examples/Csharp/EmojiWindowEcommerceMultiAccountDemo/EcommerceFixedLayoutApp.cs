@@ -31,6 +31,7 @@ namespace EmojiWindowEcommerceMultiAccountDemo
 
         private readonly EmojiWindowNative.ButtonClickCallback _buttonClickCallback;
         private readonly EmojiWindowNative.WindowResizeCallback _windowResizeCallback;
+        private readonly EmojiWindowNative.EditBoxKeyCallback _urlEditKeyCallback;
 
         private IntPtr _window;
         private int _width = 1440;
@@ -66,7 +67,6 @@ namespace EmojiWindowEcommerceMultiAccountDemo
         private int _btnClearCache;
         private int _btnRelogin;
         private int _btnOpenProduct;
-        private int _btnGo;
 
         private IntPtr _lblSidebarTitle;
         private IntPtr _lblWorkspaceTitle;
@@ -77,6 +77,7 @@ namespace EmojiWindowEcommerceMultiAccountDemo
         {
             _buttonClickCallback = OnButtonClick;
             _windowResizeCallback = OnResize;
+            _urlEditKeyCallback = OnUrlEditKey;
         }
 
         public void Run()
@@ -90,6 +91,7 @@ namespace EmojiWindowEcommerceMultiAccountDemo
                 Layout();
             }
 
+            EmojiWindowNative.SetEditBoxKeyCallback(_txtUrl, _urlEditKeyCallback);
             EmojiWindowNative.set_button_click_callback(_buttonClickCallback);
             EmojiWindowNative.SetWindowResizeCallback(_windowResizeCallback);
             EmojiWindowNative.ShowEmojiWindow(_window, 1);
@@ -142,13 +144,13 @@ namespace EmojiWindowEcommerceMultiAccountDemo
 
             _sidebarPanel = EmojiWindowNative.CreatePanel(_window, 0, 0, 100, 100, Argb(255, 255, 255, 255));
             _workspacePanel = EmojiWindowNative.CreatePanel(_window, 0, 0, 100, 100, Argb(255, 255, 255, 255));
-            _browserPanel = EmojiWindowNative.CreatePanel(_workspacePanel, 0, 0, 100, 100, Argb(255, 250, 251, 253));
+            _browserPanel = EmojiWindowNative.CreatePanel(_workspacePanel, 0, 0, 100, 100, Argb(255, 222, 228, 238));
             _statusBar = Label(_window, string.Empty, 11, false, Argb(255, 107, 114, 128), Argb(255, 241, 245, 250));
 
             _lblSidebarTitle = Label(_sidebarPanel, "账号管理", 13, true, Argb(255, 31, 41, 55), Argb(255, 255, 255, 255));
             _lblWorkspaceTitle = Label(_workspacePanel, "工作区", 13, true, Argb(255, 31, 41, 55), Argb(255, 255, 255, 255));
-            _lblBrowserEmpty = Label(_browserPanel, "浏览器容器区域", 20, true, Argb(255, 51, 65, 85), Argb(255, 250, 251, 253));
-            _lblBrowserSub = Label(_browserPanel, "这里接入浏览器宿主窗口", 12, false, Argb(255, 100, 116, 139), Argb(255, 250, 251, 253));
+            _lblBrowserEmpty = Label(_browserPanel, "浏览器容器区域", 20, true, Argb(255, 45, 55, 72), Argb(255, 222, 228, 238));
+            _lblBrowserSub = Label(_browserPanel, "这里接入浏览器宿主窗口", 12, false, Argb(255, 88, 100, 118), Argb(255, 222, 228, 238));
 
             _cmbChannel = Combo(_sidebarPanel);
             _cmbStore = Combo(_sidebarPanel);
@@ -178,14 +180,14 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             _btnClearCache = Button(_workspacePanel, "清缓存", Argb(255, 148, 163, 184), null);
             _btnRelogin = Button(_workspacePanel, "重登", Argb(255, 148, 163, 184), null);
             _btnOpenProduct = Button(_workspacePanel, "打开商品页", Argb(255, 34, 197, 94), null);
-            _btnGo = Button(_workspacePanel, "进入", Argb(255, 59, 130, 246), null);
 
             _grid = EmojiWindowNative.CreateDataGridView(_sidebarPanel, 0, 0, 100, 100, 0, 1, Argb(255, 31, 41, 55), Argb(255, 255, 255, 255));
-            EmojiWindowNative.DataGrid_AddCheckBoxColumn(_grid, U("选"), U("选").Length, 36);
-            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("账号"), U("账号").Length, 96);
-            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("店铺"), U("店铺").Length, 74);
-            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("备注"), U("备注").Length, 108);
-            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("状态"), U("状态").Length, 56);
+            // 初始宽度仅作占位；Layout() 中按 innerW 与 ApplyGridColumnWidths 对齐，避免列宽之和大于表格区域出现横向滚动条
+            EmojiWindowNative.DataGrid_AddCheckBoxColumn(_grid, U("选"), U("选").Length, 30);
+            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("账号"), U("账号").Length, 88);
+            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("店铺"), U("店铺").Length, 62);
+            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("备注"), U("备注").Length, 80);
+            EmojiWindowNative.DataGrid_AddTextColumn(_grid, U("状态"), U("状态").Length, 48);
             EmojiWindowNative.DataGrid_SetHeaderHeight(_grid, 34);
             EmojiWindowNative.DataGrid_SetDefaultRowHeight(_grid, 34);
             EmojiWindowNative.DataGrid_SetColors(_grid, Argb(255, 31, 41, 55), Argb(255, 255, 255, 255), Argb(255, 243, 246, 252), Argb(255, 71, 85, 105), Argb(255, 236, 245, 255), Argb(255, 248, 250, 252), Argb(255, 229, 231, 235));
@@ -209,6 +211,49 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             SetGrid(row, 4, status);
         }
 
+        /// <summary>列宽比例与 CreateControls 中设计一致（合计 308）；按侧栏 innerW 缩放使列宽之和等于表格客户区宽度。</summary>
+        private static readonly int[] GridColumnWidthsBase = { 30, 88, 62, 80, 48 };
+
+        private void ApplyGridColumnWidths(int innerWidth)
+        {
+            if (_grid == IntPtr.Zero || innerWidth < 200)
+            {
+                return;
+            }
+
+            int[] @base = GridColumnWidthsBase;
+            int sumBase = 0;
+            for (int i = 0; i < @base.Length; i++)
+            {
+                sumBase += @base[i];
+            }
+
+            int[] col = new int[5];
+            int used = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                int v = (@base[i] * innerWidth + sumBase / 2) / sumBase;
+                if (v < 30)
+                {
+                    v = 30;
+                }
+                col[i] = v;
+                used += v;
+            }
+            col[4] = innerWidth - used;
+            if (col[4] < 30)
+            {
+                int deficit = 30 - col[4];
+                col[3] = Math.Max(30, col[3] - deficit);
+                col[4] = innerWidth - col[0] - col[1] - col[2] - col[3];
+            }
+
+            for (int i = 0; i < 5; i++)
+            {
+                EmojiWindowNative.DataGrid_SetColumnWidth(_grid, i, col[i]);
+            }
+        }
+
         private void Layout()
         {
             int padding = 16;
@@ -216,10 +261,11 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             int topInset = TitleBarHeight + 8;
             int cardsY = topInset;
             int cardsHeight = 96;
-            int contentY = cardsY + cardsHeight + 12;
-            int contentBottom = _height - 56;
+            int contentY = cardsY + cardsHeight + 6;
+            int contentBottom = _height - 36;
             int contentHeight = contentBottom - contentY;
-            int leftWidth = 332;
+            int usable = _width - padding * 2 - gap;
+            int leftWidth = Math.Max(440, Math.Min(520, usable * 32 / 100));
             int rightX = padding + leftWidth + gap;
             int rightWidth = _width - rightX - padding;
 
@@ -236,7 +282,6 @@ namespace EmojiWindowEcommerceMultiAccountDemo
                 EmojiWindowNative.SetLabelBounds(card.Hint, 14, 78, cardWidth - 28, 14);
             }
 
-            EmojiWindowNative.SetButtonBounds(_btnTheme, _width - padding - 52, cardsY + cardsHeight + 16, 34, 34);
             MoveWindow(_sidebarPanel, padding, contentY, leftWidth, contentHeight);
             MoveWindow(_workspacePanel, rightX, contentY, rightWidth, contentHeight);
 
@@ -244,37 +289,49 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             int innerW = leftWidth - 24;
             int rowGap = 8;
             int comboW = (innerW - rowGap * 2) / 3;
-            SetComboBoxBounds(_cmbChannel, sx, 44, comboW, 34);
-            SetComboBoxBounds(_cmbStore, sx + comboW + rowGap, 44, comboW, 34);
-            SetComboBoxBounds(_cmbStatus, sx + (comboW + rowGap) * 2, 44, comboW, 34);
+            int comboTop = 10;
+            int vGap = 8;
+            int searchY = comboTop + 34 + vGap;
+            int actionsY1 = searchY + 34 + vGap;
+            int actionsY2 = actionsY1 + 34 + vGap;
+            int accountTitleY = actionsY2 + 34 + vGap;
+            int gridY = accountTitleY + 20 + vGap;
+            int gridBottomMargin = 24;
+            SetComboBoxBounds(_cmbChannel, sx, comboTop, comboW, 34);
+            SetComboBoxBounds(_cmbStore, sx + comboW + rowGap, comboTop, comboW, 34);
+            SetComboBoxBounds(_cmbStatus, sx + (comboW + rowGap) * 2, comboTop, comboW, 34);
 
             int searchBtnW = 58;
             int searchW = innerW - searchBtnW * 2 - rowGap * 2;
-            EmojiWindowNative.SetEditBoxBounds(_txtSearch, sx, 96, searchW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnQuery, padding + sx + searchW + rowGap, contentY + 96, searchBtnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnReset, padding + sx + searchW + rowGap + searchBtnW + rowGap, contentY + 96, searchBtnW, 34);
+            EmojiWindowNative.SetEditBoxBounds(_txtSearch, sx, searchY, searchW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnQuery, padding + sx + searchW + rowGap, contentY + searchY, searchBtnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnReset, padding + sx + searchW + rowGap + searchBtnW + rowGap, contentY + searchY, searchBtnW, 34);
 
             int btnW = (innerW - rowGap * 3) / 4;
-            EmojiWindowNative.SetButtonBounds(_btnAdd, padding + sx, contentY + 146, btnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnImport, padding + sx + btnW + rowGap, contentY + 146, btnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnExport, padding + sx + (btnW + rowGap) * 2, contentY + 146, btnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnRefresh, padding + sx + (btnW + rowGap) * 3, contentY + 146, btnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnBatchStart, padding + sx, contentY + 188, btnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnBatchStop, padding + sx + btnW + rowGap, contentY + 188, btnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnBatchDelete, padding + sx + (btnW + rowGap) * 2, contentY + 188, btnW, 34);
-            EmojiWindowNative.SetButtonBounds(_btnSelectAll, padding + sx + (btnW + rowGap) * 3, contentY + 188, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnAdd, padding + sx, contentY + actionsY1, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnImport, padding + sx + btnW + rowGap, contentY + actionsY1, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnExport, padding + sx + (btnW + rowGap) * 2, contentY + actionsY1, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnRefresh, padding + sx + (btnW + rowGap) * 3, contentY + actionsY1, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnSelectAll, padding + sx, contentY + actionsY2, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnBatchStart, padding + sx + btnW + rowGap, contentY + actionsY2, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnBatchStop, padding + sx + (btnW + rowGap) * 2, contentY + actionsY2, btnW, 34);
+            EmojiWindowNative.SetButtonBounds(_btnBatchDelete, padding + sx + (btnW + rowGap) * 3, contentY + actionsY2, btnW, 34);
 
-            EmojiWindowNative.SetLabelBounds(_lblSidebarTitle, sx, 236, innerW, 20);
-            EmojiWindowNative.DataGrid_SetBounds(_grid, sx, 264, innerW, contentHeight - 312);
+            EmojiWindowNative.SetLabelBounds(_lblSidebarTitle, sx, accountTitleY, innerW, 20);
+            EmojiWindowNative.DataGrid_SetBounds(_grid, sx, gridY, innerW, contentHeight - gridY - gridBottomMargin);
+            ApplyGridColumnWidths(innerW);
 
             int wx = 14;
             int workW = rightWidth - 28;
-            int urlBtnW = 72;
-            EmojiWindowNative.SetLabelBounds(_lblWorkspaceTitle, wx, 42, workW, 20);
-            EmojiWindowNative.SetEditBoxBounds(_txtUrl, wx, 78, workW - urlBtnW - 12, 34);
-            EmojiWindowNative.SetButtonBounds(_btnGo, rightX + wx + workW - urlBtnW, contentY + 78, urlBtnW, 34);
+            int themeBtnW = 34;
+            int urlGap = 12;
+            int urlTop = 10;
+            int workRowGap = 8;
+            EmojiWindowNative.SetLabelBounds(_lblWorkspaceTitle, -2000, -2000, 1, 1);
+            EmojiWindowNative.SetEditBoxBounds(_txtUrl, wx, urlTop, workW - themeBtnW - urlGap, 34);
+            EmojiWindowNative.SetButtonBounds(_btnTheme, rightX + wx + workW - themeBtnW, contentY + urlTop, themeBtnW, 34);
 
-            int actionY = 136;
+            int actionY = urlTop + 34 + workRowGap;
             EmojiWindowNative.SetButtonBounds(_btnLaunch, rightX + wx, contentY + actionY, 92, 34);
             EmojiWindowNative.SetButtonBounds(_btnStop, rightX + wx + 100, contentY + actionY, 70, 34);
             EmojiWindowNative.SetButtonBounds(_btnRefreshPage, rightX + wx + 178, contentY + actionY, 70, 34);
@@ -282,11 +339,13 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             EmojiWindowNative.SetButtonBounds(_btnRelogin, rightX + wx + 346, contentY + actionY, 70, 34);
             EmojiWindowNative.SetButtonBounds(_btnOpenProduct, rightX + wx + 424, contentY + actionY, 102, 34);
 
-            MoveWindow(_browserPanel, wx, 196, workW, contentHeight - 246);
+            int browserTop = actionY + 34 + workRowGap;
+            int browserHeight = contentHeight - 6 - browserTop;
+            MoveWindow(_browserPanel, wx, browserTop, workW, browserHeight);
             EmojiWindowNative.SetLabelBounds(_lblBrowserEmpty, 28, 28, workW - 56, 30);
             EmojiWindowNative.SetLabelBounds(_lblBrowserSub, 28, 66, workW - 56, 20);
 
-            EmojiWindowNative.SetLabelBounds(_statusBar, padding, _height - 30, _width - padding * 2, 20);
+            EmojiWindowNative.SetLabelBounds(_statusBar, padding, _height - 26, _width - padding * 2, 20);
         }
 
         private void ApplyTheme()
@@ -301,7 +360,9 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             EmojiWindowNative.SetWindowBackgroundColor(_window, page);
             EmojiWindowNative.SetPanelBackgroundColor(_sidebarPanel, surface);
             EmojiWindowNative.SetPanelBackgroundColor(_workspacePanel, surface);
-            EmojiWindowNative.SetPanelBackgroundColor(_browserPanel, _darkMode ? Argb(255, 15, 23, 42) : Argb(255, 250, 251, 253));
+            uint browserCanvasLight = Argb(255, 222, 228, 238);
+            uint browserCanvasDark = Argb(255, 15, 23, 42);
+            EmojiWindowNative.SetPanelBackgroundColor(_browserPanel, _darkMode ? browserCanvasDark : browserCanvasLight);
             for (int i = 0; i < _cards.Length; i++)
             {
                 uint cardSurfaceBg = _darkMode ? Argb(255, 30, 41, 59) : Argb(255, 255, 255, 255);
@@ -313,8 +374,8 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             }
             EmojiWindowNative.SetLabelColor(_lblSidebarTitle, text, surface);
             EmojiWindowNative.SetLabelColor(_lblWorkspaceTitle, text, surface);
-            EmojiWindowNative.SetLabelColor(_lblBrowserEmpty, text, _darkMode ? Argb(255, 15, 23, 42) : Argb(255, 250, 251, 253));
-            EmojiWindowNative.SetLabelColor(_lblBrowserSub, muted, _darkMode ? Argb(255, 15, 23, 42) : Argb(255, 250, 251, 253));
+            EmojiWindowNative.SetLabelColor(_lblBrowserEmpty, text, _darkMode ? browserCanvasDark : browserCanvasLight);
+            EmojiWindowNative.SetLabelColor(_lblBrowserSub, muted, _darkMode ? browserCanvasDark : browserCanvasLight);
             EmojiWindowNative.SetLabelColor(_statusBar, muted, page);
             uint fieldBg = _darkMode ? Argb(255, 30, 41, 59) : Argb(255, 255, 255, 255);
             uint fieldHover = _darkMode ? Argb(255, 51, 65, 85) : Argb(255, 255, 255, 255);
@@ -353,7 +414,6 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             PaintButton(_btnClearCache, Argb(255, 148, 163, 184));
             PaintButton(_btnRelogin, Argb(255, 148, 163, 184));
             PaintButton(_btnOpenProduct, Argb(255, 34, 197, 94));
-            PaintButton(_btnGo, Argb(255, 59, 130, 246));
             UpdateThemeEmoji();
         }
 
@@ -378,6 +438,28 @@ namespace EmojiWindowEcommerceMultiAccountDemo
             byte[] empty = U(string.Empty);
             EmojiWindowNative.SetButtonEmoji(_btnTheme, emoji, emoji.Length);
             EmojiWindowNative.SetButtonText(_btnTheme, empty, 0);
+        }
+
+        private void OnUrlEditKey(IntPtr hEdit, int keyCode, int keyDown, int shift, int ctrl, int alt)
+        {
+            if (hEdit != _txtUrl || keyCode != 0x0D || keyDown == 0)
+            {
+                return;
+            }
+
+            NavigateToUrl();
+        }
+
+        private void NavigateToUrl()
+        {
+            string url = GetEditText(_txtUrl).Trim();
+            byte[] msg = U(string.IsNullOrEmpty(url) ? "地址栏为空。" : "已导航: " + url);
+            EmojiWindowNative.SetLabelText(_statusBar, msg, msg.Length);
+        }
+
+        private static string GetEditText(IntPtr edit)
+        {
+            return EmojiWindowNative.ReadUtf8(EmojiWindowNative.GetEditBoxText, edit);
         }
 
         private void OnButtonClick(int buttonId, IntPtr parent)
@@ -422,7 +504,7 @@ namespace EmojiWindowEcommerceMultiAccountDemo
 
         private IntPtr Combo(IntPtr parent)
         {
-            return EmojiWindowNative.CreateComboBox(parent, 0, 0, 100, 34, 1, Argb(255, 31, 41, 55), Argb(255, 255, 255, 255), 30, _fontSegoe, _fontSegoe.Length, 10, 0, 0, 0);
+            return EmojiWindowNative.CreateComboBox(parent, 0, 0, 100, 34, 1, Argb(255, 31, 41, 55), Argb(255, 255, 255, 255), 32, _fontSegoe, _fontSegoe.Length, 11, 0, 0, 0);
         }
 
         private void FillCombo(IntPtr combo, IEnumerable<string> items)

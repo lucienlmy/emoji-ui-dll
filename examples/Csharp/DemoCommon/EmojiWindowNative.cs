@@ -466,6 +466,7 @@ namespace EmojiWindowDemo
         [DllImport(Dll, CallingConvention = Cc)] public static extern void DataGrid_ClearRows(IntPtr hGrid);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int DataGrid_GetRowCount(IntPtr hGrid);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int DataGrid_GetColumnCount(IntPtr hGrid);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void DataGrid_SetColumnWidth(IntPtr hGrid, int colIndex, int width);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void DataGrid_SetCellText(IntPtr hGrid, int row, int col, byte[] text, int textLen);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int DataGrid_GetCellText(IntPtr hGrid, int row, int col, IntPtr buffer, int bufferSize);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void DataGrid_SetCellChecked(IntPtr hGrid, int row, int col, int checkedState);
