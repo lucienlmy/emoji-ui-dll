@@ -21,6 +21,9 @@ packages/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+!/DLL/
+!/DLL/*.dll
+!/DLL/README.md
 
 # Visual Studio
 .vs/

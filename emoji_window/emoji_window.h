@@ -874,7 +874,12 @@ struct WindowState {
     int titlebar_height = 30;     // 鏍囬鏍忛珮搴︼紙鍍忕礌锛?
     bool custom_titlebar = true;  // 鏄惁鍚敤鑷畾涔夋爣棰樻爮
     int hovered_titlebar_button = 0; // 0=鏃?1=鏈€灏忓寲 2=鏈€澶у寲 3=鍏抽棴
+    int pressed_titlebar_button = 0;
     bool titlebar_mouse_tracking = false;
+    HWND titlebar_min_button = nullptr;
+    HWND titlebar_max_button = nullptr;
+    HWND titlebar_close_button = nullptr;
+    bool restore_from_minimize_pending = false;             // 任务栏恢复后的合并刷新
 
     // ===== 鏍囬鏍忔枃瀛楁牱寮忓瓧娈?=====
     UINT32 titlebar_text_color = 0;                          // 鏍囬鏂囧瓧棰滆壊锛圓RGB锛夛紝0=璺熼殢涓婚
@@ -882,6 +887,9 @@ struct WindowState {
     float titlebar_font_size = 13.0f;                        // 鏍囬瀛楀彿锛堝儚绱狅級
     int titlebar_alignment = 0;                              // 标题对齐方式
     bool in_live_resize = false;                             // 用户拖动调整窗口大小时为真
+    bool custom_window_maximized = false;                    // 自管最大化状态
+    bool restore_bounds_valid = false;                       // 是否已有还原前矩形
+    RECT restore_bounds = { 0, 0, 0, 0 };                   // 还原前窗口矩形
     EventCallbacks events;                                   // 通用事件回调
 };
 
@@ -1182,6 +1190,32 @@ extern ButtonClickCallback g_button_callback;
 extern WindowResizeCallback g_window_resize_callback;
 extern WindowCloseCallback g_window_close_callback;
 
+struct LogicalBoundsInfo {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    bool titlebar_relative = false;
+};
+
+extern std::map<HWND, LogicalBoundsInfo> g_logical_bounds;
+extern std::map<int, LogicalBoundsInfo> g_button_logical_bounds;
+
+UINT EW_GetDpiForReference(HWND hwnd, HWND parent = nullptr);
+int EW_LogicalToPx(int value, UINT dpi);
+int EW_PxToLogical(int value, UINT dpi);
+int EW_GetLogicalTitleBarOffset(HWND parent);
+RECT EW_LogicalChildRectToPx(HWND parent, int x, int y, int width, int height, bool titlebar_relative);
+RECT EW_LogicalWindowRectToPx(HWND hwnd, int x, int y, int width, int height);
+void EW_StoreLogicalBounds(HWND hwnd, int x, int y, int width, int height, bool titlebar_relative);
+bool EW_GetStoredLogicalBounds(HWND hwnd, LogicalBoundsInfo* out_info);
+void EW_RemoveLogicalBounds(HWND hwnd);
+void EW_ApplyLogicalBoundsToHwnd(HWND hwnd, HWND parent, int x, int y, int width, int height, bool titlebar_relative, UINT flags = SWP_NOZORDER | SWP_NOACTIVATE);
+int EW_ReadLogicalBounds(HWND hwnd, int* x, int* y, int* width, int* height, bool titlebar_relative_fallback = false);
+void EW_StoreButtonLogicalBounds(int button_id, int x, int y, int width, int height);
+bool EW_GetButtonLogicalBounds(int button_id, LogicalBoundsInfo* out_info);
+void EW_RemoveButtonLogicalBounds(int button_id);
+
 // Export functions (stdcall calling convention)
 extern "C" {
     __declspec(dllexport) HWND __stdcall create_window(const char* title, int x, int y, int width, int height);
@@ -1281,6 +1315,7 @@ extern "C" {
     
     // 鑾峰彇绐楀彛鏍囬鏍忛鑹?(RGB鏍煎紡)
     __declspec(dllexport) UINT32 __stdcall GetWindowTitlebarColor(HWND hwnd);
+    __declspec(dllexport) int __stdcall GetCustomTitleBarHeight(HWND hwnd);
     __declspec(dllexport) int __stdcall SetTitleBarTextColor(HWND hwnd, UINT32 color);
     __declspec(dllexport) UINT32 __stdcall GetTitleBarTextColor(HWND hwnd);
     __declspec(dllexport) int __stdcall SetTitleBarFont(HWND hwnd, const unsigned char* fontName, int fontNameLen, float fontSize);

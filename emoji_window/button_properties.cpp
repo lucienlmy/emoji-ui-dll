@@ -1,5 +1,6 @@
 #include "emoji_window.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
@@ -127,6 +128,15 @@ extern "C" __declspec(dllexport) int __stdcall GetButtonBounds(int button_id, in
     EmojiButton* button = FindButton(button_id);
     if (!button) return -1;
 
+    LogicalBoundsInfo logical = {};
+    if (EW_GetButtonLogicalBounds(button_id, &logical)) {
+        if (x) *x = logical.x;
+        if (y) *y = logical.y;
+        if (width) *width = logical.width;
+        if (height) *height = logical.height;
+        return 0;
+    }
+
     if (x) *x = button->x;
     if (y) *y = button->y;
     if (width) *width = button->width;
@@ -139,10 +149,12 @@ extern "C" __declspec(dllexport) void __stdcall SetButtonBounds(int button_id, i
     EmojiButton* button = FindButton(button_id, &parent);
     if (!button || !parent) return;
 
-    button->x = x;
-    button->y = y;
-    button->width = width;
-    button->height = height;
+    UINT dpi = EW_GetDpiForReference(parent);
+    EW_StoreButtonLogicalBounds(button_id, x, y, width, height);
+    button->x = EW_LogicalToPx(x, dpi);
+    button->y = EW_LogicalToPx(y, dpi);
+    button->width = (std::max)(1, EW_LogicalToPx(width, dpi));
+    button->height = (std::max)(1, EW_LogicalToPx(height, dpi));
     RefreshButtonVisual(button, parent);
 }
 

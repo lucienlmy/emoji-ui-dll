@@ -830,6 +830,7 @@ static bool RecreateTreeViewRenderTarget(TreeViewState* state) {
         D2D1::HwndRenderTargetProperties(state->hwnd, D2D1::SizeU((UINT)w, (UINT)h)),
         &state->render_target);
     if (FAILED(hr) || !state->render_target) return false;
+    state->render_target->SetDpi(96.0f, 96.0f);
     hr = state->render_target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &state->brush);
     return SUCCEEDED(hr) && state->brush;
 }
@@ -987,6 +988,7 @@ HWND __stdcall CreateTreeView(
     }
     
     // 创建画刷
+    state->render_target->SetDpi(96.0f, 96.0f);
     hr = state->render_target->CreateSolidColorBrush(
         D2D1::ColorF(D2D1::ColorF::Black),
         &state->brush

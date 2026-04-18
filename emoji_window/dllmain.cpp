@@ -14,7 +14,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         if (f) {
             fprintf(f, "DLL_PROCESS_ATTACH: hModule=%p\n", hModule);
             fprintf(f, "DLL_PATH: %s\n", module_path);
-            fprintf(f, "DLL_BUILD_MARK: 2026-04-05-1715-editbox-clamp-v2\n");
+            fprintf(f, "DLL_BUILD_MARK: 2026-04-18-1935-debug-dpi-titlebar-fix\n");
             fclose(f);
         }
         break;
