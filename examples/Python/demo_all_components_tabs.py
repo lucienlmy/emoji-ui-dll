@@ -204,11 +204,7 @@ def repo_root() -> Path:
 
 
 def dll_path() -> Path:
-    p = repo_root() / "bin" / "x64" / "Release" / "emoji_window.dll"
-    if p.is_file():
-        return p
-    local = Path(__file__).resolve().parent / "emoji_window.dll"
-    return local
+    return repo_root() / "DLL" / "emoji_window_x64.dll"
 
 
 def argb(a: int, r: int, g: int, b: int) -> int:

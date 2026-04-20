@@ -120,6 +120,7 @@ namespace EmojiWindowDemo
         [UnmanagedFunctionPointer(Cc)] public delegate void MessageBoxCallback(int confirmed);
         [UnmanagedFunctionPointer(Cc)] public delegate void TabCallback(IntPtr hTabControl, int selectedIndex);
         [UnmanagedFunctionPointer(Cc)] public delegate void TabCloseCallback(IntPtr hTabControl, int index);
+        [UnmanagedFunctionPointer(Cc)] public delegate void TabNewButtonCallback(IntPtr hTabControl);
         [UnmanagedFunctionPointer(Cc)] public delegate void WindowResizeCallback(IntPtr hwnd, int width, int height);
         [UnmanagedFunctionPointer(Cc)] public delegate void WindowCloseCallback(IntPtr hwnd);
         [UnmanagedFunctionPointer(Cc)] public delegate void MenuItemClickCallback(int menuId, int itemId);
@@ -332,9 +333,12 @@ namespace EmojiWindowDemo
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetTabCallback(IntPtr hTabControl, TabCallback callback);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetCurrentTabIndex(IntPtr hTabControl);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SelectTab(IntPtr hTabControl, int index);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int SelectTabImmediate(IntPtr hTabControl, int index);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetTabCount(IntPtr hTabControl);
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr GetTabContentWindow(IntPtr hTabControl, int index);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabItemSize(IntPtr hTabControl, int width, int height);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabTitle(IntPtr hTabControl, int index, byte[] title, int titleLen);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabFont(IntPtr hTabControl, byte[] fontName, int fontNameLen, float fontSize);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabColors(IntPtr hTabControl, uint selectedBg, uint unselectedBg, uint selectedText, uint unselectedText);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabIndicatorColor(IntPtr hTabControl, uint color);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabPadding(IntPtr hTabControl, int horizontal, int vertical);
@@ -342,7 +346,11 @@ namespace EmojiWindowDemo
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabScrollable(IntPtr hTabControl, int scrollable);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabAlignment(IntPtr hTabControl, int alignment);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabHeaderStyle(IntPtr hTabControl, int style);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabPosition(IntPtr hTabControl, int position);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabCloseCallback(IntPtr hTabControl, TabCloseCallback callback);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabNewButtonCallback(IntPtr hTabControl, TabNewButtonCallback callback);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int SetTabControlBounds(IntPtr hTabControl, int x, int y, int width, int height);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int RedrawTabControl(IntPtr hTabControl);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreatePictureBox(IntPtr parent, int x, int y, int width, int height, int scaleMode, uint bgColor);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int LoadImageFromFile(IntPtr hPictureBox, byte[] filePath, int pathLen);
@@ -428,10 +436,14 @@ namespace EmojiWindowDemo
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetHotKeyColors(IntPtr hHotKey, out uint fgColor, out uint bgColor, out uint borderColor);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreatePanel(IntPtr parent, int x, int y, int width, int height, uint bgColor);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern void SetPanelBounds(IntPtr hPanel, int x, int y, int width, int height);
+        [DllImport(Dll, CallingConvention = Cc)] public static extern int GetPanelBounds(IntPtr hPanel, out int x, out int y, out int width, out int height);
         [DllImport(Dll, CallingConvention = Cc)] public static extern void SetPanelBackgroundColor(IntPtr hPanel, uint bgColor);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int GetPanelBackgroundColor(IntPtr hPanel, out uint bgColor);
 
         [DllImport(Dll, CallingConvention = Cc)] public static extern IntPtr CreateTreeView(IntPtr parent, int x, int y, int width, int height, uint bgColor, uint textColor, IntPtr callbackContext);
+        [DllImport(Dll, CallingConvention = Cc)] [return: MarshalAs(UnmanagedType.I1)] public static extern bool SetTreeViewBounds(IntPtr hTreeView, int x, int y, int width, int height);
+        [DllImport(Dll, CallingConvention = Cc)] [return: MarshalAs(UnmanagedType.I1)] public static extern bool GetTreeViewBounds(IntPtr hTreeView, out int x, out int y, out int width, out int height);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int AddRootNode(IntPtr hTreeView, byte[] text, int textLen, byte[] icon, int iconLen);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int AddChildNode(IntPtr hTreeView, int parentId, byte[] text, int textLen, byte[] icon, int iconLen);
         [DllImport(Dll, CallingConvention = Cc)] public static extern int ExpandAll(IntPtr hTreeView);

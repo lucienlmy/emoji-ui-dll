@@ -322,6 +322,13 @@ def bind_extra_apis() -> None:
     DLL.SetPanelBackgroundColor.argtypes = [HWND, UINT32]
     DLL.GetPanelBackgroundColor.argtypes = [HWND, ctypes.POINTER(UINT32)]
     DLL.GetPanelBackgroundColor.restype = ctypes.c_int
+    DLL.SetPanelBounds.argtypes = [HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+    DLL.GetPanelBounds.argtypes = [HWND, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+    DLL.GetPanelBounds.restype = ctypes.c_int
+    DLL.SetTreeViewBounds.argtypes = [HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+    DLL.SetTreeViewBounds.restype = BOOL
+    DLL.GetTreeViewBounds.argtypes = [HWND, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+    DLL.GetTreeViewBounds.restype = BOOL
     DLL.SetTreeViewBackgroundColor.argtypes = [HWND, UINT32]
     DLL.GetTreeViewBackgroundColor.argtypes = [HWND]
     DLL.GetTreeViewBackgroundColor.restype = UINT32
@@ -698,15 +705,15 @@ def relayout_shell(width: int, height: int, *, refresh_now: bool = True) -> None
     tree_h = max(420, content_h - 80)
 
     if sidebar:
-        USER32.MoveWindow(sidebar, 16, SHELL_TOP, SIDEBAR_W, content_h, False)
+        DLL.SetPanelBounds(sidebar, 16, SHELL_TOP, SIDEBAR_W, content_h)
     if nav_tree:
-        USER32.MoveWindow(nav_tree, 16, 56, SIDEBAR_W - 32, tree_h, False)
+        DLL.SetTreeViewBounds(nav_tree, 16, 56, SIDEBAR_W - 32, tree_h)
     if host:
-        USER32.MoveWindow(host, CONTENT_X, SHELL_TOP, host_w, content_h, False)
+        DLL.SetPanelBounds(host, CONTENT_X, SHELL_TOP, host_w, content_h)
     if status:
-        USER32.MoveWindow(status, 16, status_y, status_w, 28, False)
+        DLL.SetLabelBounds(status, 16, status_y, status_w, 28)
     for page in pages.values():
-        USER32.MoveWindow(page, 0, HEADER_H, host_w, page_h, False)
+        DLL.SetPanelBounds(page, 0, HEADER_H, host_w, page_h)
 
     if refresh_now:
         refresh_visible_shell()
@@ -2902,12 +2909,14 @@ def build_page_listbox(page: HWND) -> None:
         DLL.GetListItemText(listbox, index, buf, size)
         return buf.raw[:size].decode("utf-8", errors="replace")
 
+    bounds_state = {"x": 56, "y": 116, "w": 320, "h": 112}
+
     def read_bounds() -> tuple[int, int, int, int]:
         rc = RECT()
         USER32.GetWindowRect(listbox, ctypes.byref(rc))
-        root = LOCAL["host"]
+        parent = USER32.GetParent(listbox)
         pt = POINT(rc.left, rc.top)
-        USER32.ScreenToClient(root, ctypes.byref(pt))
+        USER32.ScreenToClient(parent, ctypes.byref(pt))
         return pt.x, pt.y, rc.right - rc.left, rc.bottom - rc.top
 
     fg0 = UINT32()
@@ -2942,8 +2951,11 @@ def build_page_listbox(page: HWND) -> None:
         refresh(note)
 
     def move_box(dx: int = 0, dy: int = 0, dw: int = 0, dh: int = 0) -> None:
-        x, y, w, h = read_bounds()
-        DLL.SetListBoxBounds(listbox, x + dx, y + dy, w + dw, h + dh)
+        bounds_state["x"] += dx
+        bounds_state["y"] += dy
+        bounds_state["w"] += dw
+        bounds_state["h"] += dh
+        DLL.SetListBoxBounds(listbox, bounds_state["x"], bounds_state["y"], bounds_state["w"], bounds_state["h"])
         refresh(f"列表框位置/尺寸已更新: dx={dx}, dy={dy}, dw={dw}, dh={dh}")
 
     base.button(page, "➕", "新增项目", 40, 360, 140, 36, 0xFF409EFF, lambda: (DLL.AddListItem(listbox, *s("🆕 新增项目")[:2]), refresh("列表框已新增一项")))
@@ -3046,9 +3058,9 @@ def build_page_listbox_v2(page: HWND) -> None:
     def read_bounds() -> tuple[int, int, int, int]:
         rc = RECT()
         USER32.GetWindowRect(listbox, ctypes.byref(rc))
-        root = LOCAL["host"]
+        parent = USER32.GetParent(listbox)
         pt = POINT(rc.left, rc.top)
-        USER32.ScreenToClient(root, ctypes.byref(pt))
+        USER32.ScreenToClient(parent, ctypes.byref(pt))
         return pt.x, pt.y, rc.right - rc.left, rc.bottom - rc.top
 
     fg0 = UINT32()
@@ -3057,6 +3069,7 @@ def build_page_listbox_v2(page: HWND) -> None:
     hover0 = UINT32()
     DLL.GetListBoxColors(listbox, ctypes.byref(fg0), ctypes.byref(bg0), ctypes.byref(sel0), ctypes.byref(hover0))
     initial_bounds = {"x": 40, "y": 104, "w": 620, "h": 340}
+    bounds_state = dict(initial_bounds)
     listbox_flags = {"enabled": True}
 
     def refresh(note: str = "已刷新列表框属性") -> None:
@@ -3086,12 +3099,16 @@ def build_page_listbox_v2(page: HWND) -> None:
         refresh(note)
 
     def move_box(dx: int = 0, dy: int = 0, dw: int = 0, dh: int = 0) -> None:
-        x, y, w, h = read_bounds()
-        DLL.SetListBoxBounds(listbox, x + dx, y + dy, w + dw, h + dh)
+        bounds_state["x"] += dx
+        bounds_state["y"] += dy
+        bounds_state["w"] += dw
+        bounds_state["h"] += dh
+        DLL.SetListBoxBounds(listbox, bounds_state["x"], bounds_state["y"], bounds_state["w"], bounds_state["h"])
         refresh(f"列表框位置/尺寸已更新 dx={dx}, dy={dy}, dw={dw}, dh={dh}")
 
     def restore() -> None:
-        DLL.SetListBoxBounds(listbox, initial_bounds["x"], initial_bounds["y"], initial_bounds["w"], initial_bounds["h"])
+        bounds_state.update(initial_bounds)
+        DLL.SetListBoxBounds(listbox, bounds_state["x"], bounds_state["y"], bounds_state["w"], bounds_state["h"])
         DLL.SetListBoxColors(listbox, int(fg0.value), int(bg0.value), int(sel0.value), int(hover0.value))
         DLL.ShowListBox(listbox, BOOL(True))
         DLL.EnableListBox(listbox, BOOL(True))

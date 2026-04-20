@@ -37,7 +37,7 @@ static std::wstring Utf8BytesToWide(const unsigned char* bytes, int len) {
 namespace {
 
 const int kButtonWidth = 34;
-const int kPopupMinW = 280;
+const int kPopupMinW = 320;
 const int WM_DTP_CLOSE_POPUP = WM_USER + 350;
 const UINT kEditSubclassId = 0x44545031;
 const UINT kMsgEditOpen = WM_APP + 80;
@@ -97,17 +97,63 @@ struct DtpState {
 
 std::map<HWND, DtpState*> g_dt_pick;
 
+static int DtpRectWidthPx(const RECT& rect) {
+    return (std::max)(1, (int)(rect.right - rect.left));
+}
+
+static int DtpRectHeightPx(const RECT& rect) {
+    return (std::max)(1, (int)(rect.bottom - rect.top));
+}
+
+static UINT DtpDpi(const DtpState* s) {
+    if (!s) return 96;
+    return EW_GetDpiForReference(s->hwnd, s->parent);
+}
+
+static int DtpPx(const DtpState* s, int logical) {
+    return EW_LogicalToPx(logical, DtpDpi(s));
+}
+
+static float DtpPxF(const DtpState* s, float logical) {
+    return logical * ((float)DtpDpi(s) / 96.0f);
+}
+
+static float DtpDrawScale(const DtpState* s, ID2D1HwndRenderTarget* rt) {
+    float rt_dpi_x = 96.0f;
+    float rt_dpi_y = 96.0f;
+    if (rt) {
+        rt->GetDpi(&rt_dpi_x, &rt_dpi_y);
+    }
+    if (rt_dpi_x <= 0.0f) {
+        rt_dpi_x = 96.0f;
+    }
+    float scale = static_cast<float>(DtpDpi(s)) / rt_dpi_x;
+    return scale > 0.0f ? scale : 1.0f;
+}
+
 static int GetTimeDropdownPanelHeight(const DtpState* s);
 static void HideTimeDropdown(DtpState* s);
 
 static void LayoutHostEdit(DtpState* s) {
     if (!s || !s->edit_hwnd) return;
-    int edit_x = kHostPaddingX;
-    int edit_y = kHostPaddingY;
-    int edit_w = s->width - s->button_width - kHostPaddingX - 4;
-    int edit_h = s->height - kHostPaddingY * 2;
+    s->button_width = DtpPx(s, kButtonWidth);
+    int pad_x = DtpPx(s, kHostPaddingX);
+    int pad_y = DtpPx(s, kHostPaddingY);
+    int edit_x = pad_x;
+    int edit_y = pad_y;
+    int edit_w = s->width - s->button_width - pad_x - DtpPx(s, 4);
+    int edit_h = s->height - pad_y * 2;
     if (edit_w < 1) edit_w = 1;
     if (edit_h < 1) edit_h = 1;
+    UINT dpi = DtpDpi(s);
+    EW_StoreLogicalBounds(
+        s->edit_hwnd,
+        EW_PxToLogical(edit_x, dpi),
+        EW_PxToLogical(edit_y, dpi),
+        EW_PxToLogical(edit_w, dpi),
+        EW_PxToLogical(edit_h, dpi),
+        true
+    );
     SetWindowPos(
         s->edit_hwnd,
         nullptr,
@@ -121,23 +167,23 @@ static void LayoutHostEdit(DtpState* s) {
 
 static void ApplyHostRegion(DtpState* s) {
     if (!s || !s->hwnd || s->width <= 0 || s->height <= 0) return;
-    int diameter = (int)(kHostCornerRadius * 2.0f) + 2;
+    int diameter = DtpPx(s, (int)(kHostCornerRadius * 2.0f)) + 2;
     HRGN region = CreateRoundRectRgn(0, 0, s->width + 1, s->height + 1, diameter, diameter);
     if (region) {
         SetWindowRgn(s->hwnd, region, TRUE);
     }
 }
 
-static void DrawChevron(ID2D1HwndRenderTarget* rt, ID2D1SolidColorBrush* brush, float cx, float cy, bool expanded) {
+static void DrawChevron(ID2D1HwndRenderTarget* rt, ID2D1SolidColorBrush* brush, float cx, float cy, bool expanded, float scale = 1.0f) {
     if (!rt || !brush) return;
-    const float half_w = 4.5f;
-    const float half_h = 2.5f;
+    const float half_w = 4.5f * scale;
+    const float half_h = 2.5f * scale;
     if (expanded) {
-        rt->DrawLine(D2D1::Point2F(cx - half_w, cy + half_h), D2D1::Point2F(cx, cy - half_h), brush, 1.6f);
-        rt->DrawLine(D2D1::Point2F(cx, cy - half_h), D2D1::Point2F(cx + half_w, cy + half_h), brush, 1.6f);
+        rt->DrawLine(D2D1::Point2F(cx - half_w, cy + half_h), D2D1::Point2F(cx, cy - half_h), brush, 1.6f * scale);
+        rt->DrawLine(D2D1::Point2F(cx, cy - half_h), D2D1::Point2F(cx + half_w, cy + half_h), brush, 1.6f * scale);
     } else {
-        rt->DrawLine(D2D1::Point2F(cx - half_w, cy - half_h), D2D1::Point2F(cx, cy + half_h), brush, 1.6f);
-        rt->DrawLine(D2D1::Point2F(cx, cy + half_h), D2D1::Point2F(cx + half_w, cy - half_h), brush, 1.6f);
+        rt->DrawLine(D2D1::Point2F(cx - half_w, cy - half_h), D2D1::Point2F(cx, cy + half_h), brush, 1.6f * scale);
+        rt->DrawLine(D2D1::Point2F(cx, cy + half_h), D2D1::Point2F(cx + half_w, cy - half_h), brush, 1.6f * scale);
     }
 }
 
@@ -296,7 +342,7 @@ static void ApplySetParts(DtpState* s, int y, int mo, int d, int h, int mi, int 
 }
 
 static int PopupHeight(DtpState* s) {
-    const int hdr = 36, row = 26, timeh = 34, okh = 30, pad = 8;
+    const int hdr = DtpPx(s, 36), row = DtpPx(s, 26), timeh = DtpPx(s, 34), okh = DtpPx(s, 30), pad = DtpPx(s, 8);
     if (s->precision == DTP_PRECISION_YEAR)
         return hdr + 3 * row + pad * 2;
     // 与 DrawPopup 一致：星期行 Mo..Su 占用约 [hdr-2, hdr+14]，日期网格从 cal_top 开始
@@ -328,7 +374,7 @@ static void ShowPopup(DtpState* s) {
         s->popup_hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             kPopupClass, L"", WS_POPUP,
-            r.left, r.bottom, kPopupMinW, PopupHeight(s),
+            r.left, r.bottom, DtpPx(s, kPopupMinW), PopupHeight(s),
             s->hwnd, nullptr, GetModuleHandleW(nullptr), s);
         if (s->popup_hwnd)
             SetWindowLongPtrW(s->popup_hwnd, GWLP_USERDATA, (LONG_PTR)s);
@@ -364,7 +410,7 @@ static void UpdatePopupPlacement(DtpState* s) {
     int py = r.bottom;
     if (py + ph > wa.bottom)
         py = r.top - ph;
-    SetWindowPos(s->popup_hwnd, HWND_TOPMOST, r.left, py, kPopupMinW, ph, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    SetWindowPos(s->popup_hwnd, HWND_TOPMOST, r.left, py, DtpPx(s, kPopupMinW), ph, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
 static LRESULT CALLBACK EditSubclassProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR dw) {
@@ -391,16 +437,19 @@ static void DrawHostChrome(DtpState* s) {
         g_d2d_factory->CreateHwndRenderTarget(props, hp, &s->render_target);
     }
     if (!s->render_target) return;
+    s->render_target->SetDpi(96.0f, 96.0f);
     s->render_target->BeginDraw();
     s->render_target->Clear(D2D1::ColorF(0, 0, 0, 0));
 
     int bx = W - s->button_width;
+    const float scale = DtpDrawScale(s, s->render_target);
+    auto px = [scale](float v) { return v * scale; };
     UINT32 bg_color = ResolveDtpThemeColor(s->bg_color ? s->bg_color : 13);
     UINT32 border_color = ResolveDtpThemeColor(s->border_color ? s->border_color : 9);
     UINT32 divider_color = 0xFFF0F2F5;
     UINT32 button_color = bg_color;
     UINT32 arrow_color = 0xFFC0C4CC;
-    float border_width = 1.0f;
+    float border_width = px(1.0f);
 
     if (!s->enabled) {
         bg_color = 0xFFF5F7FA;
@@ -412,7 +461,7 @@ static void DrawHostChrome(DtpState* s) {
         divider_color = 0xFFE3F0FF;
         button_color = 0xFFF5FAFF;
         arrow_color = 0xFF409EFF;
-        border_width = 1.5f;
+        border_width = px(1.5f);
     } else if (s->button_pressed) {
         border_color = 0xFF409EFF;
         divider_color = 0xFFE3F0FF;
@@ -426,9 +475,9 @@ static void DrawHostChrome(DtpState* s) {
     }
 
     D2D1_ROUNDED_RECT host_rect = D2D1::RoundedRect(
-        D2D1::RectF(0.5f, 0.5f, (float)W - 0.5f, (float)H - 0.5f),
-        kHostCornerRadius,
-        kHostCornerRadius
+        D2D1::RectF(px(0.5f), px(0.5f), (float)W - px(0.5f), (float)H - px(0.5f)),
+        px(kHostCornerRadius),
+        px(kHostCornerRadius)
     );
 
     ID2D1SolidColorBrush* bg = nullptr;
@@ -447,24 +496,24 @@ static void DrawHostChrome(DtpState* s) {
     }
     if (btn) {
         D2D1_ROUNDED_RECT btn_rect = D2D1::RoundedRect(
-            D2D1::RectF((float)bx + 2.0f, 2.0f, (float)W - 2.0f, (float)H - 2.0f),
-            5.0f,
-            5.0f
+            D2D1::RectF((float)bx + px(2.0f), px(2.0f), (float)W - px(2.0f), (float)H - px(2.0f)),
+            px(5.0f),
+            px(5.0f)
         );
         s->render_target->FillRoundedRectangle(btn_rect, btn);
     }
     if (divider) {
         s->render_target->DrawLine(
-            D2D1::Point2F((float)bx + 0.5f, 6.0f),
-            D2D1::Point2F((float)bx + 0.5f, (float)H - 6.0f),
+            D2D1::Point2F((float)bx + px(0.5f), px(6.0f)),
+            D2D1::Point2F((float)bx + px(0.5f), (float)H - px(6.0f)),
             divider,
-            1.0f
+            px(1.0f)
         );
     }
     if (brd) {
         s->render_target->DrawRoundedRectangle(host_rect, brd, border_width);
     }
-    DrawChevron(s->render_target, arrow, (float)bx + s->button_width * 0.5f, (float)H * 0.5f, s->dropdown_visible);
+    DrawChevron(s->render_target, arrow, (float)bx + s->button_width * 0.5f, (float)H * 0.5f, s->dropdown_visible, scale);
 
     if (arrow) arrow->Release();
     if (divider) divider->Release();
@@ -633,7 +682,7 @@ static int GetTimeDropdownVisibleRows(const DtpState* s) {
 }
 
 static int GetTimeDropdownPanelHeight(const DtpState* s) {
-    return GetTimeDropdownVisibleRows(s) * 28 + 8;
+    return GetTimeDropdownVisibleRows(s) * DtpPx(s, 28) + DtpPx(s, 8);
 }
 
 static void ClampTimeDropdownScroll(DtpState* s) {
@@ -670,10 +719,10 @@ static void ApplyTimeDropdownValue(DtpState* s, int value) {
 
 static void GetTimeLayout(DtpState* s, int W, int pad, int date_grid_bottom, int* ty, int* dropdown_top, int* oky, int* ok_btn_w) {
     *ty = date_grid_bottom + pad;
-    *dropdown_top = *ty + 34 + 6;
+    *dropdown_top = *ty + DtpPx(s, 34) + DtpPx(s, 6);
     int drop_h = (s && s->time_dropdown_visible) ? GetTimeDropdownPanelHeight(s) : 0;
     *oky = *dropdown_top + drop_h + (drop_h > 0 ? pad : 0);
-    *ok_btn_w = 64;
+    *ok_btn_w = DtpPx(s, 64);
     UNREFERENCED_PARAMETER(W);
 }
 
@@ -690,7 +739,7 @@ static void GetTimeDropdownRect(DtpState* s, int W, int pad, int date_grid_botto
     if (seg < 0 || seg >= nseg) return;
 
     float segment_w = (float)(sr[seg] - sl[seg]);
-    float panel_w = (std::max)(72.0f, segment_w);
+    float panel_w = (std::max)(DtpPxF(s, 72.0f), segment_w);
     float left = (float)sl[seg] + (segment_w - panel_w) * 0.5f;
     if (left + panel_w > W - pad) left = (float)(W - pad) - panel_w;
     if (left < pad) left = (float)pad;
@@ -705,9 +754,9 @@ static int HitTestTimeDropdownItem(DtpState* s, int W, int pad, int date_grid_bo
     D2D1_RECT_F rect{};
     GetTimeDropdownRect(s, W, pad, date_grid_bottom, &rect);
     if ((float)x < rect.left || (float)x >= rect.right || (float)y < rect.top || (float)y >= rect.bottom) return -1;
-    int local_y = y - (int)rect.top - 4;
+    int local_y = y - (int)rect.top - DtpPx(s, 4);
     if (local_y < 0) return -1;
-    int row = local_y / 28;
+    int row = local_y / DtpPx(s, 28);
     int index = s->time_dropdown_scroll + row;
     if (index < 0 || index >= GetTimeDropdownItemCount(s)) return -1;
     return index;
@@ -759,6 +808,7 @@ static void DrawPopup(DtpState* s) {
         g_d2d_factory->CreateHwndRenderTarget(props, hp, &rt);
     }
     if (!rt) return;
+    rt->SetDpi(96.0f, 96.0f);
 
     const UINT32 popup_bg = ResolveDtpThemeColor(s->bg_color ? s->bg_color : 13);
     const UINT32 popup_fg = ResolveDtpThemeColor(s->fg_color ? s->fg_color : 5);
@@ -771,6 +821,8 @@ static void DrawPopup(DtpState* s) {
     const bool dark_popup = DtpColorLuma(popup_bg) < 0.45f;
     const UINT32 popup_surface_hover = dark_popup ? 0xFF2F4669 : 0xFFEAF3FF;
     const UINT32 popup_border_hover = dark_popup ? 0xFF6AA9FF : 0xFFB3D8FF;
+    const float draw_scale = DtpDrawScale(s, rt);
+    auto px = [draw_scale](float v) { return v * draw_scale; };
 
     rt->BeginDraw();
     rt->Clear(ColorFromUInt32(popup_bg));
@@ -778,15 +830,15 @@ static void DrawPopup(DtpState* s) {
     ID2D1SolidColorBrush* header_bg = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(popup_surface), &header_bg);
     if (header_bg) {
-        rt->FillRectangle(D2D1::RectF(0.0f, 0.0f, (float)W, 44.0f), header_bg);
+        rt->FillRectangle(D2D1::RectF(0.0f, 0.0f, (float)W, px(44.0f)), header_bg);
         header_bg->Release();
     }
 
     ID2D1SolidColorBrush* border = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(popup_border), &border);
     if (border) {
-        rt->DrawRectangle(D2D1::RectF(0.5f, 0.5f, (float)W - 0.5f, (float)H - 0.5f), border, 1.0f);
-        rt->DrawLine(D2D1::Point2F(0.0f, 44.0f), D2D1::Point2F((float)W, 44.0f), border, 1.0f);
+        rt->DrawRectangle(D2D1::RectF(px(0.5f), px(0.5f), (float)W - px(0.5f), (float)H - px(0.5f)), border, px(1.0f));
+        rt->DrawLine(D2D1::Point2F(0.0f, px(44.0f)), D2D1::Point2F((float)W, px(44.0f)), border, px(1.0f));
     }
 
     IDWriteTextFormat* tf = nullptr;
@@ -795,17 +847,17 @@ static void DrawPopup(DtpState* s) {
         s->font.font_name.empty() ? L"Microsoft YaHei UI" : s->font.font_name.c_str(),
         nullptr,
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        13.0f, L"zh-cn", &tf);
+        px(13.0f), L"zh-cn", &tf);
     g_dwrite_factory->CreateTextFormat(
         s->font.font_name.empty() ? L"Microsoft YaHei UI" : s->font.font_name.c_str(),
         nullptr,
         DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        16.0f, L"zh-cn", &title_tf);
+        px(16.0f), L"zh-cn", &title_tf);
 
     ID2D1SolidColorBrush* fg = nullptr;
     rt->CreateSolidColorBrush(ColorFromUInt32(popup_fg), &fg);
 
-    const int hdr = 36, row = 26, pad = 8;
+    const int hdr = DtpPx(s, 36), row = DtpPx(s, 26), pad = DtpPx(s, 8);
     const int cal_top = hdr + 20;
     const int date_grid_bottom = cal_top + 6 * row;
 
@@ -813,14 +865,14 @@ static void DrawPopup(DtpState* s) {
         if (tf && fg) {
             tf->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             tf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            rt->DrawTextW(L"\x2039", 1, tf, D2D1::RectF(8.0f, 6.0f, 36.0f, 34.0f), fg, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
-            rt->DrawTextW(L"\x203A", 1, tf, D2D1::RectF((float)W - 36.0f, 6.0f, (float)W - 8.0f, 34.0f), fg,
+            rt->DrawTextW(L"\x2039", 1, tf, D2D1::RectF(px(8.0f), px(6.0f), px(36.0f), px(34.0f)), fg, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            rt->DrawTextW(L"\x203A", 1, tf, D2D1::RectF((float)W - px(36.0f), px(6.0f), (float)W - px(8.0f), px(34.0f)), fg,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
         }
         wchar_t nav[64];
         swprintf_s(nav, L"%d - %d", s->year_base, s->year_base + 11);
         if (tf && fg)
-            rt->DrawTextW(nav, (UINT32)wcslen(nav), tf, D2D1::RectF(40, 4, (float)W - 40, (float)hdr), fg,
+            rt->DrawTextW(nav, (UINT32)wcslen(nav), tf, D2D1::RectF(px(40.0f), px(4.0f), (float)W - px(40.0f), (float)hdr), fg,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
         for (int r = 0; r < 3; r++) {
             for (int c = 0; c < 4; c++) {
@@ -828,7 +880,7 @@ static void DrawPopup(DtpState* s) {
                 int y = s->year_base + idx;
                 float x0 = (float)(pad + c * ((W - pad * 2) / 4));
                 float y0 = (float)(hdr + pad + r * row);
-                D2D1_RECT_F cell = D2D1::RectF(x0, y0, x0 + (W - pad * 2) / 4 - 4, y0 + row - 2);
+                D2D1_RECT_F cell = D2D1::RectF(x0, y0, x0 + (W - pad * 2) / 4 - px(4.0f), y0 + row - px(2.0f));
                 bool hv = (s->hover_cell == idx);
                 if (hv) {
                     ID2D1SolidColorBrush* hb = nullptr;
@@ -848,12 +900,12 @@ static void DrawPopup(DtpState* s) {
             if (nav_hover) {
                 if (s->hover_prev) {
                     rt->FillRoundedRectangle(
-                        D2D1::RoundedRect(D2D1::RectF(10.0f, 8.0f, 34.0f, 32.0f), 6.0f, 6.0f),
+                        D2D1::RoundedRect(D2D1::RectF(px(10.0f), px(8.0f), px(34.0f), px(32.0f)), px(6.0f), px(6.0f)),
                         nav_hover);
                 }
                 if (s->hover_next) {
                     rt->FillRoundedRectangle(
-                        D2D1::RoundedRect(D2D1::RectF((float)W - 34.0f, 8.0f, (float)W - 10.0f, 32.0f), 6.0f, 6.0f),
+                        D2D1::RoundedRect(D2D1::RectF((float)W - px(34.0f), px(8.0f), (float)W - px(10.0f), px(32.0f)), px(6.0f), px(6.0f)),
                         nav_hover);
                 }
                 nav_hover->Release();
@@ -862,9 +914,9 @@ static void DrawPopup(DtpState* s) {
         if (tf && fg) {
             tf->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             tf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            rt->DrawTextW(L"\x2039", 1, tf, D2D1::RectF(10.0f, 8.0f, 34.0f, 32.0f), fg,
+            rt->DrawTextW(L"\x2039", 1, tf, D2D1::RectF(px(10.0f), px(8.0f), px(34.0f), px(32.0f)), fg,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
-            rt->DrawTextW(L"\x203A", 1, tf, D2D1::RectF((float)W - 34.0f, 8.0f, (float)W - 10.0f, 32.0f), fg,
+            rt->DrawTextW(L"\x203A", 1, tf, D2D1::RectF((float)W - px(34.0f), px(8.0f), (float)W - px(10.0f), px(32.0f)), fg,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
         }
         wchar_t title[32];
@@ -874,7 +926,7 @@ static void DrawPopup(DtpState* s) {
             title_tf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
         if (title_tf && fg)
-            rt->DrawTextW(title, (UINT32)wcslen(title), title_tf, D2D1::RectF(44.0f, 6.0f, (float)W - 44.0f, 38.0f), fg,
+            rt->DrawTextW(title, (UINT32)wcslen(title), title_tf, D2D1::RectF(px(44.0f), px(6.0f), (float)W - px(44.0f), px(38.0f)), fg,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
 
         int grid_left = GetCalendarGridLeft(W, pad, row);
@@ -1142,16 +1194,16 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         s->hover_ok = false;
         s->hover_cancel = false;
         s->hover_cell = -1;
-        s->hover_prev = (x >= 8 && x <= 36 && y >= 6 && y <= 34);
+        s->hover_prev = (x >= DtpPx(s, 8) && x <= DtpPx(s, 36) && y >= DtpPx(s, 6) && y <= DtpPx(s, 34));
         s->hover_next = false;
-        const int hdr = 36, row = 26, pad = 8;
+        const int hdr = DtpPx(s, 36), row = DtpPx(s, 26), pad = DtpPx(s, 8);
         const int cal_top = hdr + 20;
         const int date_grid_bottom = cal_top + 6 * row;
         RECT rc{};
         GetClientRect(hwnd, &rc);
         int W = rc.right - rc.left;
         int grid_left = GetCalendarGridLeft(W, pad, row);
-        s->hover_next = (x >= W - 36 && x <= W - 8 && y >= 6 && y <= 34);
+        s->hover_next = (x >= W - DtpPx(s, 36) && x <= W - DtpPx(s, 8) && y >= DtpPx(s, 6) && y <= DtpPx(s, 34));
         s->hover_time = -1;
         if (s->precision == DTP_PRECISION_YEAR) {
             for (int r = 0; r < 3; r++) {
@@ -1159,7 +1211,7 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                     int idx = r * 4 + c;
                     float x0 = (float)(pad + c * ((W - pad * 2) / 4));
                     float y0 = (float)(hdr + pad + r * row);
-                    D2D1_RECT_F cell = D2D1::RectF(x0, y0, x0 + (W - pad * 2) / 4 - 4, y0 + row - 2);
+                    D2D1_RECT_F cell = D2D1::RectF(x0, y0, x0 + (W - pad * 2) / 4 - DtpPxF(s, 4.0f), y0 + row - DtpPxF(s, 2.0f));
                     if ((float)x >= cell.left && (float)x < cell.right && (float)y >= cell.top && (float)y < cell.bottom)
                         s->hover_cell = idx;
                 }
@@ -1176,10 +1228,10 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 GetTimeLayout(s, W, pad, date_grid_bottom, &ty, &dropdown_top, &oky, &ok_btn_w);
                 int cancel_right = pad + ok_btn_w;
                 int ok_left = W - pad - ok_btn_w;
-                s->hover_cancel = (x >= pad && x < cancel_right && y > oky && y < oky + 26);
-                s->hover_ok = (x >= ok_left && x < W - pad && y > oky && y < oky + 26);
+                s->hover_cancel = (x >= pad && x < cancel_right && y > oky && y < oky + DtpPx(s, 26));
+                s->hover_ok = (x >= ok_left && x < W - pad && y > oky && y < oky + DtpPx(s, 26));
                 s->time_dropdown_hover = HitTestTimeDropdownItem(s, W, pad, date_grid_bottom, x, y);
-                if (y >= ty && y < ty + 32 && x >= pad && x < W - pad) {
+                if (y >= ty && y < ty + DtpPx(s, 32) && x >= pad && x < W - pad) {
                     int ht = HitTestTimeSegment(s, W, pad, x, y, ty);
                     if (ht >= 0 && ht != s->hover_time)
                         s->time_typing = 0;
@@ -1197,12 +1249,12 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         RECT rc{};
         GetClientRect(hwnd, &rc);
         int W = rc.right - rc.left;
-        const int hdr = 36, row = 26, pad = 8;
+        const int hdr = DtpPx(s, 36), row = DtpPx(s, 26), pad = DtpPx(s, 8);
         const int cal_top = hdr + 20;
         const int date_grid_bottom = cal_top + 6 * row;
         int grid_left = GetCalendarGridLeft(W, pad, row);
 
-        if (x >= 8 && x <= 36 && y >= 6 && y <= 34) {
+        if (x >= DtpPx(s, 8) && x <= DtpPx(s, 36) && y >= DtpPx(s, 6) && y <= DtpPx(s, 34)) {
             if (s->precision == DTP_PRECISION_YEAR) {
                 s->year_base -= 12;
                 if (s->year_base < 1601) s->year_base = 1601;
@@ -1213,7 +1265,7 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
-        if (x >= W - 36 && x <= W - 8 && y >= 6 && y <= 34) {
+        if (x >= W - DtpPx(s, 36) && x <= W - DtpPx(s, 8) && y >= DtpPx(s, 6) && y <= DtpPx(s, 34)) {
             if (s->precision == DTP_PRECISION_YEAR) {
                 s->year_base += 12;
                 if (s->year_base > 3070) s->year_base = 3070;
@@ -1231,7 +1283,7 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                     int idx = r * 4 + c;
                     float x0 = (float)(pad + c * ((W - pad * 2) / 4));
                     float y0 = (float)(hdr + pad + r * row);
-                    D2D1_RECT_F cell = D2D1::RectF(x0, y0, x0 + (W - pad * 2) / 4 - 4, y0 + row - 2);
+                    D2D1_RECT_F cell = D2D1::RectF(x0, y0, x0 + (W - pad * 2) / 4 - DtpPxF(s, 4.0f), y0 + row - DtpPxF(s, 2.0f));
                     if ((float)x >= cell.left && (float)x < cell.right && (float)y >= cell.top && (float)y < cell.bottom) {
                         int year = s->year_base + idx;
                         s->temp.wYear = (WORD)year;
@@ -1283,7 +1335,7 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 }
-                if (y >= ty && y < ty + 32 && x >= pad && x < W - pad) {
+                if (y >= ty && y < ty + DtpPx(s, 32) && x >= pad && x < W - pad) {
                     int ht = HitTestTimeSegment(s, W, pad, x, y, ty);
                     if (ht >= 0) {
                         if (ht != s->hover_time)
@@ -1301,12 +1353,12 @@ static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                     HideTimeDropdown(s);
                     UpdatePopupPlacement(s);
                 }
-                if (x >= pad && x < cancel_right && y > oky && y < oky + 26) {
+                if (x >= pad && x < cancel_right && y > oky && y < oky + DtpPx(s, 26)) {
                     HidePopup(s);
                     InvalidateRect(s->hwnd, nullptr, FALSE);
                     return 0;
                 }
-                if (x >= ok_left && x < W - pad && y > oky && y < oky + 26) {
+                if (x >= ok_left && x < W - pad && y > oky && y < oky + DtpPx(s, 26)) {
                     s->st = s->temp;
                     NormalizeToPrecision(s->st, s->precision);
                     PushEditText(s);
@@ -1576,35 +1628,39 @@ __declspec(dllexport) HWND __stdcall CreateD2DDateTimePicker(
     st->bg_color = bg_color;
     st->border_color = border_color;
     st->font.font_name = Utf8BytesToWide(font_name_bytes, font_name_len);
-    st->font.font_size = font_size;
+    st->font.font_size = (font_size > 0) ? font_size : 14;
     st->font.bold = bold != 0;
     st->font.italic = italic != 0;
     st->font.underline = underline != 0;
     st->parent = hParent;
-    st->width = width;
-    st->height = height;
-    st->x = x;
-    st->y = y;
+    RECT px_rect = EW_LogicalChildRectToPx(hParent, x, y, width, height, true);
+    st->width = DtpRectWidthPx(px_rect);
+    st->height = DtpRectHeightPx(px_rect);
+    st->button_width = EW_LogicalToPx(kButtonWidth, EW_GetDpiForReference(hParent));
+    st->x = 0;
+    st->y = 0;
 
-    int tb_offset = GetTitleBarOffset(hParent);
     HWND hwnd = CreateWindowExW(0, kHostClass, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        x, y + tb_offset, width, height, hParent, nullptr, GetModuleHandleW(nullptr), st);
+        px_rect.left, px_rect.top, st->width, st->height, hParent, nullptr, GetModuleHandleW(nullptr), st);
     if (!hwnd) {
         delete st;
         return nullptr;
     }
     st->hwnd = hwnd;
     g_dt_pick[hwnd] = st;
+    EW_StoreLogicalBounds(hwnd, x, y, width, height, true);
     ApplyHostRegion(st);
 
     int ew = width - kButtonWidth - kHostPaddingX - 4;
     if (ew < 1) ew = 1;
+    int eh = height - kHostPaddingY * 2;
+    if (eh < 1) eh = 1;
     st->edit_hwnd = CreateD2DColorEmojiEditBox(
-        hwnd, kHostPaddingX, kHostPaddingY, ew, height - kHostPaddingY * 2,
+        hwnd, kHostPaddingX, kHostPaddingY, ew, eh,
         (const unsigned char*)"", 0,
         fg_color, bg_color,
         font_name_bytes, font_name_len,
-        font_size, bold != 0, italic != 0, underline != 0,
+        st->font.font_size, bold != 0, italic != 0, underline != 0,
         0, false, true, false, false, true);
     if (st->edit_hwnd) {
         SetWindowSubclass(st->edit_hwnd, EditSubclassProc, kEditSubclassId, (DWORD_PTR)st);
@@ -1687,9 +1743,20 @@ __declspec(dllexport) void __stdcall SetD2DDateTimePickerBounds(HWND hPicker, in
     auto it = g_dt_pick.find(hPicker);
     if (it == g_dt_pick.end()) return;
     DtpState* s = it->second;
-    s->x = x; s->y = y; s->width = width; s->height = height;
-    int tb_offset = GetTitleBarOffset(s->parent);
-    SetWindowPos(hPicker, nullptr, x, y + tb_offset, width, height, SWP_NOZORDER);
+    RECT px_rect = EW_LogicalChildRectToPx(s->parent, x, y, width, height, true);
+    s->x = 0;
+    s->y = 0;
+    s->width = DtpRectWidthPx(px_rect);
+    s->height = DtpRectHeightPx(px_rect);
+    s->button_width = EW_LogicalToPx(kButtonWidth, EW_GetDpiForReference(hPicker, s->parent));
+    EW_StoreLogicalBounds(hPicker, x, y, width, height, true);
+    SetWindowPos(hPicker, nullptr, px_rect.left, px_rect.top, s->width, s->height, SWP_NOZORDER | SWP_NOACTIVATE);
+    LayoutHostEdit(s);
+    ApplyHostRegion(s);
+    if (s->dropdown_visible) {
+        UpdatePopupPlacement(s);
+    }
+    InvalidateRect(hPicker, nullptr, FALSE);
 }
 
 __declspec(dllexport) void __stdcall SetD2DDateTimePickerColors(

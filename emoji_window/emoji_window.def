@@ -272,6 +272,8 @@ EXPORTS
     CreatePanel
     SetPanelBackgroundColor
     GetPanelBackgroundColor
+    SetPanelBounds
+    GetPanelBounds
     GetGroupBoxTitle
     GetGroupBoxBounds
     GetGroupBoxVisible
@@ -420,6 +422,8 @@ EXPORTS
     SetThemeChangedCallback
     CreateSimpleTreeView
     CreateTreeView
+    SetTreeViewBounds
+    GetTreeViewBounds
     DestroyTreeView
     AddRootNode
     AddChildNode

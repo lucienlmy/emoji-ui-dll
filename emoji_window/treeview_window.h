@@ -88,6 +88,9 @@ HWND __stdcall CreateTreeView(
     void* callback_context
 );
 
+bool __stdcall SetTreeViewBounds(HWND hwnd, int x, int y, int width, int height);
+bool __stdcall GetTreeViewBounds(HWND hwnd, int* x, int* y, int* width, int* height);
+
 /**
  * 销毁树形框控件
  * @param hwnd 树形框窗口句柄

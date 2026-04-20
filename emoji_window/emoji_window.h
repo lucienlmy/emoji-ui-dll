@@ -3144,6 +3144,19 @@ extern "C" {
         UINT32* bg_color
     );
 
+    __declspec(dllexport) void __stdcall SetPanelBounds(
+        HWND hPanel,
+        int x, int y, int width, int height
+    );
+
+    __declspec(dllexport) int __stdcall GetPanelBounds(
+        HWND hPanel,
+        int* x,
+        int* y,
+        int* width,
+        int* height
+    );
+
     // 鑾峰彇鍒嗙粍妗嗘爣棰?
     __declspec(dllexport) int __stdcall GetGroupBoxTitle(
         HWND hGroupBox,

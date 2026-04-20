@@ -149,12 +149,22 @@ extern "C" __declspec(dllexport) void __stdcall SetButtonBounds(int button_id, i
     EmojiButton* button = FindButton(button_id, &parent);
     if (!button || !parent) return;
 
-    UINT dpi = EW_GetDpiForReference(parent);
+    HWND logical_parent = (button->hwnd && IsWindow(button->hwnd)) ? GetParent(button->hwnd) : parent;
+    if (!logical_parent || !IsWindow(logical_parent)) {
+        logical_parent = parent;
+    }
+
+    RECT px_rect = EW_LogicalChildRectToPx(logical_parent, x, y, width, height, true);
+    POINT host_pt = { px_rect.left, px_rect.top };
+    if (logical_parent != parent) {
+        MapWindowPoints(logical_parent, parent, &host_pt, 1);
+    }
+
     EW_StoreButtonLogicalBounds(button_id, x, y, width, height);
-    button->x = EW_LogicalToPx(x, dpi);
-    button->y = EW_LogicalToPx(y, dpi);
-    button->width = (std::max)(1, EW_LogicalToPx(width, dpi));
-    button->height = (std::max)(1, EW_LogicalToPx(height, dpi));
+    button->x = host_pt.x;
+    button->y = host_pt.y;
+    button->width = (std::max)(1, static_cast<int>(px_rect.right - px_rect.left));
+    button->height = (std::max)(1, static_cast<int>(px_rect.bottom - px_rect.top));
     RefreshButtonVisual(button, parent);
 }
 

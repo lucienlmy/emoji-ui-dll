@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "treeview_window.h"
 #include "treeview_state.h"
+#include "emoji_window.h"
 #include "log.h"
 #include <windowsx.h>
 #include <algorithm>
@@ -26,6 +27,14 @@ static bool g_class_registered = false;
 
 extern "C" UINT32 __stdcall EW_GetThemeColorByIndex(int color_index);
 extern int GetTitleBarOffset(HWND hParent);
+
+static int TreeRectWidthPx(const RECT& rect) {
+    return (std::max)(1, (int)(rect.right - rect.left));
+}
+
+static int TreeRectHeightPx(const RECT& rect) {
+    return (std::max)(1, (int)(rect.bottom - rect.top));
+}
 
 // ============================================================================
 // 辅助函数实现
@@ -861,13 +870,13 @@ HWND __stdcall CreateSimpleTreeView(HWND parent, int x, int y, int width, int he
     DWORD style = WS_CHILD | WS_VISIBLE | WS_BORDER
         | TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS;
 
-    int tb_offset = GetTitleBarOffset(parent);
+    RECT px_rect = EW_LogicalChildRectToPx(parent, x, y, width, height, true);
     HWND hTree = CreateWindowExW(
         0,
         WC_TREEVIEWW,
         L"",
         style,
-        x, y + tb_offset, width, height,
+        px_rect.left, px_rect.top, TreeRectWidthPx(px_rect), TreeRectHeightPx(px_rect),
         parent,
         NULL,
         GetModuleHandle(NULL),
@@ -875,6 +884,7 @@ HWND __stdcall CreateSimpleTreeView(HWND parent, int x, int y, int width, int he
     );
 
     if (!hTree) return NULL;
+    EW_StoreLogicalBounds(hTree, x, y, width, height, true);
 
     // 添加默认根节点便于验证显示
     wchar_t rootText[] = L"\u6839\u8282\u70B9";  // "根节点"
@@ -931,14 +941,14 @@ HWND __stdcall CreateTreeView(
         g_class_registered = true;
     }
     
-    int tb_offset = GetTitleBarOffset(parent);
+    RECT px_rect = EW_LogicalChildRectToPx(parent, x, y, width, height, true);
     // 创建子窗口
     HWND hwnd = CreateWindowExW(
         0,
         TREEVIEW_CLASS_NAME,
         L"",
         WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
-        x, y + tb_offset, width, height,
+        px_rect.left, px_rect.top, TreeRectWidthPx(px_rect), TreeRectHeightPx(px_rect),
         parent,
         NULL,
         GetModuleHandle(NULL),
@@ -953,6 +963,7 @@ HWND __stdcall CreateTreeView(
     TreeViewState* state = new TreeViewState();
     state->hwnd = hwnd;
     state->callback_context = callback_context;
+    EW_StoreLogicalBounds(hwnd, x, y, width, height, true);
     
     // 初始化 Direct2D 工厂
     HRESULT hr = D2D1CreateFactory(
@@ -1139,6 +1150,37 @@ bool __stdcall DestroyTreeView(HWND hwnd) {
         return false;
     DestroyWindow(hwnd);
     return true;
+}
+
+bool __stdcall SetTreeViewBounds(HWND hwnd, int x, int y, int width, int height) {
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!hwnd || !IsWindow(hwnd) || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    RECT px_rect = EW_LogicalChildRectToPx(GetParent(hwnd), x, y, width, height, true);
+    EW_StoreLogicalBounds(hwnd, x, y, width, height, true);
+    SetWindowPos(
+        hwnd,
+        nullptr,
+        px_rect.left,
+        px_rect.top,
+        TreeRectWidthPx(px_rect),
+        TreeRectHeightPx(px_rect),
+        SWP_NOZORDER | SWP_NOACTIVATE);
+    if (state) {
+        InitializeDPI(state);
+        RecalculateLayout(state);
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return true;
+}
+
+bool __stdcall GetTreeViewBounds(HWND hwnd, int* x, int* y, int* width, int* height) {
+    if (!hwnd || !IsWindow(hwnd)) {
+        return false;
+    }
+    return EW_ReadLogicalBounds(hwnd, x, y, width, height, true) == 0;
 }
 
 int __stdcall AddRootNode(
