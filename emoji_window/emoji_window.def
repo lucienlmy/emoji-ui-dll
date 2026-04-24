@@ -270,10 +270,16 @@ EXPORTS
     SetGroupBoxBounds
     SetGroupBoxCallback
     CreatePanel
+    CreateHostSurface
+    DestroyHostSurface
     SetPanelBackgroundColor
+    SetHostSurfaceBackgroundColor
     GetPanelBackgroundColor
+    GetHostSurfaceBackgroundColor
     SetPanelBounds
+    SetHostSurfaceBounds
     GetPanelBounds
+    GetHostSurfaceBounds
     GetGroupBoxTitle
     GetGroupBoxBounds
     GetGroupBoxVisible
@@ -458,6 +464,7 @@ EXPORTS
     SetScrollPos = SetTreeViewScrollPos
     GetScrollPos = GetTreeViewScrollPos
     SetTreeViewCallback
+    SetTreeViewEditFinishedCallback
     EnableTreeViewDragDrop
     SetTreeViewSidebarMode
     GetTreeViewSidebarMode

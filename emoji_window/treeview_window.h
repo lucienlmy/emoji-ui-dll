@@ -29,7 +29,8 @@ enum TreeViewCallbackType {
     CALLBACK_NODE_RIGHT_CLICK = 5,   // 节点被右键点击
     CALLBACK_NODE_TEXT_CHANGED = 6,  // 节点文本改变
     CALLBACK_NODE_CHECKED = 7,       // 节点复选框改变
-    CALLBACK_NODE_MOVED = 8          // 节点被移动
+    CALLBACK_NODE_MOVED = 8,         // 节点被移动
+    CALLBACK_NODE_EDIT_FINISHED = 9  // 节点编辑提交完成
 };
 
 // 回调函数类型定义
@@ -39,6 +40,9 @@ typedef void(__stdcall* TreeViewCallback)(int node_id, void* context);
 
 // 文本改变回调：void callback(int node_id, const char* new_text, int text_len, void* context)
 typedef void(__stdcall* TreeViewTextCallback)(int node_id, const unsigned char* new_text, int text_len, void* context);
+
+// 编辑完成回调：void callback(int node_id, const char* text, int text_len, bool changed, void* context)
+typedef void(__stdcall* TreeViewEditFinishedCallback)(int node_id, const unsigned char* text, int text_len, bool changed, void* context);
 
 // 复选框回调：void callback(int node_id, bool checked, void* context)
 typedef void(__stdcall* TreeViewCheckCallback)(int node_id, bool checked, void* context);
@@ -489,6 +493,11 @@ bool __stdcall SetTreeViewCallback(
     HWND hwnd,
     int callback_type,
     void* callback_func
+);
+
+bool __stdcall SetTreeViewEditFinishedCallback(
+    HWND hwnd,
+    TreeViewEditFinishedCallback callback_func
 );
 
 // ============================================================================

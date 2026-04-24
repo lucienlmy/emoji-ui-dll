@@ -4,6 +4,7 @@
 #include <commctrl.h>
 #include <d2d1.h>
 #include <dwrite.h>
+#include <dwrite_2.h>
 #include <uxtheme.h>
 #include <wincodec.h>  // WIC (Windows Imaging Component)
 #include <richedit.h>  // RichEdit鎺т欢锛堟敮鎸佸僵鑹瞖moji锛?
@@ -830,14 +831,6 @@ struct GroupBoxState {
     EventCallbacks events;      // 閫氱敤浜嬩欢鍥炶皟
 };
 
-struct PanelState {
-    HWND hwnd;
-    HWND parent;
-    int x, y, width, height;
-    UINT32 bg_color;
-    EventCallbacks events;
-};
-
 // Button structure
 struct EmojiButton {
     int id;
@@ -861,6 +854,15 @@ struct EmojiButton {
     bool ContainsPoint(int px, int py) const {
         return px >= x && px <= x + width && py >= y && py <= y + height;
     }
+};
+
+struct PanelState {
+    HWND hwnd;
+    HWND parent;
+    int x, y, width, height;
+    UINT32 bg_color;
+    std::vector<EmojiButton> buttons;
+    EventCallbacks events;
 };
 
 // Window state
@@ -1191,6 +1193,7 @@ extern std::map<HWND, std::map<int, HWND>> g_button_popup_menu_bindings;
 extern ButtonClickCallback g_button_callback;
 extern WindowResizeCallback g_window_resize_callback;
 extern WindowCloseCallback g_window_close_callback;
+EmojiButton* EW_FindButtonById(int button_id, HWND* out_state_host = nullptr);
 
 struct LogicalBoundsInfo {
     int x = 0;
@@ -3134,8 +3137,23 @@ extern "C" {
         UINT32 bg_color
     );
 
+    __declspec(dllexport) HWND __stdcall CreateHostSurface(
+        HWND hParent,
+        int x, int y, int width, int height,
+        UINT32 bg_color
+    );
+
+    __declspec(dllexport) void __stdcall DestroyHostSurface(
+        HWND hHostSurface
+    );
+
     __declspec(dllexport) void __stdcall SetPanelBackgroundColor(
         HWND hPanel,
+        UINT32 bg_color
+    );
+
+    __declspec(dllexport) void __stdcall SetHostSurfaceBackgroundColor(
+        HWND hHostSurface,
         UINT32 bg_color
     );
 
@@ -3144,13 +3162,31 @@ extern "C" {
         UINT32* bg_color
     );
 
+    __declspec(dllexport) int __stdcall GetHostSurfaceBackgroundColor(
+        HWND hHostSurface,
+        UINT32* bg_color
+    );
+
     __declspec(dllexport) void __stdcall SetPanelBounds(
         HWND hPanel,
         int x, int y, int width, int height
     );
 
+    __declspec(dllexport) void __stdcall SetHostSurfaceBounds(
+        HWND hHostSurface,
+        int x, int y, int width, int height
+    );
+
     __declspec(dllexport) int __stdcall GetPanelBounds(
         HWND hPanel,
+        int* x,
+        int* y,
+        int* width,
+        int* height
+    );
+
+    __declspec(dllexport) int __stdcall GetHostSurfaceBounds(
+        HWND hHostSurface,
         int* x,
         int* y,
         int* width,

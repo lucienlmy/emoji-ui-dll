@@ -201,6 +201,7 @@ struct TreeViewState {
     TreeViewTextCallback on_node_text_changed;
     TreeViewCheckCallback on_node_checked;
     TreeViewMoveCallback on_node_moved;
+    TreeViewEditFinishedCallback on_node_edit_finished;
     
     // 全局字体（树控件主字体，逻辑单位）
     std::wstring font_family_name;
@@ -262,6 +263,7 @@ struct TreeViewState {
         on_node_text_changed(nullptr),
         on_node_checked(nullptr),
         on_node_moved(nullptr),
+        on_node_edit_finished(nullptr),
         font_family_name(L"Segoe UI Emoji"),
         font_size_logical(14.0f),
         font_weight(DWRITE_FONT_WEIGHT_NORMAL),

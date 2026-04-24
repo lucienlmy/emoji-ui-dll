@@ -25,6 +25,11 @@ static const wchar_t* TREEVIEW_CLASS_NAME = L"CustomTreeViewClass";
 // 窗口类是否已注册
 static bool g_class_registered = false;
 
+static const UINT TREE_EDIT_MENU_CUT = 41001;
+static const UINT TREE_EDIT_MENU_COPY = 41002;
+static const UINT TREE_EDIT_MENU_PASTE = 41003;
+static const UINT TREE_EDIT_MENU_SELECT_ALL = 41004;
+
 extern "C" UINT32 __stdcall EW_GetThemeColorByIndex(int color_index);
 extern int GetTitleBarOffset(HWND hParent);
 
@@ -655,6 +660,347 @@ void ScrollToNodeInternal(TreeViewState* state, TreeNode* node) {
     state->scroll_pos = (std::max)(0, (std::min)(state->scroll_pos, state->scroll_max));
 }
 
+static bool IsPointInCustomEditRect(const TreeViewState* state, int x, int y) {
+    return state &&
+        x >= state->edit_rect.left && x <= state->edit_rect.right &&
+        y >= state->edit_rect.top && y <= state->edit_rect.bottom;
+}
+
+static float GetCustomEditTextPadding(const TreeViewState* state) {
+    return 4.0f * (state ? state->dpi_scale : 1.0f);
+}
+
+static D2D1_POINT_2F GetCustomEditTextOrigin(const TreeViewState* state) {
+    if (!state) {
+        return D2D1::Point2F(0.0f, 0.0f);
+    }
+
+    const float edit_height = state->edit_rect.bottom - state->edit_rect.top;
+    const float text_height = state->node_height * state->dpi_scale;
+    const float text_y = state->edit_rect.top + (edit_height - text_height) / 2.0f;
+    return D2D1::Point2F(
+        state->edit_rect.left + GetCustomEditTextPadding(state),
+        text_y
+    );
+}
+
+static int ClampCustomEditCursorPos(const TreeViewState* state, int pos) {
+    const int text_len = state ? static_cast<int>(state->edit_text.length()) : 0;
+    return (std::max)(0, (std::min)(pos, text_len));
+}
+
+static void SetCustomEditCaret(TreeViewState* state, int cursor_pos) {
+    if (!state) return;
+
+    state->edit_cursor_pos = ClampCustomEditCursorPos(state, cursor_pos);
+    state->edit_selection_start = state->edit_cursor_pos;
+    state->edit_selection_end = state->edit_cursor_pos;
+    state->edit_cursor_blink_time = GetTickCount();
+    state->edit_cursor_visible = true;
+}
+
+static int HitTestCustomEditCaretPos(TreeViewState* state, int x, int y) {
+    if (!state || !state->dwrite_factory || !state->text_format || state->edit_text.empty()) {
+        return 0;
+    }
+
+    const float padding = GetCustomEditTextPadding(state);
+    const float max_width = (std::max)(1.0f, state->edit_rect.right - state->edit_rect.left - padding * 2.0f);
+    const float max_height = (std::max)(1.0f, state->edit_rect.bottom - state->edit_rect.top);
+    const D2D1_POINT_2F origin = GetCustomEditTextOrigin(state);
+
+    if (static_cast<float>(x) <= origin.x) {
+        return 0;
+    }
+    if (static_cast<float>(x) >= origin.x + max_width) {
+        return static_cast<int>(state->edit_text.length());
+    }
+
+    IDWriteTextLayout* text_layout = nullptr;
+    HRESULT hr = state->dwrite_factory->CreateTextLayout(
+        state->edit_text.c_str(),
+        static_cast<UINT32>(state->edit_text.length()),
+        state->text_format,
+        max_width,
+        max_height,
+        &text_layout
+    );
+    if (FAILED(hr) || !text_layout) {
+        return static_cast<int>(state->edit_text.length());
+    }
+
+    BOOL is_trailing_hit = FALSE;
+    BOOL is_inside = FALSE;
+    DWRITE_HIT_TEST_METRICS hit_metrics = {};
+    hr = text_layout->HitTestPoint(
+        static_cast<float>(x) - origin.x,
+        static_cast<float>(y) - origin.y,
+        &is_trailing_hit,
+        &is_inside,
+        &hit_metrics
+    );
+
+    int cursor_pos = static_cast<int>(state->edit_text.length());
+    if (SUCCEEDED(hr)) {
+        cursor_pos = static_cast<int>(hit_metrics.textPosition);
+        if (is_trailing_hit) {
+            cursor_pos += static_cast<int>((std::max)(1u, hit_metrics.length));
+        }
+    }
+
+    text_layout->Release();
+    return ClampCustomEditCursorPos(state, cursor_pos);
+}
+
+static void HandleCustomEditMouseDown(TreeViewState* state, int x, int y) {
+    if (!state) return;
+
+    SetFocus(state->hwnd);
+    SetCustomEditCaret(state, HitTestCustomEditCaretPos(state, x, y));
+    InvalidateRect(state->hwnd, NULL, FALSE);
+}
+
+static bool GetCustomEditSelectionRange(TreeViewState* state, int* out_start, int* out_end) {
+    if (!state) return false;
+
+    int start = ClampCustomEditCursorPos(state, state->edit_selection_start);
+    int end = ClampCustomEditCursorPos(state, state->edit_selection_end);
+    if (start > end) {
+        std::swap(start, end);
+    }
+    if (start == end) {
+        return false;
+    }
+
+    if (out_start) *out_start = start;
+    if (out_end) *out_end = end;
+    return true;
+}
+
+static bool HasCustomEditSelection(TreeViewState* state) {
+    return GetCustomEditSelectionRange(state, nullptr, nullptr);
+}
+
+static std::wstring GetCustomEditCopyText(TreeViewState* state, bool allow_all_when_no_selection) {
+    if (!state) return std::wstring();
+
+    int start = 0;
+    int end = 0;
+    if (GetCustomEditSelectionRange(state, &start, &end)) {
+        return state->edit_text.substr(start, end - start);
+    }
+
+    return allow_all_when_no_selection ? state->edit_text : std::wstring();
+}
+
+static bool SetUnicodeClipboardText(HWND owner, const std::wstring& text) {
+    if (text.empty() || !OpenClipboard(owner)) {
+        return false;
+    }
+
+    const SIZE_T bytes = (text.length() + 1) * sizeof(wchar_t);
+    HGLOBAL data = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!data) {
+        CloseClipboard();
+        return false;
+    }
+
+    void* dest = GlobalLock(data);
+    if (!dest) {
+        GlobalFree(data);
+        CloseClipboard();
+        return false;
+    }
+
+    memcpy(dest, text.c_str(), bytes);
+    GlobalUnlock(data);
+
+    EmptyClipboard();
+    if (!SetClipboardData(CF_UNICODETEXT, data)) {
+        GlobalFree(data);
+        CloseClipboard();
+        return false;
+    }
+
+    CloseClipboard();
+    return true;
+}
+
+static bool GetUnicodeClipboardText(HWND owner, std::wstring* out_text) {
+    if (out_text) out_text->clear();
+    if (!out_text || !IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(owner)) {
+        return false;
+    }
+
+    HANDLE data = GetClipboardData(CF_UNICODETEXT);
+    if (!data) {
+        CloseClipboard();
+        return false;
+    }
+
+    const wchar_t* text = static_cast<const wchar_t*>(GlobalLock(data));
+    if (!text) {
+        CloseClipboard();
+        return false;
+    }
+
+    *out_text = text;
+    GlobalUnlock(data);
+    CloseClipboard();
+    return true;
+}
+
+static bool CanPasteUnicodeText(HWND owner) {
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(owner)) {
+        return false;
+    }
+    CloseClipboard();
+    return true;
+}
+
+static std::wstring NormalizeCustomEditPastedText(const std::wstring& text) {
+    std::wstring result;
+    result.reserve(text.length());
+
+    bool last_was_newline = false;
+    for (wchar_t ch : text) {
+        if (ch == L'\r' || ch == L'\n') {
+            if (!last_was_newline) {
+                result.push_back(L' ');
+            }
+            last_was_newline = true;
+        } else {
+            result.push_back(ch);
+            last_was_newline = false;
+        }
+    }
+
+    return result;
+}
+
+static void DeleteCustomEditSelection(TreeViewState* state) {
+    if (!state) return;
+
+    int start = 0;
+    int end = 0;
+    if (!GetCustomEditSelectionRange(state, &start, &end)) {
+        return;
+    }
+
+    state->edit_text.erase(start, end - start);
+    SetCustomEditCaret(state, start);
+}
+
+static bool CopyCustomEditText(TreeViewState* state, bool allow_all_when_no_selection) {
+    if (!state) return false;
+
+    std::wstring text = GetCustomEditCopyText(state, allow_all_when_no_selection);
+    if (text.empty()) {
+        return false;
+    }
+
+    return SetUnicodeClipboardText(state->hwnd, text);
+}
+
+static bool CutCustomEditText(TreeViewState* state) {
+    if (!state || !HasCustomEditSelection(state)) {
+        return false;
+    }
+
+    if (!CopyCustomEditText(state, false)) {
+        return false;
+    }
+
+    DeleteCustomEditSelection(state);
+    InvalidateRect(state->hwnd, NULL, FALSE);
+    return true;
+}
+
+static bool PasteCustomEditText(TreeViewState* state) {
+    if (!state) return false;
+
+    std::wstring text;
+    if (!GetUnicodeClipboardText(state->hwnd, &text)) {
+        return false;
+    }
+
+    text = NormalizeCustomEditPastedText(text);
+    if (text.empty()) {
+        return false;
+    }
+
+    DeleteCustomEditSelection(state);
+    const int insert_pos = ClampCustomEditCursorPos(state, state->edit_cursor_pos);
+    state->edit_text.insert(insert_pos, text);
+    SetCustomEditCaret(state, insert_pos + static_cast<int>(text.length()));
+    InvalidateRect(state->hwnd, NULL, FALSE);
+    return true;
+}
+
+static void SelectAllCustomEditText(TreeViewState* state) {
+    if (!state) return;
+
+    state->edit_selection_start = 0;
+    state->edit_selection_end = static_cast<int>(state->edit_text.length());
+    state->edit_cursor_pos = state->edit_selection_end;
+    state->edit_cursor_visible = true;
+    state->edit_cursor_blink_time = GetTickCount();
+    InvalidateRect(state->hwnd, NULL, FALSE);
+}
+
+static void ShowCustomEditContextMenu(TreeViewState* state, int x, int y) {
+    if (!state) return;
+
+    SetFocus(state->hwnd);
+    if (!HasCustomEditSelection(state)) {
+        SetCustomEditCaret(state, HitTestCustomEditCaretPos(state, x, y));
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+
+    const bool has_selection = HasCustomEditSelection(state);
+    const bool has_text = !state->edit_text.empty();
+    const bool can_paste = CanPasteUnicodeText(state->hwnd);
+
+    AppendMenuW(menu, MF_STRING | (has_selection ? MF_ENABLED : MF_GRAYED), TREE_EDIT_MENU_CUT, L"剪切\tCtrl+X");
+    AppendMenuW(menu, MF_STRING | ((has_selection || has_text) ? MF_ENABLED : MF_GRAYED), TREE_EDIT_MENU_COPY, L"复制\tCtrl+C");
+    AppendMenuW(menu, MF_STRING | (can_paste ? MF_ENABLED : MF_GRAYED), TREE_EDIT_MENU_PASTE, L"粘贴\tCtrl+V");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (has_text ? MF_ENABLED : MF_GRAYED), TREE_EDIT_MENU_SELECT_ALL, L"全选\tCtrl+A");
+
+    POINT pt = { x, y };
+    ClientToScreen(state->hwnd, &pt);
+
+    const UINT cmd = TrackPopupMenu(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+        pt.x,
+        pt.y,
+        0,
+        state->hwnd,
+        nullptr
+    );
+    DestroyMenu(menu);
+
+    switch (cmd) {
+        case TREE_EDIT_MENU_CUT:
+            CutCustomEditText(state);
+            break;
+        case TREE_EDIT_MENU_COPY:
+            CopyCustomEditText(state, true);
+            break;
+        case TREE_EDIT_MENU_PASTE:
+            PasteCustomEditText(state);
+            break;
+        case TREE_EDIT_MENU_SELECT_ALL:
+            SelectAllCustomEditText(state);
+            break;
+        default:
+            break;
+    }
+}
+
 /**
  * 进入编辑模式
  * 在双击时创建 Edit 控件覆盖节点文本，设置编辑框位置、大小、字体
@@ -707,8 +1053,8 @@ bool EnterEditMode(TreeViewState* state, TreeNode* node) {
     state->editing_node = node;
     state->edit_text = node->text;
     state->edit_cursor_pos = static_cast<int>(node->text.length());  // 光标在末尾
-    state->edit_selection_start = static_cast<int>(node->text.length());  // 不选中文本
-    state->edit_selection_end = static_cast<int>(node->text.length());    // 不选中文本
+    state->edit_selection_start = 0;
+    state->edit_selection_end = static_cast<int>(node->text.length());
     state->edit_rect = D2D1::RectF(edit_x, edit_y, edit_x + edit_width, edit_y + edit_height);
     state->edit_cursor_blink_time = GetTickCount();
     state->edit_cursor_visible = true;
@@ -731,24 +1077,38 @@ bool ExitEditMode(TreeViewState* state, bool save_changes) {
     }
     
     TreeNode* editing_node = state->editing_node;
+    const bool text_changed = (state->edit_text != editing_node->text);
     
     if (save_changes) {
+        std::string committed_text_utf8;
+        if (text_changed || state->on_node_edit_finished) {
+            committed_text_utf8 = Utf16ToUtf8(state->edit_text);
+        }
+
         // 检查文本是否有变化
-        if (state->edit_text != editing_node->text) {
+        if (text_changed) {
             // 更新节点文本
             editing_node->text = state->edit_text;
             
             // 触发文本改变回调
             if (state->on_node_text_changed) {
-                // 将 UTF-16 转换为 UTF-8 用于回调
-                std::string new_text_utf8 = Utf16ToUtf8(state->edit_text);
                 state->on_node_text_changed(
                     editing_node->id,
-                    reinterpret_cast<const unsigned char*>(new_text_utf8.c_str()),
-                    static_cast<int>(new_text_utf8.length()),
+                    reinterpret_cast<const unsigned char*>(committed_text_utf8.c_str()),
+                    static_cast<int>(committed_text_utf8.length()),
                     state->callback_context
                 );
             }
+        }
+
+        if (state->on_node_edit_finished) {
+            state->on_node_edit_finished(
+                editing_node->id,
+                reinterpret_cast<const unsigned char*>(committed_text_utf8.c_str()),
+                static_cast<int>(committed_text_utf8.length()),
+                text_changed,
+                state->callback_context
+            );
         }
     }
     
@@ -1095,6 +1455,7 @@ HWND __stdcall CreateTreeView(
     state->on_node_text_changed = nullptr;
     state->on_node_checked = nullptr;
     state->on_node_moved = nullptr;
+    state->on_node_edit_finished = nullptr;
     
     // 存入全局 map
     g_treeview_states[hwnd] = state;
@@ -2306,12 +2667,33 @@ bool __stdcall SetTreeViewCallback(
         case CALLBACK_NODE_MOVED:
             state->on_node_moved = reinterpret_cast<TreeViewMoveCallback>(callback_func);
             break;
+
+        case CALLBACK_NODE_EDIT_FINISHED:
+            state->on_node_edit_finished = reinterpret_cast<TreeViewEditFinishedCallback>(callback_func);
+            break;
             
         default:
             // 不支持的回调类型
             return false;
     }
     
+    return true;
+}
+
+bool __stdcall SetTreeViewEditFinishedCallback(
+    HWND hwnd,
+    TreeViewEditFinishedCallback callback_func
+) {
+    if (!hwnd) {
+        return false;
+    }
+
+    TreeViewState* state = GetTreeViewState(hwnd);
+    if (!state) {
+        return false;
+    }
+
+    state->on_node_edit_finished = callback_func;
     return true;
 }
 
@@ -2685,8 +3067,9 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 // 如果正在自定义编辑模式，检查是否点击在编辑框外部
                 if (state->custom_editing && state->editing_node) {
                     // 检查点击位置是否在编辑框内
-                    if (x < state->edit_rect.left || x > state->edit_rect.right ||
-                        y < state->edit_rect.top || y > state->edit_rect.bottom) {
+                    if (IsPointInCustomEditRect(state, x, y)) {
+                        HandleCustomEditMouseDown(state, x, y);
+                    } else {
                         // 点击在编辑框外部，保存并退出编辑模式
                         ExitEditMode(state, true);
                     }
@@ -2892,6 +3275,15 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 int y = GET_Y_LPARAM(lParam);
                 
                 // 调用 HitTestNode 查找右键点击的节点
+                if (state->custom_editing && state->editing_node) {
+                    if (IsPointInCustomEditRect(state, x, y)) {
+                        ShowCustomEditContextMenu(state, x, y);
+                    } else {
+                        ExitEditMode(state, true);
+                    }
+                    return 0;
+                }
+
                 TreeNode* right_clicked_node = HitTestNode(state, x, y);
                 
                 if (right_clicked_node) {
@@ -2902,6 +3294,13 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 }
             }
             return 0;
+
+        case WM_RBUTTONUP:
+        case WM_CONTEXTMENU:
+            if (state && state->custom_editing && state->editing_node) {
+                return 0;
+            }
+            return DefWindowProc(hwnd, msg, wParam, lParam);
             
         case WM_MOUSEMOVE:
             // 鼠标移动处理
@@ -3067,6 +3466,23 @@ LRESULT CALLBACK TreeViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             if (state) {
                 // 如果正在自定义编辑模式，处理编辑相关的按键
                 if (state->custom_editing && state->editing_node) {
+                    if (GetKeyState(VK_CONTROL) & 0x8000) {
+                        switch (wParam) {
+                            case 'A':
+                                SelectAllCustomEditText(state);
+                                return 0;
+                            case 'C':
+                                CopyCustomEditText(state, true);
+                                return 0;
+                            case 'X':
+                                CutCustomEditText(state);
+                                return 0;
+                            case 'V':
+                                PasteCustomEditText(state);
+                                return 0;
+                        }
+                    }
+
                     switch (wParam) {
                         case VK_RETURN:
                             // Enter 键：保存编辑并退出
@@ -3907,8 +4323,10 @@ void RenderCustomEditBox(TreeViewState* state) {
     if (!state->edit_text.empty() && state->text_format && state->dwrite_factory) {
         // 创建文本布局
         IDWriteTextLayout* text_layout = nullptr;
-        float max_width = state->edit_rect.right - state->edit_rect.left - 8 * state->dpi_scale;
-        float max_height = state->edit_rect.bottom - state->edit_rect.top;
+        const float text_padding = GetCustomEditTextPadding(state);
+        const D2D1_POINT_2F text_origin = GetCustomEditTextOrigin(state);
+        float max_width = (std::max)(1.0f, state->edit_rect.right - state->edit_rect.left - text_padding * 2.0f);
+        float max_height = (std::max)(1.0f, state->edit_rect.bottom - state->edit_rect.top);
         
         HRESULT hr = state->dwrite_factory->CreateTextLayout(
             state->edit_text.c_str(),
@@ -3937,10 +4355,10 @@ void RenderCustomEditBox(TreeViewState* state) {
                 // 绘制选中背景
                 brush->SetColor(D2D1::ColorF(0.26f, 0.59f, 0.98f, 0.3f)); // 半透明蓝色
                 D2D1_RECT_F selection_rect = D2D1::RectF(
-                    state->edit_rect.left + 4 * state->dpi_scale + x_start,
-                    state->edit_rect.top + y_start,
-                    state->edit_rect.left + 4 * state->dpi_scale + x_end,
-                    state->edit_rect.top + y_end + hit_metrics_end.height
+                    text_origin.x + x_start,
+                    text_origin.y + y_start,
+                    text_origin.x + x_end,
+                    text_origin.y + y_end + hit_metrics_end.height
                 );
                 rt->FillRectangle(selection_rect, brush);
             }
@@ -3948,10 +4366,7 @@ void RenderCustomEditBox(TreeViewState* state) {
             // 绘制文本
             brush->SetColor(D2D1::ColorF(0.2f, 0.2f, 0.2f)); // 深灰色文本
             rt->DrawTextLayout(
-                D2D1::Point2F(
-                    state->edit_rect.left + 4 * state->dpi_scale,
-                    state->edit_rect.top + (state->edit_rect.bottom - state->edit_rect.top - state->node_height * state->dpi_scale) / 2
-                ),
+                text_origin,
                 text_layout,
                 brush,
                 D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
@@ -3972,12 +4387,12 @@ void RenderCustomEditBox(TreeViewState* state) {
                 // 绘制光标线
                 brush->SetColor(D2D1::ColorF(0.2f, 0.2f, 0.2f)); // 深灰色光标
                 D2D1_POINT_2F p1 = D2D1::Point2F(
-                    state->edit_rect.left + 4 * state->dpi_scale + cursor_x,
-                    state->edit_rect.top + cursor_y + 2 * state->dpi_scale
+                    text_origin.x + cursor_x,
+                    text_origin.y + cursor_y + 2 * state->dpi_scale
                 );
                 D2D1_POINT_2F p2 = D2D1::Point2F(
-                    state->edit_rect.left + 4 * state->dpi_scale + cursor_x,
-                    state->edit_rect.top + cursor_y + hit_metrics.height - 2 * state->dpi_scale
+                    text_origin.x + cursor_x,
+                    text_origin.y + cursor_y + hit_metrics.height - 2 * state->dpi_scale
                 );
                 rt->DrawLine(p1, p2, brush, 1.5f * state->dpi_scale);
             }
@@ -3988,12 +4403,13 @@ void RenderCustomEditBox(TreeViewState* state) {
         // 没有文本时，只绘制光标
         if (state->edit_cursor_visible) {
             brush->SetColor(D2D1::ColorF(0.2f, 0.2f, 0.2f)); // 深灰色光标
+            const D2D1_POINT_2F text_origin = GetCustomEditTextOrigin(state);
             D2D1_POINT_2F p1 = D2D1::Point2F(
-                state->edit_rect.left + 4 * state->dpi_scale,
+                text_origin.x,
                 state->edit_rect.top + 2 * state->dpi_scale
             );
             D2D1_POINT_2F p2 = D2D1::Point2F(
-                state->edit_rect.left + 4 * state->dpi_scale,
+                text_origin.x,
                 state->edit_rect.bottom - 2 * state->dpi_scale
             );
             rt->DrawLine(p1, p2, brush, 1.5f * state->dpi_scale);

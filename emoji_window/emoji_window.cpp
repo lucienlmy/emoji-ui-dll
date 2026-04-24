@@ -99,6 +99,28 @@ static UINT GetSystemDpi() {
     return dpi ? dpi : 96;
 }
 
+static bool EnsureSharedRenderFactoriesInitialized() {
+    static bool com_initialized = false;
+    if (!com_initialized) {
+        CoInitialize(nullptr);
+        com_initialized = true;
+    }
+
+    if (!g_d2d_factory) {
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_d2d_factory);
+    }
+
+    if (!g_dwrite_factory) {
+        DWriteCreateFactory(
+            DWRITE_FACTORY_TYPE_SHARED,
+            __uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(&g_dwrite_factory)
+        );
+    }
+
+    return g_d2d_factory != nullptr && g_dwrite_factory != nullptr;
+}
+
 static UINT GetMonitorDpiValue(HMONITOR monitor) {
     if (!monitor) return GetSystemDpi();
 
@@ -427,6 +449,8 @@ static UINT32 BlendThemeSurface(UINT32 surface, UINT32 accent, float accent_rati
 static std::wstring NormalizeD2DEditText(const std::wstring& text, bool multiline);
 static void AppendEditBoxDebugLog(const char* format, ...);
 static void NotifyWindowResizeCallback(HWND hwnd, const char* source);
+static std::vector<EmojiButton>* GetButtonCollection(HWND hParent);
+static bool IsButtonStateHost(HWND hwnd);
 
 static int GetWindowHierarchyDepth(HWND hwnd) {
     int depth = 0;
@@ -2763,12 +2787,13 @@ void DrawButton(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, const EmojiB
         if (text_format) {
             text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            const float text_vpad = max(1.0f, metrics.text_size * 0.10f);
 
             D2D1_RECT_F text_rect = D2D1::RectF(
                 cursor_x,
-                (FLOAT)button.y + content_y_offset,
+                (FLOAT)button.y + content_y_offset - text_vpad,
                 cursor_x + max(text_width + 8.0f, (float)button.width - (cursor_x - button.x)),
-                (FLOAT)(button.y + button.height + content_y_offset)
+                (FLOAT)(button.y + button.height + content_y_offset + text_vpad)
             );
             rt->DrawText(
                 button.text.c_str(),
@@ -4139,6 +4164,24 @@ HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int titl
     return hwnd;
 }
 
+static std::vector<EmojiButton>* GetButtonCollection(HWND hParent) {
+    auto win_it = g_windows.find(hParent);
+    if (win_it != g_windows.end() && win_it->second) {
+        return &win_it->second->buttons;
+    }
+
+    auto panel_it = g_panels.find(hParent);
+    if (panel_it != g_panels.end() && panel_it->second) {
+        return &panel_it->second->buttons;
+    }
+
+    return nullptr;
+}
+
+static bool IsButtonStateHost(HWND hwnd) {
+    return GetButtonCollection(hwnd) != nullptr;
+}
+
 // Create emoji button (bytes version)
 int __stdcall create_emoji_button_bytes(
     HWND parent,
@@ -4179,17 +4222,15 @@ int __stdcall create_emoji_button_bytes(
 
     HWND state_host = actual_parent;
     POINT host_pt = { px_rect.left, px_rect.top };
-    while (state_host && g_windows.find(state_host) == g_windows.end()) {
+    while (state_host && !IsButtonStateHost(state_host)) {
         HWND next_parent = GetParent(state_host);
         if (!next_parent) break;
         MapWindowPoints(state_host, next_parent, &host_pt, 1);
         state_host = next_parent;
     }
 
-    auto it = g_windows.find(state_host);
-    if (it == g_windows.end()) return 0;
-
-    WindowState* state = it->second;
+    std::vector<EmojiButton>* buttons = GetButtonCollection(state_host);
+    if (!buttons) return 0;
 
     EmojiButton button;
     button.id = (int)InterlockedIncrement(&g_next_button_id);
@@ -4203,8 +4244,8 @@ int __stdcall create_emoji_button_bytes(
     button.is_hovered = false;
     button.is_pressed = false;
 
-    state->buttons.push_back(button);
-    EmojiButton& created = state->buttons.back();
+    buttons->push_back(button);
+    EmojiButton& created = buttons->back();
     EW_StoreButtonLogicalBounds(created.id, logical_x, logical_y, logical_width, logical_height);
     POINT child_pt = { button.x, button.y };
     if (actual_parent != state_host) {
@@ -4254,8 +4295,7 @@ void __stdcall set_button_click_callback(ButtonClickCallback callback) {
 static HWND ResolveButtonStateHostWindow(HWND hwnd) {
     HWND current = hwnd;
     while (current) {
-        auto it = g_windows.find(current);
-        if (it != g_windows.end()) {
+        if (IsButtonStateHost(current)) {
             return current;
         }
         current = GetParent(current);
@@ -4268,11 +4308,10 @@ void __stdcall EnableButton(HWND parent_hwnd, int button_id, BOOL enable) {
     HWND state_host = ResolveButtonStateHostWindow(parent_hwnd);
     if (!state_host) return;
 
-    auto it = g_windows.find(state_host);
-    if (it == g_windows.end()) return;
+    std::vector<EmojiButton>* buttons = GetButtonCollection(state_host);
+    if (!buttons) return;
 
-    WindowState* state = it->second;
-    for (auto& button : state->buttons) {
+    for (auto& button : *buttons) {
         if (button.id == button_id) {
             button.enabled = (enable != 0);
             if (button.hwnd && IsWindow(button.hwnd)) {
@@ -5977,8 +6016,8 @@ static bool GetCustomTabCloseButtonRect(TabControlState* state, int pageIdx, REC
     if (!state || !outRect || !state->closable) return false;
     RECT tabRect = {};
     if (!GetCustomTabItemRect(state, pageIdx, &tabRect)) return false;
-    int closeBtnSize = 20;
-    int closeBtnMargin = 6;
+    int closeBtnSize = 18;
+    int closeBtnMargin = 4;
     outRect->left = tabRect.right - closeBtnSize - closeBtnMargin;
     outRect->top = tabRect.top + ((tabRect.bottom - tabRect.top) - closeBtnSize) / 2;
     outRect->right = outRect->left + closeBtnSize;
@@ -6287,6 +6326,10 @@ static void DrawCustomTabControl(ID2D1DCRenderTarget* rt, TabControlState* state
     }
     fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    DWRITE_TRIMMING tabTextTrimming = {};
+    tabTextTrimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+    fmt->SetTrimming(&tabTextTrimming, nullptr);
 
     for (int i = 0; i < (int)state->pages.size(); ++i) {
         if (!state->pages[i].visible) continue;
@@ -6372,11 +6415,11 @@ static void DrawCustomTabControl(ID2D1DCRenderTarget* rt, TabControlState* state
         ID2D1SolidColorBrush* textBrush = nullptr;
         rt->CreateSolidColorBrush(textColor, &textBrush);
 
-        float textLeft = tabRect.left + (FLOAT)state->paddingH + 10.0f;
-        float textRight = tabRect.right - (FLOAT)state->paddingH - 10.0f;
+        float textLeft = tabRect.left + (FLOAT)state->paddingH + 6.0f;
+        float textRight = tabRect.right - (FLOAT)state->paddingH - 6.0f;
         RECT closeRectWin = {};
         if (state->closable && GetCustomTabCloseButtonRect(state, i, &closeRectWin)) {
-            textRight = min(textRight, (FLOAT)closeRectWin.left - 4.0f);
+            textRight = min(textRight, (FLOAT)closeRectWin.left - 2.0f);
         }
 
         if (!state->pages[i].iconData.empty()) {
@@ -6397,7 +6440,7 @@ static void DrawCustomTabControl(ID2D1DCRenderTarget* rt, TabControlState* state
                 fmt,
                 D2D1::RectF(textLeft, tabRect.top, textRight, tabRect.bottom),
                 textBrush,
-                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT
+                (D2D1_DRAW_TEXT_OPTIONS)(D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_CLIP)
             );
             textBrush->Release();
         }
@@ -8066,6 +8109,7 @@ __declspec(dllexport) HWND __stdcall CreateEditBox(
     BOOL vertical_center
 ) {
     // 杞崲鏂囨湰
+    EnsureSharedRenderFactoriesInitialized();
     std::wstring text = Utf8ToWide(text_bytes, text_len);
     std::wstring font_name = Utf8ToWide(font_name_bytes, font_name_len);
     
@@ -8214,6 +8258,13 @@ __declspec(dllexport) void __stdcall SetEditBoxText(
 
     if (D2DEditBoxState* d2d = FindD2DEditState(hEdit)) {
         d2d->text = NormalizeD2DEditText(Utf8ToWide(text_bytes, text_len), d2d->multiline);
+        std::string utf8_text = WindowWideToUtf8(d2d->text);
+        AppendEditBoxDebugLog(
+            "SetEditBoxText:D2D hwnd=%p raw_len=%d normalized_len=%d text=%s",
+            hEdit,
+            text_len,
+            (int)d2d->text.length(),
+            utf8_text.empty() ? "<empty>" : utf8_text.c_str());
         d2d->cursor_pos = (int)d2d->text.length();
         d2d->selection_start = -1;
         d2d->selection_end = -1;
@@ -8711,6 +8762,7 @@ __declspec(dllexport) HWND __stdcall CreateLabel(
     std::wstring font_name = Utf8ToWide(font_name_bytes, font_name_len);
     
     // 鍒涘缓鏍囩
+    EnsureSharedRenderFactoriesInitialized();
     RECT px_rect = EW_LogicalChildRectToPx(hParent, x, y, width, height, true);
     int id = g_next_control_id++;
     HWND hLabel = CreateWindowExW(
@@ -9035,7 +9087,7 @@ void DrawCheckBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, CheckBoxSt
     }
 
     // 澶嶉€夋灏哄锛圗lement UI鏍囧噯锛?
-    int box_size = EW_LogicalToPx(style == CHECKBOX_STYLE_FILL ? 16 : 14, dpi);
+    int box_size = EW_LogicalToPx(style == CHECKBOX_STYLE_FILL ? 18 : 18, dpi);
     int box_x = state->x;
     int box_y = state->y + (state->height - box_size) / 2;
 
@@ -10217,7 +10269,12 @@ void DrawPictureBox(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, PictureB
         D2D1_SIZE_F bitmapSize = state->bitmap->GetSize();
         D2D1_RECT_F destRect;
         
-        switch (state->scale_mode) {
+        ImageScaleMode scale_mode = state->scale_mode;
+        if (scale_mode < SCALE_NONE || scale_mode > SCALE_CENTER) {
+            scale_mode = SCALE_FIT;
+        }
+
+        switch (scale_mode) {
             case SCALE_NONE: {
                 // 涓嶇缉鏀撅紝宸︿笂瑙掑榻?
                 destRect = D2D1::RectF(0, 0, bitmapSize.width, bitmapSize.height);
@@ -10743,7 +10800,21 @@ void __stdcall SetPictureBoxScaleMode(HWND hPictureBox, int scale_mode) {
     
     PictureBoxState* state = it->second;
     ImageScaleMode old_mode = state->scale_mode;
-    state->scale_mode = (ImageScaleMode)scale_mode;
+    switch (scale_mode) {
+        case SCALE_NONE:
+            state->scale_mode = SCALE_NONE;
+            break;
+        case SCALE_STRETCH:
+            state->scale_mode = SCALE_STRETCH;
+            break;
+        case SCALE_CENTER:
+            state->scale_mode = SCALE_CENTER;
+            break;
+        case SCALE_FIT:
+        default:
+            state->scale_mode = SCALE_FIT;
+            break;
+    }
     if (state->events.on_value_changed && old_mode != state->scale_mode) {
         state->events.on_value_changed(hPictureBox);
     }
@@ -11486,7 +11557,7 @@ void DrawSlider(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, SliderState*
     float track_left = inset;
     float track_right = (FLOAT)state->width - inset;
     float track_h = state->height >= sx(28.0f) ? sx(6.0f) : sx(4.0f);
-    float track_y = (FLOAT)state->height - inset;
+    float track_y = (FLOAT)state->height * 0.5f;
     float edge_pad = sx(2.0f);
     track_y = (std::max)(track_h * 0.5f + edge_pad, (std::min)(track_y, (FLOAT)state->height - track_h * 0.5f - edge_pad));
     float ratio = 0.0f;
@@ -11927,9 +11998,10 @@ void DrawSwitch(ID2D1HwndRenderTarget* rt, IDWriteFactory* factory, SwitchState*
         if (text_format) {
             text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            const float text_vpad = sx(1.5f);
             D2D1_RECT_F text_rect = state->checked
-                ? D2D1::RectF(sx(8.0f), track_top, (FLOAT)state->width - radius * 1.65f, track_top + track_h)
-                : D2D1::RectF(radius * 1.65f, track_top, (FLOAT)state->width - sx(8.0f), track_top + track_h);
+                ? D2D1::RectF(sx(8.0f), track_top - text_vpad, (FLOAT)state->width - radius * 1.65f, track_top + track_h + text_vpad)
+                : D2D1::RectF(radius * 1.65f, track_top - text_vpad, (FLOAT)state->width - sx(8.0f), track_top + track_h + text_vpad);
             rt->DrawText(text.c_str(), (UINT32)text.length(), text_format, text_rect, text_brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
             text_format->Release();
         }
@@ -15846,6 +15918,19 @@ HWND __stdcall CreatePanel(
     return hwnd;
 }
 
+HWND __stdcall CreateHostSurface(
+    HWND hParent,
+    int x, int y, int width, int height,
+    UINT32 bg_color
+) {
+    return CreatePanel(hParent, x, y, width, height, bg_color);
+}
+
+void __stdcall DestroyHostSurface(HWND hHostSurface) {
+    if (!hHostSurface || !IsWindow(hHostSurface)) return;
+    DestroyWindow(hHostSurface);
+}
+
 static bool IsSelfOrDescendantWindow(HWND hwnd, HWND ancestor) {
     if (!hwnd || !ancestor) return false;
     HWND current = hwnd;
@@ -15893,6 +15978,13 @@ __declspec(dllexport) void __stdcall SetPanelBackgroundColor(
     InvalidateRect(hPanel, nullptr, TRUE);
 }
 
+void __stdcall SetHostSurfaceBackgroundColor(
+    HWND hHostSurface,
+    UINT32 bg_color
+) {
+    SetPanelBackgroundColor(hHostSurface, bg_color);
+}
+
 __declspec(dllexport) int __stdcall GetPanelBackgroundColor(
     HWND hPanel,
     UINT32* bg_color
@@ -15901,6 +15993,13 @@ __declspec(dllexport) int __stdcall GetPanelBackgroundColor(
     if (it == g_panels.end()) return -1;
     if (bg_color) *bg_color = it->second->bg_color;
     return 0;
+}
+
+int __stdcall GetHostSurfaceBackgroundColor(
+    HWND hHostSurface,
+    UINT32* bg_color
+) {
+    return GetPanelBackgroundColor(hHostSurface, bg_color);
 }
 
 __declspec(dllexport) void __stdcall SetPanelBounds(
@@ -15931,6 +16030,16 @@ __declspec(dllexport) void __stdcall SetPanelBounds(
     InvalidateRect(hPanel, nullptr, TRUE);
 }
 
+void __stdcall SetHostSurfaceBounds(
+    HWND hHostSurface,
+    int x,
+    int y,
+    int width,
+    int height
+) {
+    SetPanelBounds(hHostSurface, x, y, width, height);
+}
+
 __declspec(dllexport) int __stdcall GetPanelBounds(
     HWND hPanel,
     int* x,
@@ -15940,6 +16049,16 @@ __declspec(dllexport) int __stdcall GetPanelBounds(
 ) {
     if (g_panels.find(hPanel) == g_panels.end()) return -1;
     return EW_ReadLogicalBounds(hPanel, x, y, width, height, true);
+}
+
+int __stdcall GetHostSurfaceBounds(
+    HWND hHostSurface,
+    int* x,
+    int* y,
+    int* width,
+    int* height
+) {
+    return GetPanelBounds(hHostSurface, x, y, width, height);
 }
 
 // 娣诲姞瀛愭帶浠跺埌鍒嗙粍妗?
@@ -18281,6 +18400,32 @@ static void ReleaseD2DEditLayoutContext(D2DEditLayoutContext* ctx) {
     }
 }
 
+static void ApplySystemFontFallbackToD2DEditLayout(IDWriteFactory* factory, IDWriteTextLayout* layout) {
+    if (!factory || !layout) {
+        return;
+    }
+
+    IDWriteFactory2* factory2 = nullptr;
+    HRESULT factory_hr = factory->QueryInterface(__uuidof(IDWriteFactory2), reinterpret_cast<void**>(&factory2));
+    if (FAILED(factory_hr) || !factory2) {
+        return;
+    }
+
+    IDWriteFontFallback* fallback = nullptr;
+    HRESULT fallback_hr = factory2->GetSystemFontFallback(&fallback);
+    if (SUCCEEDED(fallback_hr) && fallback) {
+        IDWriteTextLayout2* layout2 = nullptr;
+        HRESULT layout_hr = layout->QueryInterface(__uuidof(IDWriteTextLayout2), reinterpret_cast<void**>(&layout2));
+        if (SUCCEEDED(layout_hr) && layout2) {
+            layout2->SetFontFallback(fallback);
+            layout2->Release();
+        }
+        fallback->Release();
+    }
+
+    factory2->Release();
+}
+
 static float GetD2DEditContentHeight(IDWriteTextLayout* layout, const D2DEditBoxState* state) {
     DWRITE_TEXT_METRICS metrics = {};
     if (layout && SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.height > 0.0f) {
@@ -18298,17 +18443,46 @@ static bool BuildD2DEditLayoutContext(const D2DEditBoxState* state, D2DEditLayou
     ctx->visible_height = max(1.0f, (float)state->height - D2D_EDIT_TEXT_PADDING_TOP - D2D_EDIT_TEXT_PADDING_BOTTOM);
     UINT dpi = EW_GetDpiForReference(state->hwnd, state->parent);
 
-    HRESULT hr = state->dwrite_factory->CreateTextFormat(
-        state->font.font_name.c_str(),
-        nullptr,
-        state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-        state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        EW_LogicalToPxF((float)(state->font.font_size > 0 ? state->font.font_size : 14), dpi),
-        L"zh-CN",
-        &ctx->text_format
-    );
+    const wchar_t* primary_font = state->font.font_name.empty() ? L"Microsoft YaHei UI" : state->font.font_name.c_str();
+    const wchar_t* fallback_fonts[] = {
+        primary_font,
+        L"Microsoft YaHei UI",
+        L"Segoe UI",
+        L"Segoe UI Emoji"
+    };
+
+    HRESULT hr = E_FAIL;
+    const wchar_t* selected_font = nullptr;
+    for (const wchar_t* candidate_font : fallback_fonts) {
+        if (!candidate_font || !candidate_font[0]) {
+            continue;
+        }
+
+        ctx->text_format = nullptr;
+        hr = state->dwrite_factory->CreateTextFormat(
+            candidate_font,
+            nullptr,
+            state->font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            state->font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            EW_LogicalToPxF((float)(state->font.font_size > 0 ? state->font.font_size : 14), dpi),
+            L"zh-CN",
+            &ctx->text_format
+        );
+
+        if (SUCCEEDED(hr) && ctx->text_format) {
+            selected_font = candidate_font;
+            break;
+        }
+    }
+
     if (FAILED(hr) || !ctx->text_format) {
+        AppendEditBoxDebugLog(
+            "BuildD2DLayout:CreateTextFormatFailed hwnd=%p hr=0x%08X font_size=%d text_len=%d",
+            state->hwnd,
+            (unsigned int)hr,
+            state->font.font_size,
+            (int)ctx->display_text.length());
         ReleaseD2DEditLayoutContext(ctx);
         return false;
     }
@@ -18331,8 +18505,17 @@ static bool BuildD2DEditLayoutContext(const D2DEditBoxState* state, D2DEditLayou
             &ctx->layout
         );
         if (FAILED(layout_hr) || !ctx->layout) {
+            AppendEditBoxDebugLog(
+                "BuildD2DLayout:CreateTextLayoutFailed hwnd=%p hr=0x%08X layout_w=%.2f max_h=%.2f text_len=%d font=%ls",
+                state->hwnd,
+                (unsigned int)layout_hr,
+                layout_width,
+                max_height,
+                (int)ctx->display_text.length(),
+                selected_font ? selected_font : L"<null>");
             return false;
         }
+        ApplySystemFontFallbackToD2DEditLayout(state->dwrite_factory, ctx->layout);
         if (state->font.underline && !ctx->display_text.empty()) {
             DWRITE_TEXT_RANGE range = { 0, (UINT32)ctx->display_text.length() };
             ctx->layout->SetUnderline(TRUE, range);
@@ -18390,6 +18573,18 @@ static bool BuildD2DEditLayoutContext(const D2DEditBoxState* state, D2DEditLayou
     }
 
     ctx->text_clip = D2D1::RectF(1.0f, 1.0f, max(1.0f, clip_right), (float)state->height - 1.0f);
+    AppendEditBoxDebugLog(
+        "BuildD2DLayout:ok hwnd=%p font=%ls text_len=%d layout_w=%.2f content_h=%.2f origin_y=%.2f clip=(%.2f,%.2f,%.2f,%.2f)",
+        state->hwnd,
+        selected_font ? selected_font : L"<null>",
+        (int)ctx->display_text.length(),
+        ctx->layout_width,
+        ctx->content_height,
+        ctx->text_origin_y,
+        ctx->text_clip.left,
+        ctx->text_clip.top,
+        ctx->text_clip.right,
+        ctx->text_clip.bottom);
     return true;
 }
 
@@ -18469,7 +18664,15 @@ static void EnsureD2DEditCaretVisible(D2DEditBoxState* state) {
 
 // 缁樺埗D2D缂栬緫妗?
 void DrawD2DEditBox(D2DEditBoxState* state) {
-    if (!state || !state->render_target || !state->dwrite_factory) return;
+    if (!state || !state->render_target || !state->dwrite_factory) {
+        AppendEditBoxDebugLog(
+            "DrawD2DEditBox:skip state=%p hwnd=%p render_target=%p dwrite=%p",
+            state,
+            state ? state->hwnd : nullptr,
+            state ? state->render_target : nullptr,
+            state ? state->dwrite_factory : nullptr);
+        return;
+    }
     
     ID2D1HwndRenderTarget* rt = state->render_target;
     UINT32 resolved_bg = ResolveThemeColor(state->bg_color);
@@ -18551,6 +18754,15 @@ void DrawD2DEditBox(D2DEditBoxState* state) {
         // 4. 缁樺埗鏂囨湰锛堟敮鎸佸僵鑹瞖moji锛?
         ID2D1SolidColorBrush* text_brush = nullptr;
         rt->CreateSolidColorBrush(ColorFromUInt32(resolved_fg), &text_brush);
+        AppendEditBoxDebugLog(
+            "DrawD2DEditBox:draw_text hwnd=%p fg=0x%08X bg=0x%08X scroll=(%d,%d) origin=(%.2f,%.2f)",
+            state->hwnd,
+            resolved_fg,
+            resolved_bg,
+            state->scroll_offset_x,
+            state->scroll_offset_y,
+            D2D_EDIT_TEXT_PADDING_LEFT - state->scroll_offset_x,
+            ctx.text_origin_y - state->scroll_offset_y);
         rt->DrawTextLayout(
             D2D1::Point2F(
                 D2D_EDIT_TEXT_PADDING_LEFT - state->scroll_offset_x,
@@ -18640,9 +18852,12 @@ void DrawD2DEditBox(D2DEditBoxState* state) {
         }
 
         ReleaseD2DEditLayoutContext(&ctx);
+    } else {
+        AppendEditBoxDebugLog("DrawD2DEditBox:no_layout hwnd=%p", state->hwnd);
     }
-    
-    rt->EndDraw();
+
+    HRESULT end_hr = rt->EndDraw();
+    AppendEditBoxDebugLog("DrawD2DEditBox:EndDraw hwnd=%p hr=0x%08X", state->hwnd, (unsigned int)end_hr);
 }
 
 // 鎻掑叆鏂囨湰
@@ -19205,6 +19420,15 @@ __declspec(dllexport) HWND __stdcall CreateD2DColorEmojiEditBox(
     bool has_border,
     bool vertical_center
 ) {
+    if (!EnsureSharedRenderFactoriesInitialized()) {
+        AppendEditBoxDebugLog(
+            "CreateD2DEditBox:init_factories_failed parent=%p d2d=%p dwrite=%p",
+            hParent,
+            g_d2d_factory,
+            g_dwrite_factory);
+        return NULL;
+    }
+
     static bool class_registered = false;
     if (!class_registered) {
         WNDCLASSEXW wc = { 0 };
@@ -19251,6 +19475,16 @@ __declspec(dllexport) HWND __stdcall CreateD2DColorEmojiEditBox(
     state->font.bold = bold;
     state->font.italic = italic;
     state->font.underline = underline;
+
+    std::string initial_utf8_text = WindowWideToUtf8(state->text);
+    AppendEditBoxDebugLog(
+        "CreateD2DEditBox parent=%p logical=%dx%d text_raw_len=%d text_chars=%d text=%s",
+        hParent,
+        width,
+        height,
+        text_len,
+        (int)state->text.length(),
+        initial_utf8_text.empty() ? "<empty>" : initial_utf8_text.c_str());
     
     if (alignment == 0) state->alignment = ALIGN_LEFT;
     else if (alignment == 1) state->alignment = ALIGN_CENTER;
@@ -19306,12 +19540,26 @@ __declspec(dllexport) HWND __stdcall CreateD2DColorEmojiEditBox(
         );
         
         if (FAILED(hr)) {
+            AppendEditBoxDebugLog(
+                "CreateD2DEditBox:CreateHwndRenderTargetFailed hwnd=%p hr=0x%08X size=%ldx%ld",
+                hwnd,
+                (unsigned int)hr,
+                rc.right - rc.left,
+                rc.bottom - rc.top);
             DestroyWindow(hwnd);
             delete state;
             return NULL;
         }
         state->render_target->SetDpi(96.0f, 96.0f);
     }
+
+    AppendEditBoxDebugLog(
+        "CreateD2DEditBox:ready hwnd=%p render_target=%p dwrite=%p size=%dx%d",
+        hwnd,
+        state->render_target,
+        state->dwrite_factory,
+        state->width,
+        state->height);
     
     g_d2d_editboxes[hwnd] = state;
     EW_StoreLogicalBounds(hwnd, x, y, width, height, true);
@@ -23440,11 +23688,29 @@ __declspec(dllexport) void __stdcall SetValueChangedCallback(HWND hControl, Valu
 
 // 杈呭姪鍑芥暟锛氬湪WindowState涓煡鎵綞moji鎸夐挳
 static EmojiButton* FindEmojiButton(HWND hParent, int button_id) {
-    auto win_it = g_windows.find(hParent);
-    if (win_it == g_windows.end()) return nullptr;
-    for (auto& btn : win_it->second->buttons) {
+    std::vector<EmojiButton>* buttons = GetButtonCollection(hParent);
+    if (!buttons) return nullptr;
+    for (auto& btn : *buttons) {
         if (btn.id == button_id) return &btn;
     }
+    return nullptr;
+}
+
+EmojiButton* EW_FindButtonById(int button_id, HWND* out_state_host) {
+    for (auto& pair : g_windows) {
+        if (EmojiButton* button = FindEmojiButton(pair.first, button_id)) {
+            if (out_state_host) *out_state_host = pair.first;
+            return button;
+        }
+    }
+
+    for (auto& pair : g_panels) {
+        if (EmojiButton* button = FindEmojiButton(pair.first, button_id)) {
+            if (out_state_host) *out_state_host = pair.first;
+            return button;
+        }
+    }
+
     return nullptr;
 }
 
@@ -23462,11 +23728,9 @@ static HWND ResolveTooltipTargetWindow(HWND target) {
     const int button_id = (int)(INT_PTR)target;
     if (button_id <= 0) return nullptr;
 
-    for (auto& pair : g_windows) {
-        if (EmojiButton* button = FindEmojiButton(pair.first, button_id)) {
-            if (button->hwnd && IsWindow(button->hwnd)) {
-                return button->hwnd;
-            }
+    if (EmojiButton* button = EW_FindButtonById(button_id)) {
+        if (button->hwnd && IsWindow(button->hwnd)) {
+            return button->hwnd;
         }
     }
     return nullptr;
@@ -23680,30 +23944,36 @@ static LRESULT CALLBACK EmojiButtonWindowProc(HWND hwnd, UINT msg, WPARAM wparam
 
     case WM_PAINT: {
         PAINTSTRUCT ps;
-        BeginPaint(hwnd, &ps);
+        HDC hdc = BeginPaint(hwnd, &ps);
         RECT rc = {};
         GetClientRect(hwnd, &rc);
         int w = max(1, rc.right - rc.left);
         int h = max(1, rc.bottom - rc.top);
-        ID2D1HwndRenderTarget* rt = nullptr;
-        HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(
-            D2D1::RenderTargetProperties(),
-            D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU((UINT)w, (UINT)h)),
-            &rt
-        );
-        if (SUCCEEDED(hr) && rt) {
-            // Button geometry is already stored in client pixels. Keep the render target
-            // at 96 DPI so we don't scale the same coordinates a second time.
-            rt->SetDpi(96.0f, 96.0f);
-            rt->BeginDraw();
-            rt->Clear(ColorFromUInt32(GetButtonHostBackgroundColor(logical_parent)));
-            EmojiButton local_button = *button;
-            local_button.x = 0;
-            local_button.y = 0;
-            DrawButton(rt, g_dwrite_factory, local_button);
-            rt->EndDraw();
-            rt->Release();
+        bool drew = false;
+
+        if (EnsureSharedRenderFactoriesInitialized()) {
+            ID2D1HwndRenderTarget* rt = nullptr;
+            HRESULT hr = g_d2d_factory->CreateHwndRenderTarget(
+                D2D1::RenderTargetProperties(),
+                D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU((UINT)w, (UINT)h)),
+                &rt
+            );
+            if (SUCCEEDED(hr) && rt) {
+                // Button geometry is already stored in client pixels. Keep the render target
+                // at 96 DPI so we don't scale the same coordinates a second time.
+                rt->SetDpi(96.0f, 96.0f);
+                rt->BeginDraw();
+                rt->Clear(ColorFromUInt32(GetButtonHostBackgroundColor(logical_parent)));
+                EmojiButton local_button = *button;
+                local_button.x = 0;
+                local_button.y = 0;
+                DrawButton(rt, g_dwrite_factory, local_button);
+                rt->EndDraw();
+                rt->Release();
+                drew = true;
+            }
         }
+
         EndPaint(hwnd, &ps);
         return 0;
     }

@@ -59,8 +59,8 @@ Desktop.ini
 # Kiro specs
 .kiro/
 
-# # 易语言代码
-# 易语言代码/
+# # 鏄撹瑷€浠ｇ爜
+# 鏄撹瑷€浠ｇ爜/
 
 # Documentation and project files (root directory only)
 /CLAUDE.md
@@ -71,8 +71,8 @@ Desktop.ini
 /compile_*
 
 # Downloads folder (not project files)
-examples/Csharp/下载/
-examples/Csharp/Demo截图.png
+examples/Csharp/涓嬭浇/
+examples/Csharp/Demo鎴浘.png
 
 # Python cache
 examples/Python/__pycache__/
@@ -106,4 +106,7 @@ designer/docs/
 *.mojibake_backup
 
 # Local doc (not tracked)
-examples/易语言代码/易语言代码文档/易语言语法规则.md
+examples/鏄撹瑷€浠ｇ爜/鏄撹瑷€浠ｇ爜鏂囨。/鏄撹瑷€璇硶瑙勫垯.md
+
+# Local private planning docs
+/local_design_plans/

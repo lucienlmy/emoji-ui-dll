@@ -20,18 +20,7 @@ static std::string WideToUtf8(const std::wstring& wide) {
 }
 
 static EmojiButton* FindButton(int button_id, HWND* out_parent = nullptr) {
-    extern std::map<HWND, WindowState*> g_windows;
-
-    for (auto& win_pair : g_windows) {
-        WindowState* state = win_pair.second;
-        for (auto& button : state->buttons) {
-            if (button.id == button_id) {
-                if (out_parent) *out_parent = win_pair.first;
-                return &button;
-            }
-        }
-    }
-    return nullptr;
+    return EW_FindButtonById(button_id, out_parent);
 }
 
 extern std::map<int, UINT32> g_button_text_colors;

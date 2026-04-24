@@ -876,9 +876,13 @@
 .DLL命令 取树形框滚动位置, 整数型, "emoji_window.dll", "GetTreeViewScrollPos", , , 获取滚动位置像素
     .参数 树形框句柄, 整数型
 
-.DLL命令 设置树形框回调, 逻辑型, "emoji_window.dll", "SetTreeViewCallback", , , 树形框回调，类型1选中2展开3折叠4双击5右键6文本改7勾选8移动
+.DLL命令 设置树形框回调, 逻辑型, "emoji_window.dll", "SetTreeViewCallback", , , 树形框回调，类型1选中2展开3折叠4双击5右键6文本改7勾选8移动9编辑完成
     .参数 树形框句柄, 整数型
     .参数 回调类型, 整数型
+    .参数 回调函数, 子程序指针
+
+.DLL命令 设置树形框编辑完成回调, 逻辑型, "emoji_window.dll", "SetTreeViewEditFinishedCallback", , , 设置节点编辑提交完成回调；回调参数为 节点ID, UTF-8文本指针, 文本长度, 是否改变, 上下文指针
+    .参数 树形框句柄, 整数型
     .参数 回调函数, 子程序指针
 
 .DLL命令 启用树形框拖放, 逻辑型, "emoji_window.dll", "EnableTreeViewDragDrop", , , 启用拖放移动节点
@@ -2397,6 +2401,39 @@
     .参数 高度, 整数型, , 高度
     .参数 背景色, 整数型, , ARGB颜色
 
+.DLL命令 创建宿主面板, 整数型, "emoji_window.dll", "CreateHostSurface", , , 创建 WinForms / 外部宿主专用的原生承载面板
+    .参数 父窗口句柄, 整数型, , 父窗口句柄
+    .参数 X坐标, 整数型, , X坐标
+    .参数 Y坐标, 整数型, , Y坐标
+    .参数 宽度, 整数型, , 宽度
+    .参数 高度, 整数型, , 高度
+    .参数 背景色, 整数型, , ARGB颜色
+
+.DLL命令 销毁宿主面板, , "emoji_window.dll", "DestroyHostSurface", , , 销毁宿主面板及其原生子控件
+    .参数 宿主面板句柄, 整数型
+
+.DLL命令 设置宿主面板背景色, , "emoji_window.dll", "SetHostSurfaceBackgroundColor", , , 设置宿主面板背景色
+    .参数 宿主面板句柄, 整数型
+    .参数 背景色, 整数型, , ARGB颜色
+
+.DLL命令 取宿主面板背景色, 整数型, "emoji_window.dll", "GetHostSurfaceBackgroundColor", , , 获取宿主面板背景色；返回0=成功
+    .参数 宿主面板句柄, 整数型
+    .参数 背景色指针, 整数型
+
+.DLL命令 设置宿主面板位置, , "emoji_window.dll", "SetHostSurfaceBounds", , , 设置宿主面板位置和大小；坐标与尺寸为96DPI逻辑单位
+    .参数 宿主面板句柄, 整数型
+    .参数 X坐标, 整数型
+    .参数 Y坐标, 整数型
+    .参数 宽度, 整数型
+    .参数 高度, 整数型
+
+.DLL命令 取宿主面板位置, 整数型, "emoji_window.dll", "GetHostSurfaceBounds", , , 读取宿主面板位置和大小；返回96DPI逻辑单位，0=成功
+    .参数 宿主面板句柄, 整数型
+    .参数 X坐标指针, 整数型
+    .参数 Y坐标指针, 整数型
+    .参数 宽度指针, 整数型
+    .参数 高度指针, 整数型
+
 .DLL命令 设置面板位置, , "emoji_window.dll", "SetPanelBounds", , , 设置面板位置和大小；坐标与尺寸为96DPI逻辑单位
     .参数 面板句柄, 整数型
     .参数 X坐标, 整数型
@@ -2717,3 +2754,31 @@
 .DLL命令 显示编辑框, , "emoji_window.dll", "ShowEditBox", , , 显示编辑框
     .参数 编辑框句柄, 整数型
     .参数 显示, 逻辑型
+
+.DLL命令 设置按钮样式, , "emoji_window.dll", "SetButtonStyle", , 0 = BUTTON_STYLE_SOLID，1 = BUTTON_STYLE_PLAIN，2 = BUTTON_STYLE_TEXT，3 = BUTTON_STYLE_LINK
+    .参数 按钮ID, 整数型
+    .参数 样式, 整数型
+'
+.DLL命令 设置按钮尺寸, , "emoji_window.dll", "SetButtonSize", , 0 = BUTTON_SIZE_LARGE 表示大号按钮。内部会用更大的文字、emoji、loading 圈和更大的圆角。1 = BUTTON_SIZE_DEFAULT 表示默认尺寸。常规按钮大小，不传时默认就是这个。2 = BUTTON_SIZE_SMALL 表示小号按钮。文字、emoji、loading 圈、圆角都会更小。
+    .参数 按钮ID, 整数型
+    .参数 尺寸, 整数型
+'
+.DLL命令 设置按钮圆角, , "emoji_window.dll", "SetButtonRound", , , , , 公开
+    .参数 按钮ID, 整数型
+    .参数 圆角, 整数型
+'
+.DLL命令 设置按钮边框色, , "emoji_window.dll", "SetButtonBorderColor", , , , , 公开
+    .参数 按钮ID, 整数型
+    .参数 边框色, 整数型
+'
+.DLL命令 设置按钮文字色, , "emoji_window.dll", "SetButtonTextColor", , , , , 公开
+    .参数 按钮ID, 整数型
+    .参数 文字色, 整数型
+
+'
+.DLL命令 设置列表框颜色, , "emoji_window.dll", "SetListBoxColors", , , 设置列表框前景色、背景色、选中色和悬停色
+    .参数 列表框句柄, 整数型
+    .参数 前景色, 整数型, , ARGB颜色
+    .参数 背景色, 整数型, , ARGB颜色
+    .参数 选中色, 整数型, , ARGB颜色
+    .参数 悬停色, 整数型, , ARGB颜色
