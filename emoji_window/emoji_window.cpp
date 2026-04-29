@@ -3293,6 +3293,29 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         }
         break;
     }
+
+    case WM_ERASEBKGND: {
+        // 在resize期间填充背景色以避免透明区域
+        if (state && state->in_live_resize) {
+            HDC hdc = (HDC)wparam;
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+
+            // 使用窗口背景色填充
+            UINT32 win_bg = ResolveThemeColor((state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background());
+            COLORREF bg_color = RGB(
+                (win_bg >> 16) & 0xFF,
+                (win_bg >> 8) & 0xFF,
+                win_bg & 0xFF
+            );
+            HBRUSH brush = CreateSolidBrush(bg_color);
+            FillRect(hdc, &rc, brush);
+            DeleteObject(brush);
+            return 1;
+        }
+        return 1;
+    }
+
     case WM_PAINT: {
         if (state && state->render_target) {
             PAINTSTRUCT ps;
@@ -3346,7 +3369,26 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 }
             }
 
-            state->render_target->EndDraw();
+            HRESULT hr = state->render_target->EndDraw();
+            // 如果Direct2D需要重新创建render target（例如在快速resize时），立即重绘
+            if (hr == D2DERR_RECREATE_TARGET) {
+                // Render target丢失，需要在下次WM_SIZE时重新创建
+                // 这里先用GDI填充背景避免透明
+                HDC hdc = GetDC(hwnd);
+                if (hdc) {
+                    RECT rc;
+                    GetClientRect(hwnd, &rc);
+                    COLORREF bg_color = RGB(
+                        ((win_bg >> 16) & 0xFF),
+                        ((win_bg >> 8) & 0xFF),
+                        (win_bg & 0xFF)
+                    );
+                    HBRUSH brush = CreateSolidBrush(bg_color);
+                    FillRect(hdc, &rc, brush);
+                    DeleteObject(brush);
+                    ReleaseDC(hwnd, hdc);
+                }
+            }
             EndPaint(hwnd, &ps);
         }
         return 0;
@@ -3699,6 +3741,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             if (width == 0 || height == 0) {
                 return 0;
             }
+
+            // 在resize期间，先用GDI填充背景，再resize render target
+            if (state->in_live_resize) {
+                HDC hdc = GetDC(hwnd);
+                if (hdc) {
+                    RECT rc = { 0, 0, (LONG)width, (LONG)height };
+                    UINT32 win_bg = ResolveThemeColor((state->client_bg_color != 0) ? state->client_bg_color : ThemeColor_Background());
+                    COLORREF bg_color = RGB(
+                        (win_bg >> 16) & 0xFF,
+                        (win_bg >> 8) & 0xFF,
+                        win_bg & 0xFF
+                    );
+                    HBRUSH brush = CreateSolidBrush(bg_color);
+                    FillRect(hdc, &rc, brush);
+                    DeleteObject(brush);
+                    ReleaseDC(hwnd, hdc);
+                }
+            }
+
             state->render_target->Resize(D2D1::SizeU(width, height));
             LayoutTitleBarButtons(state);
             DWMNCRENDERINGPOLICY nc_policy = DWMNCRP_DISABLED;
@@ -3718,6 +3779,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
 
             NotifyWindowResizeCallback(hwnd, "WM_SIZE");
+
+            // 在resize期间强制同步重绘以避免透明背景
+            if (state->in_live_resize) {
+                RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOCHILDREN);
+            } else {
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+
             if (!state->in_live_resize) {
                 PostMessageW(hwnd, WM_EW_REFRESH_PRIORITY_CHILDREN, 0, 0);
             }
@@ -3772,6 +3841,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_SIZING:
         AppendEditBoxDebugLog("WindowProc:WM_SIZING hwnd=%p edge=%u", hwnd, (unsigned)wparam);
         NotifyWindowResizeCallback(hwnd, "WM_SIZING");
+        // 在拖动过程中强制同步重绘，避免透明背景
+        if (state && state->in_live_resize) {
+            RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOCHILDREN);
+        }
         return TRUE;
 
     case WM_WINDOWPOSCHANGED:
@@ -3786,6 +3859,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 pos ? pos->cy : 0,
                 state->in_live_resize ? 1 : 0);
             NotifyWindowResizeCallback(hwnd, "WM_WINDOWPOSCHANGED");
+            // 在拖动过程中强制同步重绘，避免透明背景
+            RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOCHILDREN);
         }
         else if (state && !IsIconic(hwnd) && !IsWindowMaximizedCustom(state)) {
             WINDOWPOS* pos = reinterpret_cast<WINDOWPOS*>(lparam);
@@ -3909,11 +3984,12 @@ HWND __stdcall create_window(const char* title, int x, int y, int width, int hei
 
     if (!class_registered) {
         WNDCLASSW wc = {};
+        wc.style = CS_HREDRAW | CS_VREDRAW;  // 添加resize重绘样式
         wc.lpfnWndProc = WindowProc;
         wc.hInstance = GetModuleHandle(nullptr);
         wc.lpszClassName = class_name;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.hbrBackground = nullptr;  // 使用Direct2D绘制，不需要系统背景刷
         RegisterClassW(&wc);
         class_registered = true;
     }
@@ -4075,11 +4151,12 @@ HWND __stdcall create_window_bytes_ex(const unsigned char* title_bytes, int titl
 
     if (!class_registered) {
         WNDCLASSW wc = {};
+        wc.style = CS_HREDRAW | CS_VREDRAW;  // 添加resize重绘样式
         wc.lpfnWndProc = WindowProc;
         wc.hInstance = GetModuleHandle(nullptr);
         wc.lpszClassName = class_name;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.hbrBackground = nullptr;  // 使用Direct2D绘制，不需要系统背景刷
         RegisterClassW(&wc);
         class_registered = true;
     }
