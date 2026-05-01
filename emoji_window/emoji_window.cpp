@@ -16175,6 +16175,43 @@ int __stdcall GetHotKeyColors(
 
 // ========== 分组框功能实现 ==========
 
+static void KeepGroupBoxBehindSiblings(HWND hGroupBox) {
+    if (!hGroupBox || !IsWindow(hGroupBox)) return;
+    SetWindowPos(
+        hGroupBox,
+        HWND_BOTTOM,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+}
+
+static bool IsGroupBoxCoveredByInteractiveSibling(GroupBoxState* state, POINT screen_pt) {
+    if (!state || !state->hwnd || !state->parent || !IsWindow(state->parent)) {
+        return false;
+    }
+
+    for (HWND child = GetWindow(state->parent, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+        if (!child || child == state->hwnd || !IsWindow(child) || GetParent(child) != state->parent) {
+            continue;
+        }
+        if (!IsWindowVisible(child)) {
+            continue;
+        }
+        if (g_groupboxes.find(child) != g_groupboxes.end()) {
+            continue;
+        }
+
+        RECT child_rect = {};
+        if (GetWindowRect(child, &child_rect) && PtInRect(&child_rect, screen_pt)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void ApplyGroupBoxWindowRegion(GroupBoxState* state) {
     if (!state || !state->hwnd || state->width <= 0 || state->height <= 0) return;
 
@@ -16355,6 +16392,7 @@ HWND __stdcall CreateGroupBox(
     SetWindowSubclass(hwnd, GroupBoxProc, 0, 0);
     
     ApplyGroupBoxWindowRegion(state);
+    KeepGroupBoxBehindSiblings(hwnd);
     
     // 立即触发重绘，确保分组框显示
     InvalidateRect(hwnd, nullptr, TRUE);
@@ -16743,6 +16781,9 @@ static void ApplyShowGroupBox(HWND hGroupBox, BOOL show) {
 
     WriteLog("ApplyShowGroupBox: groupbox ShowWindow hGroupBox=%p, cmd=%d", hGroupBox, show ? SW_SHOW : SW_HIDE);
     ShowWindow(hGroupBox, show ? SW_SHOW : SW_HIDE);
+    if (show) {
+        KeepGroupBoxBehindSiblings(hGroupBox);
+    }
     WriteLog("ApplyShowGroupBox: InvalidateRect hGroupBox=%p", hGroupBox);
     InvalidateRect(hGroupBox, nullptr, FALSE);
     WriteLog("ApplyShowGroupBox: end hGroupBox=%p, visible_now=%d", hGroupBox, state->visible ? 1 : 0);
@@ -16797,8 +16838,9 @@ void __stdcall SetGroupBoxBounds(
     state->height = EW_RectHeightPx(px_rect);
     
     EW_StoreLogicalBounds(hGroupBox, x, y, width, height, true);
-    SetWindowPos(hGroupBox, nullptr, px_rect.left, px_rect.top, state->width, state->height, SWP_NOZORDER);
+    SetWindowPos(hGroupBox, HWND_BOTTOM, px_rect.left, px_rect.top, state->width, state->height, SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     ApplyGroupBoxWindowRegion(state);
+    KeepGroupBoxBehindSiblings(hGroupBox);
     
     // 同步移动所有子控件
     for (HWND hChild : state->children) {
@@ -16958,6 +17000,7 @@ __declspec(dllexport) void __stdcall SetGroupBoxStyle(
     if (it == g_groupboxes.end()) return;
     g_groupbox_styles[hGroupBox] = style;
     ApplyGroupBoxWindowRegion(it->second);
+    KeepGroupBoxBehindSiblings(hGroupBox);
     InvalidateRect(hGroupBox, nullptr, FALSE);
 }
 
@@ -18200,14 +18243,9 @@ LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                 return HTCLIENT;
             }
 
-            HWND parent = state->parent;
-            if (parent && IsWindow(parent)) {
-                POINT parent_pt = pt;
-                MapWindowPoints(hwnd, parent, &parent_pt, 1);
-                HWND hit = ChildWindowFromPointEx(parent, parent_pt, CWP_SKIPDISABLED | CWP_SKIPINVISIBLE);
-                if (hit && hit != hwnd) {
-                    return HTTRANSPARENT;
-                }
+            POINT screen_pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            if (IsGroupBoxCoveredByInteractiveSibling(state, screen_pt)) {
+                return HTTRANSPARENT;
             }
 
             return HTCLIENT;
@@ -18219,6 +18257,9 @@ LRESULT CALLBACK GroupBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                 wparam ? 1 : 0,
                 (int)lparam,
                 state->visible ? 1 : 0);
+            if (wparam) {
+                KeepGroupBoxBehindSiblings(hwnd);
+            }
             break;
 
         case WM_WINDOWPOSCHANGED: {
