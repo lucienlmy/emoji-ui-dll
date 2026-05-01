@@ -56,9 +56,36 @@ powershell -ExecutionPolicy Bypass -File .\build_release_dlls.ps1
 
 | 目录 | 说明 |
 |------|------|
-| [`designer/`](designer) | 可视化设计器的代码 |
-| [`examples/`](examples) | 编程示例代码 |
-| [`skills/`](skills) | 编程客户端的技能包 |
+| [`emoji_window/`](emoji_window) | C++ DLL 核心源码（Direct2D 渲染引擎） |
+| [`DLL/`](DLL) | 预编译的 x86/x64 DLL 发布包 |
+| [`designer/`](designer) | 可视化设计器（Tauri 2 + React + TypeScript） |
+| [`voldev/`](voldev) | **[火山 PC 界面库](#火山界面库-voldev)** — 将 emoji_window.dll 封装为火山平台组件模块 |
+| [`examples/`](examples) | 编程示例代码（易语言 / C# / Python） |
+| [`docs/`](docs) | 控件 API 文档 |
+
+---
+
+## 火山界面库 (voldev)
+
+`voldev/` 目录是将 `emoji_window.dll` 封装为**火山 PC 平台**界面组件模块的工程文件。
+
+### 快速使用
+
+1. 将 `voldev/` 目录复制到火山平台类库路径下
+2. 在火山项目中添加引用 `emoji_window_ui`
+3. 工具箱中出现 **Emoji Window** 分类，含以下组件：
+
+| 组件 | 说明 |
+|------|------|
+| Emoji顶层窗口 | D2D 自定义无边框主窗口 |
+| Emoji面板 | 容器控件 |
+| Emoji按钮 | emoji 图标按钮 |
+| Emoji标签 | 文本标签 |
+| Emoji编辑框 | 文本编辑框 |
+
+4. 编译后将对应的 `emoji_window.dll`（x86 或 x64）放到 EXE 同目录
+
+详细使用方法见 [`voldev/README.md`](voldev/README.md)。
 
 ---
 
