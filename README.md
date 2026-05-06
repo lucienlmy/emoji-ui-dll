@@ -1,3 +1,7 @@
+# 注意
+- 坏消息：因能力不足，解决不了拖放窗口大小闪烁的问题，此开源库永久停更
+- 好消息：我重新发布了了一个辛苦，解决了这个问题，地址：https://github.com/mosheng20205/new-emoji
+
 # Emoji Window DLL（C++）
 
 基于 **Direct2D / DirectWrite** 的 Windows 原生 UI 控件 DLL，支持彩色 **Emoji** 与 Unicode 文本、多套主题（亮/暗）、布局与表格等能力。
